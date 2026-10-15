@@ -1,0 +1,25 @@
+map             engine          type             on disk   decomp.     tags   tag%  build
+a10             xbox            singleplayer      165.8M    262.0M    13.5M  58.7%  01.10.12.2276
+a30             xbox            singleplayer      145.5M    203.2M    14.6M  63.7%  01.10.12.2276
+a50             xbox            singleplayer      168.1M    238.6M    14.9M  65.0%  01.10.12.2276
+b30             xbox            singleplayer      155.3M    214.5M    15.0M  65.2%  01.10.12.2276
+b40             xbox            singleplayer      178.2M    266.8M    16.2M  70.5%  01.10.12.2276
+beavercreek     xbox            multiplayer        21.1M     41.5M     6.9M  29.9%  01.10.12.2276
+bloodgulch      xbox            multiplayer        21.5M     42.3M     7.0M  30.6%  01.10.12.2276
+boardingaction  xbox            multiplayer        21.1M     43.2M     6.9M  30.0%  01.10.12.2276
+c10             xbox            singleplayer      159.2M    240.9M    15.8M  68.9%  01.10.12.2276
+c20             xbox            singleplayer       73.4M    135.4M     8.5M  37.1%  01.10.12.2276
+c40             xbox            singleplayer      158.6M    244.1M    15.8M  68.6%  01.10.12.2276
+carousel        xbox            multiplayer        19.3M     40.4M     6.8M  29.4%  01.10.12.2276
+chillout        xbox            multiplayer        19.4M     40.0M     6.7M  29.2%  01.10.12.2276
+d20             xbox            singleplayer      124.9M    196.0M    13.9M  60.2%  01.10.12.2276
+d40             xbox            singleplayer      162.5M    261.9M    14.3M  62.3%  01.10.12.2276
+damnation       xbox            multiplayer        22.7M     45.7M     6.9M  30.0%  01.10.12.2276
+hangemhigh      xbox            multiplayer        20.3M     41.7M     6.7M  29.2%  01.10.12.2276
+longest         xbox            multiplayer        19.6M     40.2M     6.8M  29.4%  01.10.12.2276
+prisoner        xbox            multiplayer        20.3M     41.9M     6.7M  29.2%  01.10.12.2276
+putput          xbox            multiplayer        18.9M     38.8M     6.7M  29.2%  01.10.12.2276
+ratrace         xbox            multiplayer        22.7M     45.2M     6.8M  29.4%  01.10.12.2276
+sidewinder      xbox            multiplayer        23.7M     45.8M     7.0M  30.5%  01.10.12.2276
+ui              xbox            ui                 13.5M     32.0M     1.6M   6.8%  01.10.12.2276
+wizard          xbox            multiplayer        18.8M     38.8M     6.7M  29.3%  01.10.12.2276

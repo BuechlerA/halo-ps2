@@ -1,0 +1,23 @@
+# Game data never enters the repository (spec R7)
+*.iso
+*.xiso
+*.map
+*.bik
+*.xbe
+assets/
+build/
+# Build outputs
+*.elf
+*.o
+*.irx
+*.a
+*.map.txt
+engine/*.elf
+# Tool caches
+__pycache__/
+*.pyc
+.pytest_cache/
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
