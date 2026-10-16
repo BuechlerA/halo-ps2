@@ -87,17 +87,25 @@ Known limitations carried out of Phase 1 (none blocks the gate, each is a measur
 **Gate M1**: noclip fly-through of **a30 and b40** at 30 fps (earlier measured at 60) with < 1 % dropped frames; memory report under
 budget. **Met on the PCSX2 interpreter** (0 dropped on a30, b40 and a10 in recompiler and interpreter modes at 30 fps and at 60 fps, final tree 2026-10-16; EE build ≤ 9.2 ms; level arena ≤ 4.2 MB); console verification in Phase 6.
 
-## Phase 2 — Objects, animation, first person (≈ 4 pm)
-- Converter: `model`/`gbxmodel` → VU1 strips with LOD chain; `model_animations`
-  → quantised tracks; `scenario` placements
-- Engine: object table, node matrices, `model_rigid`/`model_skin` programs,
-  per-object lighting from BSP probes, LOD by screen size, scenery/devices
-  placed, animation playback at the 30 Hz tick (interpolation only for the 60 fps stretch), first-person arms +
-  weapon models, Master Chief third-person for cutscenes
-- Dynamic LOD controller (draw-distance/particle caps) wired to the profiler
+## Phase 2 — Objects, animation, first person (≈ 4 pm) — done (PCSX2 gate)
+- [x] Converter: `model` → VU1 batches (≤24 tris, ≤24 palette nodes, 2 influences, LOD chain) (`modelconv.py`, docs/11); `OTEX` textures
+  (`objtex.py`); `model_animations` → quantised keyed tracks (`animconv.py`, docs/12); `scenario` placements, per-cluster probes, player
+  first-person data (`scenconv.py`, docs/13); sky model + fog (`skyconv.py`, ADR-029); `objpack.py` combines them (a10: MODL 5.0 MiB, OTEX 1.3, ANIM 1.0, SCEN 0.06)
+- [x] Engine: object table and placement per BSP (`sim/objects.c`), node matrices / bind-pose skin palette (`sim/skeleton.c`, ADR-025),
+  `model.vsm` rigid+skin program, per-object lighting from BSP probes (ADR-026), LOD by projected size, 30 Hz animation playback,
+  first-person arms + weapon (`sim/fpview.c`), Master Chief third-person (`chief`/`chiefcam` debug spawn), camera-locked sky (ADR-029)
+- [x] Dynamic LOD controller wired to the profiler (`render/lodctl.c`, ADR-027); 30 fps pacing rework (ADR-028)
+- Known limitations (carried to later phases): ANIM state tables / walk and fire animations are not converted (only idle poses);
+  variant/permutation selection always uses the default; rotation pitch/roll sign and the LOD cut-off unit are unverified; OTEX textures are capped
+  at 128 px on a10/b40; normals of skinned parts are not blended; no per-object dynamic lights or shadows; sky model animation (cloud drift) and the
+  scenario's second a30 sky are not handled; `skyfog` (sky tag fog) is off by default because its Xbox-tuned distances over-darken the PS2 view.
 
-**Gate M2**: a10 fully populated (all scenery, placed vehicles, idle bipeds
-animating) at 30 fps.
+**Gate M2**: a10 fully populated (all scenery, placed vehicles, idle bipeds animating) at 30 fps. **Met on the PCSX2 recompiler and
+interpreter** (2026-10-16, final tree): a30, b40, a10, a10obj (BSP 4, 125 objects incl. first-person arms, sky on) and a10obj-stress
+(every placement spawned) all 0 dropped of 900–1081 frames; EE build avg ≤ 16.6 ms / peak ≤ 20.2 ms of the 33.3 ms frame on the object maps (≤ 9.7 ms on the
+world-only maps); level arena 12.5 MB (high water 13.4 MB) of 20 MB; sky costs about 2.4 ms EE and 2.3 ms GS. BSP 4 has only 10 script-created
+placements, so the "stress" path is only slightly heavier than the normal one; the worst case measured earlier (about 1000 batches via `objcap`) cost about 5 ms EE.
+Console verification in Phase 6 (ADR-022).
 
 ## Phase 3 — Player, physics, weapons, HUD (≈ 5 pm)
 - Collision BSP + collision models; biped movement, stairs/slopes, crouch, jump

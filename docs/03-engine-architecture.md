@@ -247,6 +247,15 @@ lightmap pass grouped by page, the EE-clipped polygons (PATH2 `DIRECT`), the ove
 Decisions: ADR-017 (projection and clipping), ADR-018/019 (data formats), ADR-020 (lighting, fog, sky),
 ADR-021 (loop, config, headless checks). VU1 data memory layout is documented at the top of `vu1/bsp.vsm`.
 
+## 10b. Phase 2 as built (objects)
+Per frame, after the BSP passes and before the overlay, `render/obj_render.c` draws the object table (`sim/objects.c`) and the first-person
+view model (`sim/fpview.c`) through `vu1/model.vsm`: cull by distance, frustum and screen size, pick the LOD from the projected diameter plus the
+dynamic LOD bias (`render/lodctl.c`), pose the skeleton (`sim/skeleton.c`: animation sample -> node world matrices -> bind-pose skinning
+matrices, static objects skip it), look up the cluster light, then per part a state chunk and per batch the packet reference, palette and MSCAL.
+The 30 Hz tick advances animations (`objects_tick`, `fpview_tick`). Source layout additions: `sim/{objects,fpview,skeleton}.c`, `core/mat.c`,
+`render/{obj_render,lodctl}.c`, `world/{model,anim,scen}.c`, `vu1/model.vsm`, `tools/halo2ps2/{modelconv,objtex,animconv,scenconv,objpack}.py`.
+Decisions: ADR-024 (formats), ADR-025 (rendering), ADR-026 (lighting), ADR-027 (dynamic LOD), ADR-028 (30 fps pacing).
+
 ## 11. Coding rules (enforced by review)
 - C11, `-G0`, no `double`, no `malloc` after load, no recursion in tick paths,
   no `float` ↔ `int` conversions in inner loops without VU0.

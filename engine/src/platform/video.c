@@ -86,11 +86,21 @@ void video_add_sky(video_t *v, packet2_t *p, const u8 top[3], const u8 horizon[3
 	packet2_update(p, draw_enable_tests(p->next, 0, &v->z));
 }
 
-void video_flip(video_t *v)
+void video_wait_gpu(void)
 {
 	draw_wait_finish();
+}
+
+void video_present(video_t *v)
+{
 	graph_wait_vsync();
 	graph_set_framebuffer_filtered(v->fb[v->back].address, VIDEO_WIDTH, GS_PSM_16S, 0, 0);
 	v->back ^= 1;
 	v->frames++;
+}
+
+void video_flip(video_t *v)
+{
+	video_wait_gpu();
+	video_present(v);
 }

@@ -27,6 +27,10 @@ void  video_add_clear(video_t *v, packet2_t *p, u8 r, u8 g, u8 b);
 void  video_add_sky(video_t *v, packet2_t *p, const u8 top[3], const u8 horizon[3], int horizon_y);
 /* Waits for drawing + vsync, displays the back buffer, swaps. */
 void  video_flip(video_t *v);
+/* The two halves of video_flip: wait for the GS FINISH of the last kick, then (after any vsync burning the caller
+ * wants for a lower frame rate: graph_wait_vsync() clears the FINISH flag, so the GPU wait must come first) present. */
+void  video_wait_gpu(void);
+void  video_present(video_t *v);
 /* Free VRAM (bytes) after framebuffers and Z: the texture window. */
 u32   video_texture_window_bytes(void);
 /* VRAM is addressed in 32-bit words (page = 2048 words = 8 KB, block = 64 words). */

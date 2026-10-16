@@ -11,7 +11,7 @@ order (01 → 06) before changing architecture; `docs/06-decisions.md` is the AD
 - `scripts/run-pcsx2.sh` boots the ELF in PCSX2. Hardware: `ps2client -h <ip> execee host:engine/halo-ps2.elf`.
 - Tools: `for t in tools/tests/test_*.py; do python3 -I $t; done` (no game data needed); engine host tests: `make -C engine/tests`.
 - Frame pacing in PCSX2 without hardware: `scripts/profile-pcsx2.sh --interpreter` (ADR-015).
-- Phase 1 world: `scripts/build-world.sh a30 b40` converts maps to `assets/hp2/`; `scripts/run-headless.sh -c halo.cfg`
+- Phase 1/2 world: `scripts/build-world.sh a10 a30 b40` converts maps to `assets/hp2/` (BSP, textures, objects: `.hp2`, `.tex.hp2`, `.obj.hp2`); `scripts/run-headless.sh -c halo.cfg`
   runs the ELF in PCSX2 against a config (`docs/10-m1-hardware-check.md`); `scripts/profile-m1.sh` runs the M1
   fly-throughs; `fbdump <frame>` in the config + `scripts/fb2png.py` is how rendering is checked without a screen.
 - Game data lives only in `assets/` and `*.iso` (both gitignored). Never commit it,

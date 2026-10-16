@@ -19,7 +19,7 @@ inside a section everything is 16-byte aligned by the converter.
 ## Section table (32 bytes per entry, immediately after the header)
 | Offset | Type | Field |
 |---|---|---|
-| 0x00 | char[4] | section tag: `RES\0`, `BSP0`..`BSP9` then `BSPA`..`BSPZ` (maps with more than 10 BSPs: b40, c40), `TEXS`, `LM0`..`LM12` (per BSP, decimal index), `SND\0`, `STR\0` |
+| 0x00 | char[4] | section tag: `RES\0`, `BSP0`..`BSP9` then `BSPA`..`BSPZ` (maps with more than 10 BSPs: b40, c40), `TEXS`, `LM0`..`LM12` (per BSP, decimal index), object packs: `SCEN`, `MODL`, `OTEX`, `ANIM` (docs/11-13), `SND\0`, `STR\0` |
 | 0x04 | u32 | file offset of the stored payload (multiple of 2048) |
 | 0x08 | u32 | stored size in bytes |
 | 0x0C | u32 | raw (decompressed) size in bytes |

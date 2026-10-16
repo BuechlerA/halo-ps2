@@ -8,16 +8,22 @@ export PATH := $(PS2DEV)/bin:$(PS2DEV)/ee/bin:$(PS2DEV)/iop/bin:$(PS2DEV)/dvp/bi
 EE_BIN  = halo-ps2.elf
 EE_OBJS = src/main.o \
           src/core/config.o \
+          src/core/mat.o \
           src/core/mem.o \
           src/platform/fbdump.o \
           src/platform/pad.o \
           src/platform/profiler.o \
           src/platform/video.o \
+          src/sim/fpview.o \
+          src/sim/objects.o \
+          src/sim/skeleton.o \
           src/render/bsp_render.o \
           src/render/camera.o \
           src/render/chain.o \
           src/render/clip.o \
           src/render/flycam.o \
+          src/render/lodctl.o \
+          src/render/obj_render.o \
           src/render/selftest.o \
           src/render/text.o \
           src/render/texcache.o \
@@ -25,8 +31,11 @@ EE_OBJS = src/main.o \
           src/render/vis.o \
           src/stream/file.o \
           src/stream/hp2.o \
-          src/vu1/bsp.o \
+          src/vu1/world.o \
+          src/world/anim.o \
           src/world/bsp.o \
+          src/world/model.o \
+          src/world/scen.o \
           src/world/tex.o \
           src/world/world.o
 EE_LIBS = -ldraw -lgraph -lpacket2 -ldma -ldebug -lpad -lm
@@ -40,6 +49,8 @@ all: $(EE_BIN)
 
 %.o: %.vsm
 	$(EE_DVP) $< -o $@
+
+src/vu1/world.o: src/vu1/bsp.vsm src/vu1/model.vsm
 
 clean:
 	rm -f $(EE_BIN) $(EE_OBJS) $(EE_OBJS:.o=.d)

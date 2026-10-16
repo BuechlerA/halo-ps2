@@ -1,5 +1,6 @@
 #include "render/bsp_render.h"
 #include "render/chain.h"
+#include "render/render_internal.h"
 #include "render/clip.h"
 #include "render/gs.h"
 #include "render/upload.h"
@@ -18,7 +19,8 @@
 extern u32 VU1Bsp_CodeStart __attribute__((section(".vudata")));
 extern u32 VU1Bsp_EntryLit  __attribute__((section(".vudata")));
 extern u32 VU1Bsp_EntryLm   __attribute__((section(".vudata")));
-extern u32 VU1Bsp_CodeEnd   __attribute__((section(".vudata")));
+extern u32 VU1Model_Entry   __attribute__((section(".vudata")));
+extern u32 VU1World_CodeEnd __attribute__((section(".vudata")));
 
 #define VU_DBUF_BASE   16
 #define VU_DBUF_OFFSET BSP_VU_QWORDS            /* 220 */
@@ -62,6 +64,12 @@ static u32          s_cpoly_count, s_cvert_count;
 static float       *s_box;                          /* per batch: min xyz, max xyz (6 floats) */
 static u16         *s_cpoly_sorted;                 /* poly indices grouped by material, then by page */
 static u32         *s_cgroup_count, *s_cgroup_start;
+static render_pass_fn   s_sky_pass;
+static void            *s_sky_user;
+static render_pass_fn   s_obj_pass;
+static void            *s_obj_user;
+static tex_source_t     s_obj_src;
+static unsigned         s_obj_key_base;
 static render_options_t s_opt;
 static render_stats_t   s_stats;
 
@@ -75,9 +83,9 @@ static u32 entry_addr(const u32 *e) { return ((u32)e - (u32)&VU1Bsp_CodeStart) /
 /* ---- init ----------------------------------------------------------------------------------- */
 static void send_vif_program(void)
 {
-	u32 n = packet2_utils_get_packet_size_for_program(&VU1Bsp_CodeStart, &VU1Bsp_CodeEnd) + 1;
+	u32 n = packet2_utils_get_packet_size_for_program(&VU1Bsp_CodeStart, &VU1World_CodeEnd) + 1;
 	packet2_t *p = packet2_create(n, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
-	packet2_vif_add_micro_program(p, 0, &VU1Bsp_CodeStart, &VU1Bsp_CodeEnd);
+	packet2_vif_add_micro_program(p, 0, &VU1Bsp_CodeStart, &VU1World_CodeEnd);
 	packet2_utils_vu_add_end_tag(p);
 	dma_channel_send_packet2(p, DMA_CHANNEL_VIF1, 1);
 	dma_channel_wait(DMA_CHANNEL_VIF1, 0);
@@ -89,7 +97,7 @@ static void send_vif_program(void)
 	dma_channel_wait(DMA_CHANNEL_VIF1, 0);
 	packet2_free(p);
 	printf("[vu1] bsp program: %u bytes, entries lit=%u lm=%u\n",
-	       (u32)&VU1Bsp_CodeEnd - (u32)&VU1Bsp_CodeStart, entry_addr(&VU1Bsp_EntryLit), entry_addr(&VU1Bsp_EntryLm));
+	       (u32)&VU1World_CodeEnd - (u32)&VU1Bsp_CodeStart, entry_addr(&VU1Bsp_EntryLit), entry_addr(&VU1Bsp_EntryLm));
 }
 
 static u8 *alloc_uncached(size_t bytes)
@@ -235,7 +243,13 @@ static u64 take_pending(void)
 /* Frame constants (VU memory abs 0..6 and 9), a TEXFLUSH for textures uploaded since last frame. */
 static void emit_frame_header(chain_t *c, const float clip[4][4])
 {
-	u32 *w = chain_cnt(c, 1 + 7 + 1 + 2, 0);
+	u32 *w;
+	w = chain_cnt(c, 1, 0);
+	if (w) {                                      /* BSP buffer layout (the object pass switches and restores it) */
+		w[0] = VIF_CODE(VIF_NOP, 0, 0); w[1] = VIF_CODE(VIF_BASE, 0, 16);
+		w[2] = VIF_CODE(VIF_OFFSET, 0, BSP_VU_QWORDS); w[3] = VIF_CODE(VIF_NOP, 0, 0);
+	}
+	w = chain_cnt(c, 1 + 7 + 1 + 2, 0);
 	float *f;
 	float fog_k = 0.0f, fog_b = 4080.0f;      /* GS: F = 255 means no fog */
 	u64 *q;
@@ -573,6 +587,12 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 
 	emit_frame_header(c, (const float (*)[4])clip);
 
+	if (s_sky_pass) {
+		render_ctx_t rc;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt;
+		s_sky_pass(s_sky_user, &rc);
+	}
+
 	/* pass 1: base texture x vertex colour */
 	for (i = 0; i < nused; i++) {
 		unsigned m = s_used[i], n = 0;
@@ -638,6 +658,12 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 			emit_clipped(c, p, 1, GS_PRIM(GSX_PRIM_TRIANGLE, 1, 1, 0, 1, 0, 0, 0, 0), &cgs);
 			if ((p & 7) == 7) bsp_render_poll();
 		}
+	}
+
+	if (s_obj_pass) {
+		render_ctx_t rc;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt;
+		s_obj_pass(s_obj_user, &rc);
 	}
 
 	/* overlay + FINISH */
@@ -722,4 +748,42 @@ void bsp_render_wait_gpu(void)
 {
 	u32 t0 = timer_cycles();
 	while (!s_gs_seen && timer_ms(t0, timer_cycles()) < 40.0f) bsp_render_poll();
+}
+
+/* ---- object pass hooks --------------------------------------------------------------------------- */
+u64  rb_take_pending(void) { return take_pending(); }
+void rb_set_pending(u64 pair) { s_pending = pair; }
+u32  rb_model_entry(void) { return entry_addr(&VU1Model_Entry); }
+const u32 *rb_zbuf_page_ptr(void) { return &s_zbuf_page; }
+
+void rb_fog_params(float *k, float *b)
+{
+	*k = 0.0f; *b = 4080.0f;
+	if (s_opt.fog && s_opt.fog_far > s_opt.fog_near) {
+		*k = -4080.0f / (s_opt.fog_far - s_opt.fog_near);
+		*b = 4080.0f - s_opt.fog_near * *k;
+	}
+}
+
+u64 rb_object_tex0(unsigned index, const tex_image_t *img, u64 tfx)
+{
+	return resident_tex0(s_obj_key_base + index, img, tfx);
+}
+
+void bsp_render_set_object_pass(render_pass_fn fn, void *user, const tex_source_t *obj_src)
+{
+	s_obj_pass = fn;
+	s_obj_user = user;
+	if (obj_src) {
+		s_obj_src = *obj_src;
+		s_obj_key_base = s_src.texture_count + s_page_slots;
+		/* the residency cache keys are textures, lightmap pages, then object textures */
+		tc_init(&s_tc, s_window_pages - CACHE_FIRST_PAGE, FONT_CLUT_SLOT, s_obj_key_base + obj_src->texture_count, 1536u * 1024u);
+	}
+}
+
+void bsp_render_set_sky_pass(render_pass_fn fn, void *user)
+{
+	s_sky_pass = fn;
+	s_sky_user = user;
 }

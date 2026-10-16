@@ -63,7 +63,7 @@ typedef struct { uint64_t data, addr; } gs_ad;   /* one A+D quadword */
 /* VIF codes (32-bit): cmd << 24 | num << 16 | imm. */
 #define VIF_CODE(cmd, num, imm) ((uint32_t)(cmd) << 24 | (uint32_t)((num) & 0xFF) << 16 | (uint32_t)((imm) & 0xFFFF))
 enum { VIF_NOP = 0x00, VIF_STCYCL = 0x01, VIF_FLUSHE = 0x10, VIF_FLUSH = 0x11, VIF_FLUSHA = 0x13,
-       VIF_MSCAL = 0x14, VIF_MSCNT = 0x17, VIF_DIRECT = 0x50, VIF_UNPACK_V4_32 = 0x6C };
+       VIF_MSCAL = 0x14, VIF_OFFSET = 0x02, VIF_BASE = 0x03, VIF_MSCNT = 0x17, VIF_DIRECT = 0x50, VIF_UNPACK_V4_32 = 0x6C };
 /* Two VIF codes in the upper half of a DMA tag (transferred when the channel has TTE set). */
 #define VIF_PAIR(lo, hi) ((uint64_t)(uint32_t)(lo) | (uint64_t)(uint32_t)(hi) << 32)
 

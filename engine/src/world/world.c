@@ -40,9 +40,9 @@ uint8_t *world_load_section(arena_t *a, const char *path, const char *tag, size_
 /* ---- adapter: TEXS / LMn readers -> renderer texture source ------------------------------------ */
 static int src_binding(void *user, uint32_t shader_id, mat_binding_t *out)
 {
-	const world_t *w = user;
+	const texset_t *w = user;
 	tex_binding b;
-	if (!w->has_tex || !tex_find_binding(&w->tex, shader_id, &b)) return -1;
+	if (!w->has || !tex_find_binding(&w->tex, shader_id, &b)) return -1;
 	out->tex = b.texture == TEX_NONE ? (int16_t)-1 : (int16_t)b.texture;
 	out->flags = 0;
 	if (b.flags & TEX_B_ALPHA_TEST) out->flags |= MAT_ALPHA_TEST;
@@ -55,10 +55,10 @@ static int src_binding(void *user, uint32_t shader_id, mat_binding_t *out)
 
 static int src_texture(void *user, int tex, tex_image_t *out)
 {
-	const world_t *w = user;
+	const texset_t *w = user;
 	tex_info t;
 	tex_mip_view m;
-	if (!w->has_tex || tex < 0 || (uint32_t)tex >= w->tex.texture_count) return -1;
+	if (!w->has || tex < 0 || (uint32_t)tex >= w->tex.texture_count) return -1;
 	t = tex_get(&w->tex, (uint32_t)tex);
 	if (!tex_mip(&w->tex, &t, 0, &m)) return -1;
 	out->pixels = m.pixels;
@@ -70,6 +70,10 @@ static int src_texture(void *user, int tex, tex_image_t *out)
 	out->psm = t.psm;
 	return 0;
 }
+
+/* the BSP source's user is the world (lightmaps need it); binding/texture look into its BSP texture set */
+static int src_binding_bsp(void *user, uint32_t shader_id, mat_binding_t *out) { return src_binding(&((world_t *)user)->bsp_tex, shader_id, out); }
+static int src_texture_bsp(void *user, int tex, tex_image_t *out) { return src_texture(&((world_t *)user)->bsp_tex, tex, out); }
 
 static int src_lightmap(void *user, unsigned page, tex_image_t *out)
 {
@@ -106,10 +110,10 @@ int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_pa
 
 	if (tex_path) {
 		sec = world_load_section(a, tex_path, "TEXS", &raw, 0);
-		if (sec && tex_open(&w->tex, sec, raw) == TEX_OK) {
-			w->has_tex = 1;
-			printf("[tex] %s TEXS: %u textures, %u shader bindings, %u KB\n", tex_path, (unsigned)w->tex.texture_count,
-			       (unsigned)w->tex.binding_count, (unsigned)(raw / 1024));
+		if (sec && tex_open(&w->bsp_tex.tex, sec, raw) == TEX_OK) {
+			w->bsp_tex.has = 1;
+			printf("[tex] %s TEXS: %u textures, %u shader bindings, %u KB\n", tex_path, (unsigned)w->bsp_tex.tex.texture_count,
+			       (unsigned)w->bsp_tex.tex.binding_count, (unsigned)(raw / 1024));
 		} else {
 			printf("[warn] no usable TEXS in %s: drawing flat\n", tex_path);
 		}
@@ -123,10 +127,60 @@ int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_pa
 			printf("[tex] %s has no %s section (this BSP has no lightmap): no lightmap pass\n", tex_path, tag);
 		}
 	}
-	w->source.binding = src_binding;
-	w->source.texture = src_texture;
+	w->source.binding = src_binding_bsp;
+	w->source.texture = src_texture_bsp;
 	w->source.lightmap = src_lightmap;
 	w->source.user = w;
-	w->source.texture_count = w->has_tex ? w->tex.texture_count : 0;
+	w->source.texture_count = w->bsp_tex.has ? w->bsp_tex.tex.texture_count : 0;
+	return 0;
+}
+
+int world_load_objects(world_t *w, arena_t *a, const char *obj_path)
+{
+	size_t raw;
+	uint8_t *sec;
+	w->has_objects = 0;
+	sec = world_load_section(a, obj_path, "MODL", &raw, 0);
+	if (!sec || model_open(&w->models, sec, raw) != MODEL_OK) { printf("[err] %s: no usable MODL\n", obj_path); return -1; }
+	printf("[obj] %s MODL: %u models, %u parts, %u batches, %u KB\n", obj_path, (unsigned)w->models.model_count,
+	       (unsigned)w->models.part_count, (unsigned)w->models.batch_count, (unsigned)(raw / 1024));
+	sec = world_load_section(a, obj_path, "SCEN", &raw, 0);
+	if (!sec || scen_open(&w->scen, sec, raw) != SCEN_OK) { printf("[err] %s: no usable SCEN\n", obj_path); return -1; }
+	printf("[obj] %s SCEN: %u definitions, %u placements, %u KB\n", obj_path, (unsigned)w->scen.def_count,
+	       (unsigned)w->scen.placement_count, (unsigned)(raw / 1024));
+	sec = world_load_section(a, obj_path, "ANIM", &raw, 1);
+	memset(&w->anims, 0, sizeof w->anims);
+	if (sec && anim_open(&w->anims, sec, raw) == ANIM_OK)
+		printf("[obj] %s ANIM: %u graphs, %u animations, %u KB\n", obj_path, (unsigned)w->anims.graph_count, (unsigned)w->anims.anim_count, (unsigned)(raw / 1024));
+	else memset(&w->anims, 0, sizeof w->anims);
+	sec = world_load_section(a, obj_path, "OTEX", &raw, 1);
+	w->obj_tex.has = 0;
+	if (sec && tex_open(&w->obj_tex.tex, sec, raw) == TEX_OK) {
+		w->obj_tex.has = 1;
+		printf("[obj] %s OTEX: %u textures, %u bindings, %u KB\n", obj_path, (unsigned)w->obj_tex.tex.texture_count,
+		       (unsigned)w->obj_tex.tex.binding_count, (unsigned)(raw / 1024));
+	}
+	memset(&w->sky, 0, sizeof w->sky);
+	sec = world_load_section(a, obj_path, "SKY0", &raw, 1);
+	if (sec && raw >= 64 && memcmp(sec, "SKYS", 4) == 0) {
+		const uint8_t *q = sec + 8;
+		uint32_t tag;
+		float f[12];
+		memcpy(&tag, q, 4);
+		memcpy(f, q + 4, sizeof f);                     /* little-endian host data, like the pack */
+		w->sky.valid = 1;
+		w->sky.model_tag = tag;
+		memcpy(w->sky.fog_rgb, f, 12);
+		w->sky.fog_near = f[3]; w->sky.fog_far = f[4]; w->sky.fog_density = f[5];
+		memcpy(w->sky.outdoor, f + 6, 12);
+		memcpy(w->sky.indoor, f + 9, 12);
+		printf("[obj] SKY0: model tag %08x, fog near %.0f far %.0f density %.2f\n", (unsigned)tag, w->sky.fog_near, w->sky.fog_far, w->sky.fog_density);
+	}
+	memset(&w->obj_source, 0, sizeof w->obj_source);
+	w->obj_source.binding = src_binding;
+	w->obj_source.texture = src_texture;
+	w->obj_source.user = &w->obj_tex;
+	w->obj_source.texture_count = w->obj_tex.has ? w->obj_tex.tex.texture_count : 0;
+	w->has_objects = 1;
 	return 0;
 }

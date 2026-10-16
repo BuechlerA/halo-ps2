@@ -24,6 +24,13 @@ test: $(HOST_TMP)/halo-test.hp2 $(HOST_TMP)/halo-bsp.hp2
 	$(HOST_TMP)/test_text
 	cc $(CFLAGS) test_flycam.c ../src/render/flycam.c ../src/render/camera.c ../src/core/config.c -lm -o $(HOST_TMP)/test_flycam
 	$(HOST_TMP)/test_flycam
+	cc $(CFLAGS) test_skeleton.c ../src/core/mat.c ../src/sim/skeleton.c ../src/render/camera.c -lm -o $(HOST_TMP)/test_skeleton
+	$(HOST_TMP)/test_skeleton
+	cc $(CFLAGS) test_lodctl.c ../src/render/lodctl.c -o $(HOST_TMP)/test_lodctl
+	$(HOST_TMP)/test_lodctl
+	SCEN_FIXTURE=$(HOST_TMP)/halo-scen.hp2 python3 -I $(PYTESTS)/test_scenconv.py && cc $(CFLAGS) test_scen.c ../src/world/scen.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_scen && $(HOST_TMP)/test_scen $(HOST_TMP)/halo-scen.hp2
+	MODEL_FIXTURE=$(HOST_TMP)/halo-model.hp2 python3 -I $(PYTESTS)/test_modelconv.py && cc $(CFLAGS) test_model.c ../src/world/model.c ../src/world/tex.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_model && $(HOST_TMP)/test_model $(HOST_TMP)/halo-model.hp2
+	ANIM_FIXTURE=$(HOST_TMP)/halo-anim.hp2 python3 -I $(PYTESTS)/test_animconv.py && cc $(CFLAGS) test_anim.c ../src/world/anim.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_anim && $(HOST_TMP)/test_anim $(HOST_TMP)/halo-anim.hp2
 
 # Fixture packs are written by the Python tools, so the C reader is checked against the writer.
 $(HOST_TMP)/halo-test.hp2: $(PYTESTS)/test_hp2.py ../../tools/halo2ps2/hp2.py

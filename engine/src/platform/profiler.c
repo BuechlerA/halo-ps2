@@ -17,6 +17,7 @@ void profiler_frame(profiler_t *p, float prep_ms, float wait_ms, const render_st
 {
 	float interval = timer_ms(p->last_flip, now);
 	p->last_flip = now;
+	p->last_interval = interval;
 	bsp_render_timing(&p->vif_ms, &p->gs_ms);
 	if (p->frames > 0 && interval > p->drop_ms) {
 		if (p->drop_n < 6) {
@@ -34,7 +35,7 @@ void profiler_frame(profiler_t *p, float prep_ms, float wait_ms, const render_st
 	if (prep_ms > p->prep_max) p->prep_max = prep_ms;
 	p->wait_acc += wait_ms;
 	p->last = *rs;
-	if (p->gs_ms > p->gs_max) p->gs_max = p->gs_ms;
+	if (p->frames > 5 && p->gs_ms > p->gs_max) p->gs_max = p->gs_ms;      /* the first frames include loading */
 	if (p->vif_ms > p->vif_max) p->vif_max = p->vif_ms;
 	p->gs_acc += p->gs_ms > 0.0f ? p->gs_ms : 0.0f;
 	if (prep_ms > p->prep_win_max) p->prep_win_max = prep_ms;
@@ -69,6 +70,8 @@ void profiler_overlay(const profiler_t *p, text_batch_t *b)
 	snprintf(line, sizeof line, "TEX HIT %u UP %u (%u KB) DEFER %u FAIL %u FREE %u PG", r->tex_hits, r->uploads, r->upload_bytes / 1024,
 	         r->tex_deferred, r->tex_failed, r->pages_free);
 	text_batch_print(b, 8, 40, 0xFFFFC0, line);
+	snprintf(line, sizeof line, "OBJ %.2fMS %u VIS %u CULL  BATCH %u  TRIS %u  LOD %u", p->obj_ms, p->obj_visible, p->obj_culled, p->obj_batches, p->obj_tris, p->lod_level);
+	text_batch_print(b, 8, 56, 0xC0FFFF, line);
 	if (p->drop_n) {
 		unsigned i;
 		for (i = 0; i < p->drop_n && i < 3; i++) {
@@ -85,10 +88,10 @@ void profiler_report(const profiler_t *p)
 {
 	const render_stats_t *r = &p->last;
 	printf("[prof] frames=%u fps=%.1f dropped=%u (%u this window) interval max=%.1fms | ee prep avg=%.2f peak=%.2f vis=%.2f wait=%.2f | "
-	       "vif1=%.2f gs=%.2f | tris=%u batches=%u mats=%u clusters=%u/%u portals=%u/%u | tex hit=%u up=%u/%uKB defer=%u fail=%u free=%upg flat=%u | chain=%uqw%s clip=%ub/%u/%u skip=%u drop=%u (%.2fms, polygon %.2fms) build=%.2f\n",
+	       "vif1=%.2f gs=%.2f | tris=%u batches=%u mats=%u clusters=%u/%u portals=%u/%u | tex hit=%u up=%u/%uKB defer=%u fail=%u free=%upg flat=%u | chain=%uqw%s clip=%ub/%u/%u skip=%u drop=%u (%.2fms, polygon %.2fms) build=%.2f | obj %.2fms vis=%u batches=%u tris=%u lod=%u\n",
 	       p->frames, p->fps, p->dropped, p->win_dropped, p->interval_max, p->prep_avg, p->prep_peak, r->vis_ms, p->wait_avg,
 	       p->vif_ms, p->gs_ms, r->triangles, r->batches, r->materials_drawn, r->clusters_visible, r->clusters_total,
 	       r->portals_passed, r->portals_tested, r->tex_hits, r->uploads, r->upload_bytes / 1024, r->tex_deferred, r->tex_failed,
 	       r->pages_free, r->untextured_batches, r->chain_qw, r->chain_overflow ? " OVERFLOW" : "",
-	       (unsigned)r->clip_batches, (unsigned)r->clip_polys, (unsigned)r->clip_tris, (unsigned)r->clip_skipped_batches, (unsigned)r->clip_dropped, r->clip_ms, r->emit_clip_ms, r->build_ms);
+	       (unsigned)r->clip_batches, (unsigned)r->clip_polys, (unsigned)r->clip_tris, (unsigned)r->clip_skipped_batches, (unsigned)r->clip_dropped, r->clip_ms, r->emit_clip_ms, r->build_ms, p->obj_ms, p->obj_visible, p->obj_batches, p->obj_tris, p->lod_level);
 }

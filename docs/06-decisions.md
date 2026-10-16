@@ -215,5 +215,74 @@ budgets are *not* raised (GS cost is still unmeasured on hardware, ADR-022): the
 60 fps (Phase 1 console runs) are kept in the docs as they were, labelled as 60 fps results. The risk register's "60 fps
 unreachable" entry becomes "30 fps unreachable in heavy encounters", and 60 fps is tracked as a stretch evaluation in Phase 6.
 
+## ADR-024 Object data formats: `MODL`, `OTEX`, `ANIM`, `SCEN`
+**Decision**: a map's objects are converted into one pack (`assets/hp2/<map>.obj.hp2`, `tools/halo2ps2/objpack.py`) holding four
+sections, each restricted to what the scenario places plus the player's first-person set (`scenconv.collect` feeds the model and
+animation converters):
+- `MODL` ([11-model-section.md](11-model-section.md)): one VIF packet per batch of at most 24 triangles and 24 skeleton nodes (strips
+  expanded to lists, two node influences per vertex, s16 positions relative to a per-batch centre, s8 normals), organised as
+  region x permutation x LOD (index 0 = super high). Rotations are stored in the engine's Hamilton convention (Halo stores the
+  conjugate). Vertices are in **bind-pose model space**.
+- `OTEX`: the TEXS layout (docs/09) keyed by the Xbox shader id of each model part; base maps only, textures capped (128 px on a10/b40)
+  to a 3 MiB budget; untextured shaders draw flat.
+- `ANIM` ([12-anim-section.md](12-anim-section.md)): per-graph keyed tracks, 15-bit smallest-three rotation keys (4-byte hinge keys),
+  s16/f32 translation keys chosen closed loop to within 0.18 degrees / 0.35 mm of the Xbox frames, about 45 % of the Xbox size.
+  `ANIM_LOOPS` is derived from the animation names (the tag has no loop flag). Graph state tables and root motion are not used yet.
+- `SCEN` ([13-scen-section.md](13-scen-section.md)): definitions, placements (with a BSP mask by point location), the player's
+  first-person data, per-cluster object lighting.
+**Why**: the engine then needs no tag parser; every reader is pure C, bounds-validating and fuzz-tested on the host.
+**Consequences**: a10's object pack is 4.1 MiB stored (MODL 5.0, OTEX 1.2, ANIM 1.0 MiB raw), 7.3 MiB resident of the 9 MiB mission-data
+budget: heavy but inside it. If a map exceeds ~5 MiB of MODL the levers are dropping the super-high LOD or unused permutations
+(converter keywords exist). The LOD cutoff unit (pixel diameter at 640 wide) and the soso alpha rule are unverified.
+
+## ADR-025 Object rendering: VU1 skinning program, bind-pose palette, one batch at a time
+**Decision**: `vu1/model.vsm` (appended to the BSP program in `world.vsm`) transforms each vertex by two node matrices
+`clip = c1 + (c0 - c1) * w0`, lights it with ambient + one directional term, and runs the same post-divide clip test, collapse
+and fog as `bsp.vsm`. The palette is built on the EE per object: for every node `skin = inverse(default pose world) * posed world *
+placement` (static objects skip the skeleton: skin = placement), composed with the camera clip matrix, plus the sun direction in
+the node's local frame (five quadwords per node, at most 24 nodes per batch). Per batch the chain carries the batch packet (a REF
+into the section, UNPACKed into the idle buffer while the previous batch runs), then FLUSHE, the palette, MSCAL; consecutive
+batches with an identical palette skip the palette upload. VIF BASE/OFFSET move to the model layout (136/220) for the pass and
+return to the BSP layout (16/220) at the next frame header.
+**Why**: the EE never touches a vertex; a per-batch palette keeps VU1 memory inside 1 KiB; the bind-pose matrix is what Halo's
+data requires (the first attempt used plain node matrices and produced spiky arms).
+**Consequences**: the object pass costs about 5 us of EE time per batch (about 1 ms for the normal a10 population, 5 ms for 1000
+batches); normals of skinned parts are not blended (node 0's frame lights the vertex).
+
+## ADR-026 Object lighting from per-cluster probes
+**Decision**: Halo lights objects from the BSP lightmap. We bake, per BSP cluster, an ambient colour (mean lightmap colour of its
+surfaces with a floor of 20/128) and one directional light (the sky's brightest light when the cluster sees the sky, else the
+lightmap gradient, else up) into `SCEN`; the engine looks the cluster up with `bsp_find_cluster` at the object's centre.
+**Why**: it reuses the lightmap's own scale (128 = 1.0) so objects and walls match and costs one table read per object.
+**Consequences**: no per-object dynamic lights or shadows yet; the ambient/sun split is an approximation, tunable at conversion time.
+
+## ADR-027 Dynamic LOD controller and object draw limits
+**Decision**: `render/lodctl.c` raises a quality level (0..4: draw distance x1.0..0.4, model LOD bias 0..2, particle cap x1..0.25) as
+soon as a frame is dropped or its cost exceeds the budget, holds the level for 2 s, and recovers one step at a time after sustained slack
+(90 frames under 75 % of the budget). The object pass also culls by distance (default 200 units), by frustum, and below 3 px, and caps
+batches per frame (default 900). The controller ignores the first frames (loading).
+**Why**: the Phase 2 gate needs a controlled way to give up detail instead of frames; the same hook later throttles particles.
+**Consequences**: the cost signal is the larger of EE build time and GS time as observed by the profiler (GS time is unmeasured in PCSX2, ADR-022).
+
+## ADR-028 30 fps pacing: kick right after the flip, burn vsyncs before presenting
+**Decision**: the first 30 fps loop waited the extra vblank after the flip and before the kick, which made any frame whose EE build exceeded
+one vblank (16.7 ms) slip a whole extra vblank although 33 ms were available. The loop now kicks immediately after the flip, builds the next
+frame, waits for the GS, burns the vsyncs that have not happened yet (`passed = floor(elapsed / 16.68 ms)`, burn `vblanks - 1 - passed`),
+then presents; a frame is dropped when its flip interval exceeds 2.5 frame times of vblanks (41.7 ms at 30 fps).
+`video_flip` is split into `video_wait_gpu` + `video_present` because `graph_wait_vsync` clears the GS FINISH flag.
+**Consequences**: the Phase 1 30 fps numbers (0 dropped) were measured with the earlier loop and stay valid (their EE times were under one vblank).
+
+## ADR-029 Sky: an EE-drawn model behind the world, `SKY0` section
+**Decision**: the scenario's first sky tag is converted by `skyconv.py` into a `SKY0` section (sky model tag id, fog colour and
+distances, ambient colours); the sky model itself goes through `modelconv` like any object. The engine draws it first, with the camera
+position added to its vertices (so it never moves relative to the viewer), Z test "always" and no Z write, then draws the world over it.
+The pass runs on the EE (`obj_render_sky`: decode the batch packets, project, clip with `clip_polygon`, pack into DIRECT chunks), not on VU1,
+because the model is a few hundred triangles and the VU1 object program's depth/guard-band conventions do not fit a camera-locked dome.
+The config key `sky3d 0` turns it off; `skyfog 1` takes the world's linear fog (colour, start, opaque distance / max density) from the sky tag
+instead of the `fog` key (default off: the sky's own fog values are tuned for Xbox draw distances and darken the PS2 view too much).
+**Why**: a30's ring and cloud sky was the most visible gap reported after the first console run; the model is data we already convert.
+**Consequences**: the sky costs about one extra textured-triangle pass of EE time (see docs/04-roadmap.md Phase 2 for numbers); sky model animation
+(a30 clouds drift) and the second a30 sky (switched by script) are not handled; a10's sky (space) draws the same way.
+
 ## Open decisions
 None.

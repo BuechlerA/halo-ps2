@@ -55,5 +55,5 @@ for ((i = 0; i < 20; i++)); do kill -0 "$PID" 2>/dev/null || break; sleep 0.25; 
 kill -9 "$PID" 2>/dev/null || true
 wait "$PID" 2>/dev/null || true
 [ -n "$LOG_OUT" ] && cp "$WORK/emu.log" "$LOG_OUT"
-grep -E 'halo-ps2|\[(prof|video|vu1|bsp|tex|vis|cfg|done|err|warn|pack|cam|mem|dbg|pad)\]' "$WORK/emu.log" || {
+grep -E 'halo-ps2|\[(prof|video|vu1|bsp|tex|vis|cfg|done|err|warn|pack|cam|mem|dbg|pad|obj)\]' "$WORK/emu.log" || {
 	echo "no engine output; tail of log:" >&2; tail -20 "$WORK/emu.log" >&2; exit 1; }

@@ -90,6 +90,15 @@ One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (op
 | `textures 0/1`, `lightmaps 0/1` | disable a pass for debugging | 1, 1 |
 | `clipbudget ms` | EE time for clipping near triangles (ADR-017) | 6 |
 | `fbdump <frame>` | print that frame's framebuffer on the TTY (repeatable) | none |
+| `obj <path>` | object pack (SCEN, MODL, OTEX, ANIM) of the map; objects of the chosen BSP are placed | none |
+| `objects 0/1`, `fp 0/1` | draw the placed objects / the first-person arms and weapon | 1, 1 |
+| `objanim 0/1`, `fpanim 0/1` | play idle animations on placed objects / on the first-person arms | 1, 1 |
+| `objhidden 1` | also spawn the placements scripts would create later (stress population) | 0 |
+| `objdist <wu>`, `objcap <n>` | object draw distance (units) and per-frame batch cap | 200, 900 |
+| `sky3d 0/1`, `skyfog 0/1` | draw the sky model from the object pack's `SKY0` section / take the world fog from the sky tag (ADR-029) | 1, 0 |
+| `lodctl 0/1` | dynamic LOD controller | 1 |
+| `objlist 1` | print every placed object on the TTY | 0 |
+| `chief x y z yaw` / `chiefcam 1` | spawn the player's biped (third-person Master Chief) at a pose / 3 units ahead of the start camera | off |
 | `selftest 1/2` | GS texture-path self test (1: dump and exit, 2: hold the picture) | 0 |
 | `printcam 1` | print the free-fly camera pose each second | 0 |
 | `debug <bits>` | 1 skip pass-1 batches, 2 skip pass 2, 4 skip overlay, 8 PSMT4 flat, 16 PSMT4 CLUT 16x1, 32 no EE clipping, 64 no portal culling | 0 |

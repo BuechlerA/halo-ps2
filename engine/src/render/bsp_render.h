@@ -42,7 +42,11 @@ typedef struct {
 	unsigned texture_count;
 } tex_source_t;
 
+struct render_ctx;
+typedef void (*render_pass_fn)(void *user, struct render_ctx *rc);
+
 typedef struct {
+	u32 obj_visible, obj_batches, obj_triangles, obj_culled;
 	u32 batches, triangles, clusters_visible, clusters_total, materials_drawn;
 	u32 portals_tested, portals_passed, camera_cluster_valid;
 	u32 uploads, upload_bytes, tex_hits, tex_misses, tex_deferred, tex_failed, pages_free;
@@ -83,3 +87,9 @@ u32 bsp_render_cache_pages(void);
 /* Spin until the VIF1 chain and the GS FINISH of the last kicked frame have been observed (bounded), so
  * bsp_render_timing reports the true GS time; the flip would wait for it anyway. */
 void bsp_render_wait_gpu(void);
+
+/* Object pass (render/obj_render.c): called inside bsp_render_build after the BSP passes, before the
+ * overlay, with the frame's chain; `obj_src` supplies the object textures (OTEX), may be NULL. */
+void bsp_render_set_object_pass(render_pass_fn fn, void *user, const tex_source_t *obj_src);
+/* Sky pass: called right after the frame constants, before the BSP passes (depth writes are the pass's business). */
+void bsp_render_set_sky_pass(render_pass_fn fn, void *user);

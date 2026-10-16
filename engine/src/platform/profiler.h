@@ -20,6 +20,9 @@ typedef struct {
 	float gs_avg, gs_peak, vif_peak;
 	u32   drop_frame[6], drop_n;                  /* first dropped frames, with the times around them */
 	float drop_prep[6], drop_gs[6], drop_upload_kb[6];
+	float last_interval;                          /* ms between the last two flips */
+	float obj_ms;
+	unsigned obj_visible, obj_culled, obj_batches, obj_tris, lod_level;   /* object pass, set by the caller */
 	int   overlay;                         /* draw the text overlay */
 	render_stats_t last;
 } profiler_t;
