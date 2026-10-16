@@ -21,6 +21,9 @@ BITMAP_FORMATS = {
     10: "x8r8g8b8", 11: "a8r8g8b8", 14: "dxt1", 15: "dxt3", 16: "dxt5", 17: "p8",
 }
 BITMAP_TYPES = {0: "2d", 1: "3d", 2: "cube"}
+SOUND_RATES = {0: "22050 Hz", 1: "44100 Hz"}
+SOUND_ENCODINGS = {0: "mono", 1: "stereo"}
+SOUND_COMPRESSIONS = {0: "16-bit PCM", 1: "Xbox ADPCM", 2: "IMA ADPCM", 3: "Ogg Vorbis"}
 
 
 @dataclass
@@ -85,13 +88,13 @@ class CacheMap:
                 yield t, w, h, d, ty, fmt, mips, psize
 
     def sounds(self):
-        """Yield (tag, sample_rate_enum, compression, encoding, perm_count, sample_bytes)."""
+        """Yield (tag, sample_rate, encoding, compression, perm_count, sample_bytes) (raw enums)."""
         for t in self.tags:
             if t.group != "snd!" or t.indexed:
                 continue
             d = self.off(t.data_addr)
             rate = struct.unpack_from("<H", self.buf, d + 6)[0]
-            comp, enc = struct.unpack_from("<HH", self.buf, d + 0x6C)
+            enc, comp = struct.unpack_from("<HH", self.buf, d + 0x6C)   # encoding precedes compression
             nranges, rfirst = self.reflexive(d, 0x98)
             perms = size = 0
             for r in range(nranges):
@@ -99,12 +102,12 @@ class CacheMap:
                 for p in range(pc):
                     perms += 1
                     size += struct.unpack_from("<I", self.buf, pfirst + 124 * p + 0x40)[0]
-            yield t, rate, comp, enc, perms, size
+            yield t, rate, enc, comp, perms, size
 
     def script_function_usage(self) -> tuple[int, dict[int, int]]:
         """(script node count, {built-in function index: function_name node count}).
 
-        Function names are not stored in the map; the index->name table is Phase 4 work.
+        Names are not stored in the map; see hsnames.load_names for the index->name table.
         """
         hdr = self.buf.find(b"script node", self.index_off)
         if hdr < 0:
