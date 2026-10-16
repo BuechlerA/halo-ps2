@@ -27,6 +27,8 @@ jobs:
     container: ps2dev/ps2dev:latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install make (the ps2dev image is minimal)
+        run: apk add --no-cache make || (apt-get update && apt-get install -y make)
       - name: Build EE ELF (includes the VU1 microprogram)
         run: make -C engine
       - uses: actions/upload-artifact@v4

@@ -73,6 +73,7 @@ int main(int argc, char **argv)
 	CHECK(lz4_decode(zero_offset, sizeof zero_offset, tiny, sizeof tiny) < 0);
 	CHECK(hp2_open(&pk, img, 10) == HP2_ERR_TRUNCATED);
 	CHECK(hp2_open(&pk, img + 1, n - 1) == HP2_ERR_MAGIC);
+	free(bad); free(t); free(z); free(buf); free(img);
 	puts("ok");
 	return 0;
 }

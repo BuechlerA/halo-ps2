@@ -54,6 +54,7 @@ int main(int argc, char **argv)
 	memcpy(copy, raw, sec->raw_size);
 	copy[64 + 32 + 2] = 33;                          /* first batch: 33 triangles > limit */
 	CHECK(bsp_open(&bad, copy, sec->raw_size) == BSP_ERR_LAYOUT);
+	free(copy); free(raw); free(img);
 	puts("ok");
 	return 0;
 }
