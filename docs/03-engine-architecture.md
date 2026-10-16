@@ -55,13 +55,22 @@ engines, except we also own the data converter.
 Rule of thumb: **the EE never touches a vertex** and **VU1 never touches game
 state**. The EE builds command lists; hardware executes them.
 
-## 3. Timing model: 30 Hz simulation, 60 Hz presentation
+## 3. Timing model: 30 Hz simulation, 30 fps presentation (60 fps stretch)
 
-Halo CE's simulation is a fixed 30 Hz tick. We keep that exactly (R3) and present
-at 60 Hz by **interpolating** between the previous and current tick for everything
-visible: object transforms, camera, animation node matrices, particle positions.
-This is the same technique MCC uses to run the engine above 30 fps, and it halves
-the simulation cost per rendered frame.
+Halo CE's simulation is a fixed 30 Hz tick. We keep that exactly (R3). **Current target (ADR-023): present at
+30 fps**, one frame per two vblanks, so the tick and the frame coincide: no interpolation, the render reads the
+state the tick just wrote (still through a snapshot, so the 60 fps path stays open).
+
+```
+ vblank:   |0        |1        |2        |3        |4
+ EE:       [tick k  ][prep k  ][stream     ] [tick k+1][prep k+1 ][stream     ]
+ VU1/GS:            [frame k - 1 (previous prep)    ] [frame k              ] ...
+ shown:    frame k-1 for two vblanks         frame k for two vblanks
+```
+
+**Stretch (60 fps, ADR-002/023):** present every vblank by **interpolating** between the previous and current
+tick for everything visible: object transforms, camera, animation node matrices, particle positions (the technique
+MCC uses to run the engine above 30 fps; it halves the simulation cost per rendered frame):
 
 ```
  vblank:   |0        |1        |2        |3        |4
@@ -72,10 +81,11 @@ the simulation cost per rendered frame.
 
 - `render/` consumes a double-buffered **render snapshot** (compact POD arrays of
   visible object transforms, node palettes, effect states) written by the tick;
-  it never reads live sim structures. Interpolation factor `alpha ∈ {0, 0.5}`.
-- Input is sampled every frame (60 Hz) but applied at tick boundaries, with the
-  look delta accumulated so aiming feels 60 Hz.
+  it never reads live sim structures. Interpolation factor `alpha = 0` at 30 fps, `{0, 0.5}` at 60.
+- Input is sampled every frame (30 Hz now, 60 Hz in the stretch) but applied at tick boundaries, with the
+  look delta accumulated.
 - One frame of latency is accepted (identical to the original's render-behind).
+- `fps 60` in `halo.cfg` switches the Phase 1 loop to one frame per vblank (used to compare headroom).
 
 ## 4. Memory model
 - **No heap after load.** `core/mem.c` provides arenas: `g_level_arena` (reset per

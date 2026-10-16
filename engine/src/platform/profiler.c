@@ -5,9 +5,10 @@
 
 #define WINDOW 60
 
-void profiler_init(profiler_t *p)
+void profiler_init(profiler_t *p, float drop_ms)
 {
 	memset(p, 0, sizeof *p);
+	p->drop_ms = drop_ms;
 	p->overlay = 1;
 	p->last_flip = timer_cycles();
 }
@@ -17,7 +18,7 @@ void profiler_frame(profiler_t *p, float prep_ms, float wait_ms, const render_st
 	float interval = timer_ms(p->last_flip, now);
 	p->last_flip = now;
 	bsp_render_timing(&p->vif_ms, &p->gs_ms);
-	if (p->frames > 0 && interval > 25.0f) {
+	if (p->frames > 0 && interval > p->drop_ms) {
 		if (p->drop_n < 6) {
 			p->drop_frame[p->drop_n] = p->frames; p->drop_prep[p->drop_n] = prep_ms;
 			p->drop_gs[p->drop_n] = p->gs_ms; p->drop_upload_kb[p->drop_n] = (float)(rs->upload_bytes / 1024);

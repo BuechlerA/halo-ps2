@@ -7,6 +7,7 @@
 
 typedef struct {
 	u32   frames, dropped, window_frames;
+	float drop_ms;
 	u32   last_flip;                       /* timer_cycles() at the previous flip */
 	float interval_acc, interval_max;      /* ms between flips */
 	float prep_acc, prep_max;              /* EE time to build a frame */
@@ -23,7 +24,8 @@ typedef struct {
 	render_stats_t last;
 } profiler_t;
 
-void profiler_init(profiler_t *p);
+/* `drop_ms`: a flip interval above this counts as a dropped frame (1.5 x the nominal frame time). */
+void profiler_init(profiler_t *p, float drop_ms);
 /* Call once per frame after the flip. `prep_ms`/`wait_ms` are this frame's EE times. */
 void profiler_frame(profiler_t *p, float prep_ms, float wait_ms, const render_stats_t *rs, u32 now_cycles);
 /* Fills `b` with the overlay for the most recent statistics. */

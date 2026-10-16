@@ -3,14 +3,15 @@
 > **Status: deferred to Phase 6 (ADR-022).** Day-to-day gates run on the PCSX2 interpreter; this document is kept
 > as the console procedure, the results so far, and the `halo.cfg` reference.
 
-M1 ([04-roadmap.md](04-roadmap.md)): **noclip fly-through of a30 and b40 at 60 fps on hardware with
+M1 ([04-roadmap.md](04-roadmap.md)): **noclip fly-through of a30 and b40 at 30 fps (the console runs below were made
+when the target was still 60, ADR-023) on hardware with
 < 1 % dropped frames; memory report under budget.** Everything below the line "Hardware" is the part
 that cannot be done in PCSX2 (ADR-009/015) and has not been done yet.
 
 ## What is already measured (PCSX2, `scripts/profile-m1.sh`, recompiler and interpreter)
-Scripted 36 s loops (`scripts/paths/{a30,b40,a10}.cfg`), 2160/2160/1800 frames: **0 dropped frames** on all
+Scripted 36 s loops (`scripts/paths/{a30,b40,a10}.cfg`; 1080/1080/900 frames at the 30 fps target, 2160/2160/1800 when run with `fps 60`): **0 dropped frames** at 30 fps and at 60 fps on all
 three, in both modes (identical to within 0.1 ms: the interpreter changes how PCSX2 executes, not its cycle
-model). Final tree (6 ms clip budget, colour-keyed trees, chroma-baked colours): EE frame build 4.8–8.7 ms on
+model). Final tree at 30 fps (EE build 6.3–8.5 ms average, peak 9.2 ms, `[prof]` reports fps=30.0; the 60 fps figures below are the earlier measurement) (6 ms clip budget, colour-keyed trees, chroma-baked colours): EE frame build 4.8–8.7 ms on
 average with peaks of 9.1 ms (b40 BSP 11 is the heaviest; the console measured 8.4/8.9 ms there, so the model is
 close for EE), VIF1 and GS 0.4–1.8 ms in the model (it does not model GS fill: the console showed ~7.9 ms and
 drops on b40, ADR-022), visible triangles 1.5–7.5 k, level arena 3.0–4.2 MB, texture cache at most 47 % full. These numbers only prove the pipeline, the EE-side cost and the
@@ -46,7 +47,7 @@ Needs: a PS2 running ps2link, the ELF, converted packs, `ps2client`, the TTY on 
    ```
    **ps2link's TTY does not carry the EE's `printf`** (only IOP messages and fragments), so add `overlay 1`
    and `hold 1` to `halo.cfg`: the profiler overlay shows FPS, frame count and DROPPED on screen, and
-   `frames 2160` ends the run (36 s) and holds the last frame so the final DROPPED can be read. On PCSX2
+   `frames 1080` ends the run (36 s at 30 fps) and holds the last frame so the final DROPPED can be read. On PCSX2
    the `[prof]`/`[done]` TTY lines are available. A running ELF cannot be replaced by `ps2client execee`:
    restart ps2link between runs (and do not use `ps2client reset`, it drops ps2link).
 3. Repeat with `scripts/paths/b40.cfg` (and a10 for a tight-interior look). **Pass: `dropped` < 1 % of
@@ -82,6 +83,7 @@ One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (op
 | `camera x y z yaw pitch` | start pose (degrees) | centre of the BSP bounds |
 | `pathkey t x y z yaw pitch` | scripted camera keys (seconds, looped, up to 24) | none |
 | `frames <n>` | stop after n frames, print `[done]` | run forever |
+| `fps 30/60` | frame rate: 30 = one frame per two vblanks (default, ADR-023), 60 = one per vblank | 30 |
 | `overlay 0/1` | profiler text | 1 |
 | `fog 1 near far r g b` | linear distance fog | off |
 | `sky r g b`, `horizon r g b` | gradient behind the world (top, horizon) | dark blue |

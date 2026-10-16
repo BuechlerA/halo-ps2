@@ -1,7 +1,7 @@
 # halo-ps2
 
 A from-scratch PlayStation 2 engine that plays the **Halo: Combat Evolved
-campaign** from the user's own Xbox disc, targeting a **locked 60 fps**.
+campaign** from the user's own Xbox disc, targeting a **locked 30 fps** (60 fps is a deferred stretch goal, ADR-023).
 
 > The repository contains no game assets. The pipeline converts a user-supplied
 > Xbox ISO locally; converted data stays in the gitignored `assets/` folder.
@@ -11,7 +11,7 @@ campaign** from the user's own Xbox disc, targeting a **locked 60 fps**.
 |---|---|
 | [docs/01-ps2-architecture.md](docs/01-ps2-architecture.md) | Hardware research: EE, VU0/VU1, GS, IOP, SPU2, DVD, toolchain |
 | [docs/02-specs.md](docs/02-specs.md) | Goals, hard requirements, frame/memory/VRAM budgets, conversion spec |
-| [docs/03-engine-architecture.md](docs/03-engine-architecture.md) | Processor assignment, 30 Hz tick / 60 Hz render, rendering pipeline, subsystems |
+| [docs/03-engine-architecture.md](docs/03-engine-architecture.md) | Processor assignment, 30 Hz tick and frame (60 fps stretch), rendering pipeline, subsystems |
 | [docs/04-roadmap.md](docs/04-roadmap.md) | Phases 0–6 with milestone gates and the risk register |
 | [docs/05-halo-ce-data.md](docs/05-halo-ce-data.md) | Xbox cache file format and what each tag group becomes |
 | [docs/06-decisions.md](docs/06-decisions.md) | Architecture decision records |

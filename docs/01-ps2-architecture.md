@@ -20,7 +20,7 @@ The PS2 is not a "weaker Xbox". It is a different machine:
 | I/O CPU | — | IOP: MIPS R3000A @ 36.9 MHz, 2 MB RAM (drives DVD, pads, memcard, SPU2) |
 | Storage | 5x DVD, 8 GB HDD | 4x DVD (~5 MB/s), no HDD assumed |
 | Output | 640×480 | 640×448i NTSC typical (480p possible with component cable) |
-| Halo CE shipped at | 30 fps, 640×480 | **our target: 60 fps** |
+| Halo CE shipped at | 30 fps, 640×480 | **our target: 30 fps** (60 later, ADR-023) |
 
 So the port is **roughly half the CPU, half the RAM, a tenth of the texture
 memory, no pixel shaders, and a 2× frame rate target**. That is why this is a

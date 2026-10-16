@@ -1,6 +1,7 @@
 # halo-ps2 — working notes for agents
 
-Port of Halo: Combat Evolved (Xbox) to PlayStation 2 at 60 fps. Read `docs/` in
+Port of Halo: Combat Evolved (Xbox) to PlayStation 2 at 30 fps (60 fps is the deferred
+stretch goal, ADR-023). Read `docs/` in
 order (01 → 06) before changing architecture; `docs/06-decisions.md` is the ADR log.
 
 ## Build / run

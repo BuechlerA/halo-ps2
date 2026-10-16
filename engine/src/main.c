@@ -1,4 +1,4 @@
-/* halo-ps2 — Phase 1: static world at 60 fps. Pipelined frame loop: the EE builds frame N+1
+/* halo-ps2 — Phase 1: static world at 30 fps (ADR-023; `fps 60` selects the stretch target). Pipelined frame loop: the EE builds frame N+1
  * (visibility, sort, DMA chain) while the GS draws frame N; ticks run every other vblank (ADR-002).
  * Boot options come from the optional host:halo.cfg (see core/config.h and docs/04-roadmap.md). */
 #include <kernel.h>
@@ -32,6 +32,8 @@ static camera_t   s_cam;
 static cam_path   s_path;
 static profiler_t s_prof;
 static text_batch_t s_text;
+static int        s_vblanks = 2;                /* vblanks per frame: 2 = 30 fps (default), 1 = 60 fps */
+#define VBLANK_S (1.0f / 59.94f)
 
 static void load_config(void)
 {
@@ -139,7 +141,9 @@ int main(int argc, char *argv[])
 	if (bsp_render_set_world(&s_arena, &s_world.bsp, &s_world.source)) return 1;
 	printf("[mem] level arena: %u KB used of %u KB\n", (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024));
 	setup_camera();
-	profiler_init(&s_prof);
+	s_vblanks = cfg_int(&s_cfg, "fps", 30) >= 60 ? 1 : 2;
+	printf("[cfg] target %d fps (%d vblank(s) per frame)\n", 60 / s_vblanks, s_vblanks);
+	profiler_init(&s_prof, 25.0f * (float)s_vblanks);
 	s_prof.overlay = (int)cfg_int(&s_cfg, "overlay", 1);
 	prime_finish();
 
@@ -150,14 +154,15 @@ int main(int argc, char *argv[])
 		unsigned down = pad_poll(&in);
 
 		if (down & PAD_BTN_START) s_prof.overlay ^= 1;
-		if (s_path.count) campath_eval(&s_path, (float)frame * (1.0f / 60.0f), &s_cam);
-		else flycam_update(&s_cam, &in, 1.0f / 60.0f);
+		if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
+		else flycam_update(&s_cam, &in, (float)s_vblanks * VBLANK_S);
 
 		if ((frame % 6) == 0) profiler_overlay(&s_prof, &s_text);   /* a few updates a second: float formatting is slow */
 		bsp_render_build(frame, &s_cam, &s_text);          /* overlaps the GS drawing frame-1 */
 		t1 = timer_cycles();
 		bsp_render_wait_gpu();
 		video_flip(&s_video);                              /* GS finish of frame-1 + vsync + display */
+		{ int v; for (v = 1; v < s_vblanks; v++) graph_wait_vsync(); }   /* 30 fps: hold the picture for the extra vblank(s) */
 		t2 = timer_cycles();
 
 		profiler_frame(&s_prof, timer_ms(t0, t1), timer_ms(t1, t2), bsp_render_stats(), t2);

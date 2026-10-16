@@ -35,9 +35,10 @@ skeleton already starts.**
 **Gate M0**: ELF runs at 60 Hz on hardware with a VU1-drawn triangle; every
 campaign map decompresses and inventories cleanly.
 
-## Phase 1 — Static world at 60 fps (≈ 4 pm)
+## Phase 1 — Static world at 30 fps (≈ 4 pm; built and first measured at 60)
 Prove the rendering budget on the hardest static content before writing gameplay.
-**Status: complete. Gate M1 is met on the PCSX2 interpreter (ADR-022); the partial console results and the
+**Status: complete. The target was lowered from 60 to 30 fps after the phase was finished (ADR-023); the 60 fps numbers below
+remain valid as headroom and the 30 fps numbers are in the Gate M1 line. Gate M1 is met on the PCSX2 interpreter (ADR-022); the partial console results and the
 open findings are recorded below and in [10-m1-hardware-check.md](10-m1-hardware-check.md) and move to Phase 6.**
 
 - [x] `.hp2` pack format v1 ([07-hp2-format.md](07-hp2-format.md)): container,
@@ -83,20 +84,20 @@ Known limitations carried out of Phase 1 (none blocks the gate, each is a measur
 - Confirmed on the console (2026-10-16): CSM1 CLUT swap, PSMT4 8x2 CLUT, nibble order. Still console-only questions: lightmap gain /
   overall look, pad behaviour (Phase 6).
 
-**Gate M1**: noclip fly-through of **a30 and b40** at 60 fps with < 1 % dropped frames; memory report under
-budget. **Met on the PCSX2 interpreter** (0 dropped on a30, b40 and a10 in recompiler and interpreter modes, final tree 2026-10-16; EE build ≤ 9.1 ms; level arena ≤ 4.2 MB); console verification in Phase 6.
+**Gate M1**: noclip fly-through of **a30 and b40** at 30 fps (earlier measured at 60) with < 1 % dropped frames; memory report under
+budget. **Met on the PCSX2 interpreter** (0 dropped on a30, b40 and a10 in recompiler and interpreter modes at 30 fps and at 60 fps, final tree 2026-10-16; EE build ≤ 9.2 ms; level arena ≤ 4.2 MB); console verification in Phase 6.
 
 ## Phase 2 — Objects, animation, first person (≈ 4 pm)
 - Converter: `model`/`gbxmodel` → VU1 strips with LOD chain; `model_animations`
   → quantised tracks; `scenario` placements
 - Engine: object table, node matrices, `model_rigid`/`model_skin` programs,
   per-object lighting from BSP probes, LOD by screen size, scenery/devices
-  placed, animation playback with interpolation at 60 Hz, first-person arms +
+  placed, animation playback at the 30 Hz tick (interpolation only for the 60 fps stretch), first-person arms +
   weapon models, Master Chief third-person for cutscenes
 - Dynamic LOD controller (draw-distance/particle caps) wired to the profiler
 
 **Gate M2**: a10 fully populated (all scenery, placed vehicles, idle bipeds
-animating) at 60 fps on hardware.
+animating) at 30 fps.
 
 ## Phase 3 — Player, physics, weapons, HUD (≈ 5 pm)
 - Collision BSP + collision models; biped movement, stairs/slopes, crouch, jump
@@ -109,7 +110,7 @@ animating) at 60 fps on hardware.
 - Checkpoint snapshot/revert in RAM
 
 **Gate M3**: "shooting gallery" — walk a10's first BSP, shoot placed targets,
-all weapons functional, 60 fps.
+all weapons functional, 30 fps.
 
 ## Phase 4 — AI, scripting, mission 1 complete (≈ 8 pm)
 The core reverse-engineering phase.
@@ -122,7 +123,7 @@ The core reverse-engineering phase.
 - BSP transitions, mission objectives, death/respawn, memory card saves
 
 **Gate M4**: **The Pillar of Autumn completable start to finish on Legendary on
-hardware at 60 fps.**
+at 30 fps.**
 
 ## Phase 5 — Campaign breadth (≈ 12 pm)
 One mission at a time, each adding its systems; order chosen so each adds the
@@ -143,8 +144,9 @@ minimum new tech:
 **Gate M5**: all 10 missions completable on hardware; R2 holds per mission.
 
 ## Phase 6 — Hardening and release build (≈ 3 pm)
-- 60 fps hardening pass across the worst encounters (Library, Control Room
-  bridges, Maw run) with the profiler's per-encounter logs
+- 30 fps hardening pass across the worst encounters (Library, Control Room
+  bridges, Maw run) with the profiler's per-encounter logs; then evaluate the 60 fps stretch (ADR-023): interpolation
+  path, measured headroom per mission, go/no-go recorded as an ADR
 - Memory card save UI, difficulty select, settings, attract/intro video (`.pss`)
 - Disc build: `scripts/build-iso.sh` (seek-aware layout, ≤ 4.37 GiB), boot on
   fat/slim; PAL 50 Hz mode (sim stays 30 Hz, render 50 Hz with 3:5 interpolation)
@@ -158,7 +160,7 @@ minimum new tech:
 
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| 1 | **60 fps unreachable in heavy encounters** (Library) | High | Project-defining | 30 Hz tick + interpolation halves sim cost; AI LOD (distant actors tick at 10 Hz); strict pools; dynamic LOD controller; measure at M1/M2 before committing further |
+| 1 | **30 fps unreachable in heavy encounters** (Library); 60 fps is the stretch (ADR-023) | Medium | Project-defining | AI LOD (distant actors tick at 10 Hz); strict pools; dynamic LOD controller; measure at M1/M2 before committing further |
 | 2 | 32 MB too small for resident data | High | High | Half-res palettised textures, per-BSP streaming, animation quantisation, drop unused permutations per mission (converter prunes by reachability) |
 | 3 | Lightmap colour loss (luminance + vertex chroma) looks wrong in Covenant purple interiors | Medium | Medium | Optional 3-pass per-channel path for selected clusters; evaluate at M1 |
 | 4 | AI behaviour fidelity (no source) | High | High | Build a behaviour test harness: record Xbox encounters (video) and compare; community documentation of `actor_variant` fields |
@@ -169,12 +171,13 @@ minimum new tech:
 | 9 | Save size vs. memory card speed | Low | Medium | Compact serialisation, ≤ 512 KB |
 | 10 | Legal: repository must stay asset-free | — | Project-ending | R7, CI check, docs only describe formats |
 
-## What "60 fps" costs, stated plainly
-Halo CE ran at 30 fps on hardware with roughly twice the CPU and RAM of a PS2 and
-a far more capable GPU. Holding 60 on PS2 means: half-resolution palettised
-textures, no bump/specular/detail maps, re-tuned LOD distances, 16-bit colour,
-fewer simultaneous particles, and AI/physics code written from the start for the
-EE's cache. The 30 Hz tick with interpolation is the single decision that makes
-the target plausible; everything else is budget discipline. If M1 or M2 misses
-budget by more than 30 % on hardware, the fallback order is: 640→512 width
-(already default), Z24→Z16S, then field rendering — **never** a 30 fps target.
+## What the frame-rate target costs, stated plainly
+Halo CE ran at 30 fps on hardware with roughly twice the CPU and RAM of a PS2 and a far more capable GPU. **The
+current target is 30 fps (ADR-023)**: it already means half-resolution palettised textures, no bump/specular/detail
+maps, re-tuned LOD distances, 16-bit colour, fewer simultaneous particles, and AI/physics code written from the
+start for the EE's cache, but every budget has a 33 ms slot instead of 16.7 ms. **60 fps is the stretch**: the
+30 Hz tick with render interpolation (ADR-002, [03-engine-architecture.md](03-engine-architecture.md) §3) is the decision
+that would make it plausible, and everything else would be budget discipline; Phase 1 already runs there on PCSX2
+(`fps 60`), while the console showed the GS side is the unmeasured risk (ADR-022). If M1 or M2 misses budget by more
+than 30 % at 30 fps, the fallback order is: 640→512 width (already default), Z24→Z16S, then field rendering; the
+target itself only moves again by a new ADR.

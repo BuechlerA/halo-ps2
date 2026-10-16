@@ -10,6 +10,7 @@ different GPU model; the data carries the game. **Consequence**: AI and
 scripting semantics must be reverse-engineered behaviourally (risk #4).
 
 ## ADR-002 30 Hz simulation tick, 60 Hz presentation with interpolation
+**Presentation rate superseded by ADR-023** (30 fps for now; the interpolation design is kept for the 60 fps stretch).
 **Decision**: Keep Halo's fixed 30 Hz tick; render every vblank by
 interpolating render snapshots. **Why**: preserves gameplay timing exactly and
 halves per-frame sim cost; it is the only way 60 fps is plausible. **Consequence**:
@@ -197,6 +198,22 @@ overlay now logs the first dropped frames with EE/GS ms and upload KB); lightmap
 the clip budget (6 ms) versus frame time on the console; EE `printf` over ps2link.
 **Consequences**: roadmap gates read "on the PCSX2 interpreter" until Phase 6; risk #8 stays High and is retired only by the
 Phase 6 console pass; R8 in [02-specs.md](02-specs.md) changes accordingly.
+
+## ADR-023 The frame-rate target is 30 fps for now; 60 fps is a deferred stretch goal
+**Decision**: the current target is a **locked 30 fps**: one frame per two vblanks (29.97 Hz), simulation tick and
+presentation both at 30 Hz, no render interpolation. 60 fps (one frame per vblank, 30 Hz tick with interpolation, ADR-002)
+stays the stretch goal and is revisited after Phase 4, or earlier if the budgets show the room; the code keeps it one
+setting away (`fps 60` in `halo.cfg`, the interpolation design in [03-engine-architecture.md](03-engine-architecture.md) §3).
+Supersedes the 60 fps wording of ADR-002, R2 and the "never a 30 fps target" rule of the roadmap.
+**Why**: the Phase 1 renderer already holds 60 fps in PCSX2, but the console runs showed the GS side (unmeasured in PCSX2) is
+the first thing to run out (b40 BSP 11: 1.86 % dropped at 60), and everything still to come (objects, skinning, AI, particles,
+scripting) adds to both processors. Halo CE itself shipped at 30. Fixing the target at 30 buys every budget a factor two and
+removes the interpolation machinery from the critical path while the content systems are written.
+**Consequences**: frame budgets are 33.3 ms ([02-specs.md](02-specs.md) §5.1; sim and prep no longer share a 16.7 ms slot);
+a "dropped frame" is a flip interval above 1.5 frames (50 ms; the profiler's `drop_ms`); R2 counts those. Geometry and fill
+budgets are *not* raised (GS cost is still unmeasured on hardware, ADR-022): the extra time is margin. Measurements taken at
+60 fps (Phase 1 console runs) are kept in the docs as they were, labelled as 60 fps results. The risk register's "60 fps
+unreachable" entry becomes "30 fps unreachable in heavy encounters", and 60 fps is tracked as a stretch evaluation in Phase 6.
 
 ## Open decisions
 None.
