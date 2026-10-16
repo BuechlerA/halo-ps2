@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -I tools/tests/test_mapinfo.py
+      - run: python3 -I tools/tests/test_tagindex.py
+  engine:
+    runs-on: ubuntu-latest
+    container: ps2dev/ps2dev:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C engine PS2DEV=/usr/local/ps2dev
+      - uses: actions/upload-artifact@v4
+        with: { name: halo-ps2.elf, path: engine/halo-ps2.elf }

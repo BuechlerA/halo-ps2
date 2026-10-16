@@ -14,14 +14,15 @@ skeleton already starts.**
 - [x] `tools/halo2ps2/mapinfo.py`: parse Xbox cache headers, decompress maps
 - [x] Boot `halo-ps2.elf` on PCSX2: 512×448 CT16S/Z24, 60 Hz vsync loop
       (300 frames / 5.0 s, 0 dropped), VU1 program runs, profiler text over TTY
-- [ ] Same on real hardware (ps2link); visually confirm the VU1 triangle
+- [x] Same on real hardware (ps2link); VU1 triangle renders and moves (confirmed by Alex)
 - [x] Header inventory of all maps → [reports/map-headers.txt](reports/map-headers.txt)
-- [ ] Decompress all 10 campaign maps; produce tag inventory per map (group
-      counts, raw data sizes, bitmap formats/resolutions, sound formats, script
-      built-in usage); commit the **reports** (not the data) to `docs/reports/`
-- [ ] Choose pipeline parser: `reclaimer` (Python, has Xbox tag definitions) vs
-      hand-written structs; record in [06-decisions.md](06-decisions.md)
-- [ ] CI: build ELF + run tool unit tests on every push
+- [x] Decompress all 10 campaign maps; tag inventory per map (group counts,
+      bitmap formats/resolutions/bytes, sound permutations/bytes, script
+      built-in usage by index) → [reports/tag-inventory.md](reports/tag-inventory.md)
+      (`tools/halo2ps2/report.py`; sound enums raw, built-in names resolved in Phase 4)
+- [x] Pipeline parser: hand-written structs (ADR-011), `tools/halo2ps2/tagindex.py`
+- [x] CI: `.github/workflows/ci.yml` builds the ELF (ps2dev image) + runs tool
+      tests on every push (workflow not yet run on GitHub)
 
 **Gate M0**: ELF runs at 60 Hz on hardware with a VU1-drawn triangle; every
 campaign map decompresses and inventories cleanly.
