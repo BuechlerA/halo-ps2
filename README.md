@@ -17,6 +17,7 @@ campaign** from the user's own Xbox disc, targeting a **locked 30 fps** (60 fps 
 | [docs/06-decisions.md](docs/06-decisions.md) | Architecture decision records |
 | [docs/07-hp2-format.md](docs/07-hp2-format.md), [08-bsp-section.md](docs/08-bsp-section.md), [09-tex-section.md](docs/09-tex-section.md) | Pack container, BSP geometry and texture/lightmap sections |
 | [docs/11-model-section.md](docs/11-model-section.md), [12-anim-section.md](docs/12-anim-section.md), [13-scen-section.md](docs/13-scen-section.md) | Object models, animations, scenario placements and lighting |
+| [docs/14-xbox-reference.md](docs/14-xbox-reference.md) | xemu setup for Xbox parity checks (boot files are user-supplied) |
 | [docs/10-m1-hardware-check.md](docs/10-m1-hardware-check.md) | Console procedure (deferred to Phase 6) and the `halo.cfg` reference |
 
 ## Layout

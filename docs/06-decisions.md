@@ -284,5 +284,14 @@ instead of the `fog` key (default off: the sky's own fog values are tuned for Xb
 **Consequences**: the sky costs about one extra textured-triangle pass of EE time (see docs/04-roadmap.md Phase 2 for numbers); sky model animation
 (a30 clouds drift) and the second a30 sky (switched by script) are not handled; a10's sky (space) draws the same way.
 
+## ADR-030 xemu is the Xbox reference emulator for parity checks
+**Decision**: the original Xbox build is run in xemu (Homebrew cask, `/Applications/xemu.app`) from `scripts/xemu-setup.sh` / `scripts/xemu-run.sh`,
+with a project-local config under `assets/xemu/` and the user-supplied MCPX ROM, flash BIOS and HDD image kept outside the repository
+(procedure in [14-xbox-reference.md](14-xbox-reference.md)).
+**Why**: parity questions (lighting, bump/specular, sky, object placement) were answered only from tag data and `refrender.py`; a running
+reference gives the picture the port is meant to match. xemu is the maintained Xbox emulator and runs natively on Apple silicon.
+**Consequences**: the boot files cannot be redistributed or downloaded by scripts, so a fresh checkout cannot boot the reference until the user
+supplies them; xemu timings say nothing about Xbox performance, so it is used for picture parity only. Not yet booted with real files.
+
 ## Open decisions
 None.
