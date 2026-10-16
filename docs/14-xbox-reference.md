@@ -6,7 +6,7 @@ Xbox data leaves `assets/` or the ISO, and nothing here is part of the engine.
 
 ## What you need to supply
 xemu will not start without Microsoft's boot files; they are not in the repository and the setup script never downloads them.
-Dump them from your own console (or use files you already own) and put them in one folder, default `~/Developer/xbox-bios/`:
+Dump them from your own console (or use files you already own) and put them in one folder, default `~/Developer/xbox-bios/` (files may sit one subfolder down, e.g. `mcpx/`, `bios/`, `hdd/`):
 
 | File | What | Check |
 |---|---|---|
@@ -27,9 +27,10 @@ The config is project-local (`-config_path`), so your global xemu settings stay 
 Each git worktree has its own `assets/`, so rerun setup in a new worktree (it only rewrites the config).
 
 ## Status
-Scripts are tested only against stand-in files (error paths, size checks, config generation, argument assembly). **Not yet booted:**
-the real boot files were not on the machine when this was written, so the first real boot, controller mapping and the xemu
-`[sys.files]` key names should be confirmed once the files are in place.
+Booted on 2026-10-17 (xemu 0.8.137, M4 Max, MCPX 1.0 + Complex 4627 BIOS): the Halo ISO reaches the Bungie logo. Not yet checked: gameplay,
+controller mapping, screenshots of a mission. A config without `[general] show_welcome = false` made xemu start without `-bios`
+(log: `Failed to load BIOS '(null)'`); the generated config sets it, cause beyond that is not investigated. xemu's log is the quickest
+check: `Created QEMU launch parameters` must contain `-bios`.
 
 ## Using it for parity (next steps, not done)
 - Same-camera comparison: Halo's debug camera and `cheat_*` console are not available on a retail build, so the practical route is
