@@ -18,12 +18,18 @@ skeleton already starts.**
       (2026-10-16: triangle matches PCSX2 on the console; hardware TTY / frame
       pacing numbers not captured yet)
 - [x] Header inventory of all maps → [reports/map-headers.txt](reports/map-headers.txt)
-- [ ] Decompress all 10 campaign maps; produce tag inventory per map (group
+- [x] Decompress all 10 campaign maps; produce tag inventory per map (group
       counts, raw data sizes, bitmap formats/resolutions, sound formats, script
-      built-in usage); commit the **reports** (not the data) to `docs/reports/`
-- [ ] Choose pipeline parser: `reclaimer` (Python, has Xbox tag definitions) vs
-      hand-written structs; record in [06-decisions.md](06-decisions.md)
-- [ ] CI: build ELF + run tool unit tests on every push
+      built-in usage, structure BSP counts) →
+      [reports/tag-inventory.md](reports/tag-inventory.md) (reports only, no data)
+- [x] Choose pipeline parser: hand-written structs, ADR-011
+- [x] CI: `.github/workflows/ci.yml` builds the ELF (ps2dev image), runs the tool
+      tests, the host C tests and the asset-free check on every push
+      (green on GitHub; its first run caught two real failures: LeakSanitizer on Linux
+      and `make` missing from the ps2dev image)
+- [x] Frame pacing without hardware: `scripts/profile-pcsx2.sh --interpreter`
+      (ADR-015). 600 frames, 0 dropped, EE 0.05 ms avg/0.06 ms max per frame.
+      Real-console TTY numbers are deferred to the M1 hardware check.
 
 **Gate M0**: ELF runs at 60 Hz on hardware with a VU1-drawn triangle; every
 campaign map decompresses and inventories cleanly.
@@ -31,7 +37,20 @@ campaign map decompresses and inventories cleanly.
 ## Phase 1 — Static world at 60 fps (≈ 4 pm)
 Prove the rendering budget on the hardest static content before writing gameplay.
 
-- `.hp2` pack format v1: `RES`/`BSP`/`TEX` sections, LZ decoder on EE
+- [x] `.hp2` pack format v1 ([07-hp2-format.md](07-hp2-format.md)): container,
+      Python writer/reader (`tools/halo2ps2/hp2.py`), LZ4 block codec, EE-side
+      reader (`engine/src/stream/hp2.c`) cross-tested on the host
+- [x] BSP block location and per-BSP summary (`tools/halo2ps2/bsp.py`): clusters,
+      leaves, nodes, triangles, lightmap materials, vertex counts for all 11 maps
+- [x] Converter, first cut: `tools/halo2ps2/bspconv.py` bakes every BSP of all 11
+      maps into per-material triangle batches of VIF `UNPACK` packets
+      ([08-bsp-section.md](08-bsp-section.md)), read back by `engine/src/world/bsp.c`.
+      Largest section 2.73 MiB raw (a10 BSP 6; Xbox block 8.2 MiB), well under the
+      7 MB BSP budget; round trip error ≤ radius/65534 per batch (worst absolute
+      0.023 units on b30's sky-sized batches), lightmap uv ≤ 2e-3.
+      Not yet baked: per-cluster grouping and portals, collision, strips, lightmap
+      atlases, texture conversion; no VU1 program or draw path consumes it yet
+- Remaining items below
 - Converter: `structure_bsp` render geometry → per-cluster baked VIF packets;
   bitmaps → PSMT8/PSMT4 with mips; lightmaps → luminance atlases + vertex chroma
 - Engine: free-fly camera, cluster/portal visibility, `bsp_lit` + `bsp_lightmap`

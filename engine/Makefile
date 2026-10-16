@@ -9,6 +9,8 @@ EE_BIN  = halo-ps2.elf
 EE_OBJS = src/main.o \
           src/platform/video.o \
           src/render/vu1_tri.o \
+          src/stream/hp2.o \
+          src/world/bsp.o \
           src/vu1/tri.o
 EE_LIBS = -ldraw -lgraph -lmath3d -lpacket2 -ldma
 EE_INCS = -Isrc

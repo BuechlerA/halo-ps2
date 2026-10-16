@@ -8,7 +8,8 @@ order (01 → 06) before changing architecture; `docs/06-decisions.md` is the AD
   `PS2DEV`/`PS2SDK`/`PATH` itself; no shell setup needed.
 - `make -C engine` → `engine/halo-ps2.elf`. `make -C engine clean`.
 - `scripts/run-pcsx2.sh` boots the ELF in PCSX2. Hardware: `ps2client -h <ip> execee host:engine/halo-ps2.elf`.
-- Tools: `python3 -I tools/tests/test_mapinfo.py` (no game data needed).
+- Tools: `for t in tools/tests/test_*.py; do python3 -I $t; done` (no game data needed); engine host tests: `make -C engine/tests`.
+- Frame pacing in PCSX2 without hardware: `scripts/profile-pcsx2.sh --interpreter` (ADR-015).
 - Game data lives only in `assets/` and `*.iso` (both gitignored). Never commit it,
   never copy tag data into docs or tests.
 

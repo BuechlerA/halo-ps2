@@ -85,5 +85,23 @@ branding and credits only; it costs disc space and IPU work. Closes OD-3.
 GPLv3 helpers in ADR-008, with an explicit patent grant. Closes OD-4.
 Supersedes the "engine keeps its own licence" clause of ADR-008.
 
+## ADR-015 PCSX2 interpreter stands in for hardware between milestone gates
+**Decision**: day-to-day development checks frame pacing and correctness in PCSX2
+with all recompilers off (`scripts/profile-pcsx2.sh --interpreter`), run headless
+against a scratch copy of the user's config. The real-console check required by
+every milestone gate still happens, but only at gates M1 onwards, not per commit.
+**Why**: iteration speed. The interpreter is the closest PCSX2 gets to unmodelled
+instruction cost and exposes timing bugs the JIT hides, but it does not model
+real DMA/cache timing, so it cannot replace the gate. Phase 0's hardware visual
+check (triangle) is done; hardware TTY/pacing numbers are not and are folded
+into M1. **Consequence**: roadmap items checked off by interpreter runs say so.
+
+## ADR-016 `.hp2` ships LZ4 blocks until the custom codec wins
+**Decision**: pack format v1 stores sections raw or as standard LZ4 blocks
+(codec ids 0/1) with a per-section CRC-32 of the raw data and 2048-byte section
+alignment. The custom EE codec of ADR-012 gets a new codec id if it is adopted.
+**Why**: a standard codec lets any LZ4 tool inspect payloads and lets the Python
+writer and C reader check each other; nothing downstream depends on the codec.
+
 ## Open decisions
 None.
