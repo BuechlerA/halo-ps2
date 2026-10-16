@@ -58,9 +58,12 @@ Campaign total **≈ 1.49 GiB** compressed. Measured with
 | Resident tag data (index + all non-BSP tags, incl. animations, collision, AI, scripts) | 8.5 MiB (`c20`) | 16.2 MiB (`b40`) |
 | Share of the Xbox tag-space limit (23 MiB, `0x1700000`) | 37 % | 70.5 % |
 
-Everything else in a cache file is raw data streamed by the Xbox engine: model
-vertex/index buffers, bitmap pixels, sound samples and the structure BSPs. Our
-resident budget (9 MB, below) is ~55 % of the worst-case Xbox tag data, so
+Of that tag data, 2.3–4.9 MiB per map is model vertex data (converted to VU1
+strips on PS2) and 5.9–11.0 MiB is tag structs
+([reports/tag-inventory.md](reports/tag-inventory.md)). Everything else in a
+cache file is raw data streamed by the Xbox engine: bitmap pixels, sound samples
+and the structure BSPs. Our resident budget (9 MB, below) covers both the
+structs and the converted models, i.e. ~55 % of the worst-case Xbox figure, so
 conversion must shrink data (quantised animations, pruned permutations,
 pointer-free layouts), not just reformat it.
 
