@@ -58,8 +58,32 @@ hazards faithfully.
 **Why**: split-screen at 60 fps is not credible on this hardware; the goal is the
 campaign.
 
-## Open decisions (to be closed in Phase 0/1)
-- OD-1 Parser backend for Xbox tags: Reclaimer vs. hand-written (Phase 0).
-- OD-2 On-disc compression codec: LZ4-style vs. custom (needs EE decode speed test).
-- OD-3 Keep Bink intro/credits as `.pss` or drop (disc space, IPU work).
-- OD-4 Engine licence.
+## ADR-011 Xbox tag parsers are hand-written
+**Decision**: the tag parsers in `tools/` are written by hand from
+`docs/05-halo-ce-data.md`, for the tag types we consume (bitmap, model, BSP,
+scenario, sound, ...). Reclaimer stays an optional cross-check oracle in tests
+only. **Why**: we own every byte layout and Xbox quirk, avoid a hard dependency,
+and need only a handful of tag types. Closes OD-1.
+
+## ADR-012 On-disc codec: custom, LZ4 as fallback
+**Decision**: develop a custom codec tuned for the EE (16-byte-aligned tokens,
+128-bit `lq`/`sq` copies). It is adopted only if it beats an LZ4 port on real tag
+data in decode MB/s or ratio, measured on hardware; otherwise ship LZ4.
+**Why**: the EE is in-order with an 8 KB D-cache and no unaligned loads, so
+byte-wise LZ4 copies are a poor fit. Closes OD-2.
+
+## ADR-013 Bink intro/credits dropped until campaign runs end to end
+**Decision**: no intro or credits video until the campaign plays start to finish.
+Revisit then as `.pss` MPEG-2 (budget in `02-specs.md`). In-game cutscenes are
+real-time scenario/`camera_track` driven and are unaffected. **Why**: video is
+branding and credits only; it costs disc space and IPU work. Closes OD-3.
+
+## ADR-014 Engine licence: GPL-3.0-or-later
+**Decision**: `engine/` and `tools/` are both GPL-3.0-or-later (SPDX
+`GPL-3.0-or-later`). Game data is never part of the repo or the licence.
+**Why**: a single copyleft licence for the whole project, compatible with the
+GPLv3 helpers in ADR-008, with an explicit patent grant. Closes OD-4.
+Supersedes the "engine keeps its own licence" clause of ADR-008.
+
+## Open decisions
+None.
