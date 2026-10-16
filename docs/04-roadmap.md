@@ -14,7 +14,9 @@ skeleton already starts.**
 - [x] `tools/halo2ps2/mapinfo.py`: parse Xbox cache headers, decompress maps
 - [x] Boot `halo-ps2.elf` on PCSX2: 512×448 CT16S/Z24, 60 Hz vsync loop
       (300 frames / 5.0 s, 0 dropped), VU1 program runs, profiler text over TTY
-- [ ] Same on real hardware (ps2link); visually confirm the VU1 triangle
+- [x] Same on real hardware (ps2link); visually confirm the VU1 triangle
+      (2026-10-16: triangle matches PCSX2 on the console; hardware TTY / frame
+      pacing numbers not captured yet)
 - [x] Header inventory of all maps → [reports/map-headers.txt](reports/map-headers.txt)
 - [ ] Decompress all 10 campaign maps; produce tag inventory per map (group
       counts, raw data sizes, bitmap formats/resolutions, sound formats, script
