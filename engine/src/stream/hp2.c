@@ -15,18 +15,18 @@ uint32_t hp2_crc32(const uint8_t *p, size_t n)
 	return ~crc;
 }
 
-hp2_status hp2_open(hp2_pack *pk, const uint8_t *image, size_t size)
+static hp2_status open_common(hp2_pack *pk, const uint8_t *image, size_t avail, size_t file_size)
 {
 	memset(pk, 0, sizeof *pk);
-	if (size < 64) return HP2_ERR_TRUNCATED;
+	if (avail < 64) return HP2_ERR_TRUNCATED;
 	if (memcmp(image, "HP2P", 4) != 0 || rd16(image + 4) != 1) return HP2_ERR_MAGIC;
 	pk->count = rd16(image + 6);
-	if (pk->count > HP2_MAX_SECTIONS || rd32(image + 8) != size) return HP2_ERR_LAYOUT;
-	if (64u + 32u * pk->count > size) return HP2_ERR_TRUNCATED;
+	if (pk->count > HP2_MAX_SECTIONS || rd32(image + 8) != file_size) return HP2_ERR_LAYOUT;
+	if (64u + 32u * pk->count > avail) return HP2_ERR_TRUNCATED;
 	memcpy(pk->name, image + 0x10, 16);
 	pk->name[16] = 0;
 	pk->image = image;
-	pk->size = size;
+	pk->size = file_size;
 	for (uint32_t i = 0; i < pk->count; i++) {
 		const uint8_t *e = image + 64 + 32 * i;
 		hp2_section *s = &pk->sections[i];
@@ -39,9 +39,19 @@ hp2_status hp2_open(hp2_pack *pk, const uint8_t *image, size_t size)
 		s->crc32 = rd32(e + 20);
 		s->align = rd32(e + 24);
 		if (s->offset % HP2_SECTOR) return HP2_ERR_LAYOUT;
-		if (s->offset > size || s->stored_size > size - s->offset) return HP2_ERR_TRUNCATED;
+		if (s->offset > file_size || s->stored_size > file_size - s->offset) return HP2_ERR_TRUNCATED;
 	}
 	return HP2_OK;
+}
+
+hp2_status hp2_open(hp2_pack *pk, const uint8_t *image, size_t size)
+{
+	return open_common(pk, image, size, size);
+}
+
+hp2_status hp2_open_header(hp2_pack *pk, const uint8_t *hdr, size_t hdr_size, size_t file_size)
+{
+	return open_common(pk, hdr, hdr_size, file_size);
 }
 
 const hp2_section *hp2_find(const hp2_pack *pk, const char *tag)
@@ -90,9 +100,8 @@ long lz4_decode(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
 	return (long)o;
 }
 
-hp2_status hp2_load(const hp2_pack *pk, const hp2_section *s, uint8_t *dst, size_t cap)
+hp2_status hp2_load_stored(const hp2_section *s, const uint8_t *stored, uint8_t *dst, size_t cap)
 {
-	const uint8_t *stored = pk->image + s->offset;
 	if (cap < s->raw_size) return HP2_ERR_SPACE;
 	if (s->codec == HP2_CODEC_STORED) {
 		if (s->stored_size != s->raw_size) return HP2_ERR_LAYOUT;
@@ -104,4 +113,9 @@ hp2_status hp2_load(const hp2_pack *pk, const hp2_section *s, uint8_t *dst, size
 		return HP2_ERR_CODEC;
 	}
 	return hp2_crc32(dst, s->raw_size) == s->crc32 ? HP2_OK : HP2_ERR_CRC;
+}
+
+hp2_status hp2_load(const hp2_pack *pk, const hp2_section *s, uint8_t *dst, size_t cap)
+{
+	return hp2_load_stored(s, pk->image + s->offset, dst, cap);
 }

@@ -204,30 +204,38 @@ upload bytes, triangle counts, dropped frames).
 
 ```
 engine/
-  Makefile                 ps2sdk-style; builds halo-ps2.elf
+  Makefile                 ps2sdk-style; builds halo-ps2.elf (dependency files, host tests in tests/)
   src/
-    main.c                 boot, frame scheduler
-    platform/              video.c timer.c pad.c sif.c profiler.c
-    core/                  mem.c (arenas/pools) math.h (VU0 inline) log.c
-    render/                frame.c visibility.c materials.c textures.c chains.c
-    vu1/                   *.vsm microprograms (+ host-side loaders)
-    world/                 bsp.c clusters.c pack.c
-    stream/                hp2.c lz.c
-    sim/                   objects.c physics.c damage.c units.c weapons.c devices.c
-    anim/                  animations.c
-    ai/                    actors.c encounters.c pathfinding.c
-    script/                hsc.c builtins/*.c
-    audio/                 sound.c looping.c
-    ui/                    hud.c menus.c fonts.c
-    save/                  checkpoint.c memcard.c
+    main.c                 boot, halo.cfg, pipelined frame loop
+    platform/              video.c pad.c fbdump.c profiler.c timer.h
+    core/                  mem.c (arenas) config.c (halo.cfg)
+    render/                bsp_render.c (frame build + kick)  vis.c (cluster/portal visibility)
+                           camera.c flycam.c  clip.c (EE clipper)  chain.c upload.c gs.h (DMA/GS encodings)
+                           texcache.c (VRAM residency)  text.c (overlay font)  selftest.c
+    vu1/                   bsp.vsm (bsp_lit + bsp_lightmap entry points)
+    world/                 bsp.c (BSPS v2 reader)  tex.c (TEXS/LMn reader)  world.c (loading, texture source)
+    stream/                hp2.c file.c
+    sim/ anim/ ai/ script/ audio/ ui/ save/    later phases
 iop/
   hstream/ hsound/         IRX modules (IOP toolchain)
 tools/
-  halo2ps2/                Python pipeline: map parsing → .hp2 packs
-scripts/                   extract-iso.sh, run-pcsx2.sh, build-iso.sh (later)
+  halo2ps2/                Python pipeline: map parsing -> .hp2 packs (bsp, bspconv, bitmaps, texconv, ...)
+scripts/                   run-pcsx2.sh run-headless.sh profile-pcsx2.sh profile-m1.sh build-world.sh
+                           fb2png.py campos.py scout-views.py refrender.py paths/*.cfg
 docs/                      this folder
 assets/                    gitignored: extracted ISO, converted packs
 ```
+
+Pure-C modules (everything except `platform/`, `bsp_render.c`, `selftest.c`, `world.c`, `file.c`) have host
+tests in `engine/tests/` built with ASan/UBSan (`make -C engine/tests`, also run by CI).
+
+## 10a. Phase 1 as built
+Frame: `vis_run` (portals, frustum, per-batch culling) -> material sort -> `tc_acquire` for each texture
+(uploads queued on a GIF chain) -> one VIF1 chain: frame constants, then per material a state chunk
+(A+D through PATH2, `FLUSHA` first) and one REF tag per batch carrying the previous MSCAL, then the
+lightmap pass grouped by page, the EE-clipped polygons (PATH2 `DIRECT`), the overlay and a GS FINISH.
+Decisions: ADR-017 (projection and clipping), ADR-018/019 (data formats), ADR-020 (lighting, fog, sky),
+ADR-021 (loop, config, headless checks). VU1 data memory layout is documented at the top of `vu1/bsp.vsm`.
 
 ## 11. Coding rules (enforced by review)
 - C11, `-G0`, no `double`, no `malloc` after load, no recursion in tick paths,

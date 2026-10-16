@@ -73,6 +73,26 @@ int main(int argc, char **argv)
 	CHECK(lz4_decode(zero_offset, sizeof zero_offset, tiny, sizeof tiny) < 0);
 	CHECK(hp2_open(&pk, img, 10) == HP2_ERR_TRUNCATED);
 	CHECK(hp2_open(&pk, img + 1, n - 1) == HP2_ERR_MAGIC);
+	/* header-only open + decode from a separately read payload (what the EE loader does) */
+	{
+		hp2_pack ph, pf;
+		const hp2_section *r2;
+		uint8_t *buf2;
+		size_t hdr = 64 + 32 * 4;       /* the fixture has 4 sections */
+		CHECK(hp2_open(&pf, img, n) == HP2_OK);
+		res = hp2_find(&pf, "RES");                  /* pk was reset by the open calls above */
+		buf2 = malloc(res->raw_size);
+		CHECK(hp2_open_header(&ph, img, hdr, n) == HP2_OK && ph.count == 4);
+		r2 = hp2_find(&ph, "RES");
+		CHECK(r2 && r2->offset == res->offset);
+		CHECK(hp2_load_stored(r2, img + r2->offset, buf2, res->raw_size) == HP2_OK);
+		CHECK(memcmp(buf2, "halo-ps2 halo-ps2 ", 18) == 0 && memcmp(buf2 + res->raw_size - 16, "tail-bytes-here!", 16) == 0);
+		CHECK(hp2_load_stored(r2, img + r2->offset, buf2, res->raw_size - 1) == HP2_ERR_SPACE);
+		CHECK(hp2_open_header(&ph, img, hdr - 1, n) == HP2_ERR_TRUNCATED);   /* table cut short */
+		CHECK(hp2_open_header(&ph, img, hdr, n + 1) == HP2_ERR_LAYOUT);        /* wrong file size */
+		CHECK(hp2_open_header(&ph, img, hdr, n - 1) != HP2_OK);                /* a payload would lie outside */
+		free(buf2);
+	}
 	free(bad); free(t); free(z); free(buf); free(img);
 	puts("ok");
 	return 0;

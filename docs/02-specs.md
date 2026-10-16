@@ -27,7 +27,7 @@ allows. Visual fidelity is traded away first; frame rate and gameplay are never.
 | R5 | Single-layer DVD (≤ 4.37 GiB), boots on fat and slim NTSC consoles | ISO build script + hardware boot |
 | R6 | Checkpoint/resume in RAM, save to 8 MB memory card ≤ 512 KB per slot | Save size report |
 | R7 | Repository ships **no copyrighted assets**; the pipeline converts the user's own ISO | `.gitignore` + CI check that `assets/` is untracked |
-| R8 | Every milestone verified on PCSX2 **and** on a real console | Milestone checklist |
+| R8 | Every milestone verified on the PCSX2 interpreter; all of them re-verified on a real console in Phase 6 (ADR-022) | Milestone checklist |
 
 ## 4. Reference baseline (what we start from)
 

@@ -1,0 +1,152 @@
+; bsp.vsm — VU1 microprogram for static BSP geometry (docs/03 §5.2 `bsp_lit` + `bsp_lightmap`).
+; Two entry points share one body: EntryLit draws the base texture × vertex colour, EntryLm draws the
+; lightmap pass (texture coordinates come from the lightmap uv lanes instead).
+; Consumes the per-batch VIF packets baked by tools/halo2ps2/bspconv.py (docs/08-bsp-section.md).
+;
+; VU1 data memory (quadwords). Absolute addresses are written once per frame / per draw state by the
+; engine (render/bsp_render.c); TOPS-relative ones by each batch's own VIF packet:
+;   abs 0..3    clip matrix: row i = contribution of world x, y, z, 1 to clip (x, y, z, w)
+;               (render/camera.c: reverse-Z, clip.z = near, clip.w = view depth, y already flipped)
+;   abs 4       screen scale  (256, 224, Zmax, 1)          Zmax = 0xFFFFFF; ftoi4 puts Z24 at bit 4 as XYZF2 wants
+;   abs 5       screen offset (2048, 2048, 0, 0)
+;   abs 6       clip-test scale kS = (1/G, 1/G, 2, 0), G = guard band (7): see below
+;   abs 10      clip-test bias  kB = (0, 0, -1, 0)
+;   abs 7       texture uv scale (su, sv, 0, 0): GS ST = uv * scale * Q   (pass-specific)
+;   abs 8       GIF tag template: PRIM, NREG = 3, REGS = ST RGBAQ XYZF2; NLOOP/EOP patched here
+;   abs 9       fog: F16 = clamp(w*x + y, 0, 4080) in lane w of XYZF2; GS convention: 4080 (F = 255) is
+;               no fog, 0 is all fog colour, so x < 0 and y = 4080 + near*|x| (x = 0, y = 4080 disables)
+;   TOPS+0      centre.xyz, scale (f32; world = centre + s16 * scale)
+;   TOPS+1      x = vertex count n (s32, multiple of 3, <= 72)
+;   TOPS+4      n x position   s16 x y z 0 (as int32 lanes after UNPACK)
+;   TOPS+76     n x uv         s t lmu lmv
+;   TOPS+148    n x colour     r g b a (0x80 = 1.0), PACKED RGBAQ lanes
+;   TOPS+440    output: GIF tag, then n x {ST+Q, RGBAQ, XYZF2}  (XGKICKed)
+; Input buffers are double-buffered (base 16, offset 220); the output area sits at XTOP + 440, so
+; each input buffer has its own 217-qword output buffer (216..893 are used in total).
+;
+; The clip test runs AFTER the perspective divide, on ndc = clip * Q: v = ndc * kS + kB = (x'/G, y'/G, 2z' - 1)
+; and CLIPW.xyz against 1.0 flags |x'| > G, |y'| > G and z' outside [0, 1]. With reverse-Z z' = near / w, so
+; z' > 1 is w < near and z' < 0 is w < 0 (behind the eye). The pre-divide form (compare x with w) is wrong:
+; CLIPW compares against |w|, so vertices behind the camera were never flagged and were drawn mirrored.
+;
+; Triangles with any vertex outside the guard band or in front of the near plane are collapsed to a
+; zero-area triangle at screen (0,0), outside the scissor. (ADC on the third vertex does not keep the
+; GS vertex queue in step for triangle lists: killed triangles leaked into their neighbours.) Partially
+; visible large triangles that exceed the band are therefore dropped, not clipped (ADR-017).
+;
+; Hazards: WAITQ before using Q; integer registers feeding a branch are written >= 2 instructions
+; earlier; CLIP flag results are read >= 4 instructions after CLIPW; two NOP pairs between the last
+; store and XGKICK.
+
+        .vu
+        .align 4
+
+; One vertex: pointers VI03 (pos) VI04 (uv) VI05 (colour), output VI07 + 3*k.
+        .macro VERT k, lm
+        NOP                                 lq      VF15, 0(VI03)          ; position (int lanes)
+        NOP                                 lq      VF19, 0(VI04)          ; uv
+        itof0   VF15, VF15                  NOP
+        mulax   ACC, VF12, VF15x            NOP                            ; clip = s0*x + s1*y + s2*z + T
+        madday  ACC, VF13, VF15y            NOP
+        maddaz  ACC, VF14, VF15z            NOP
+        maddw   VF16, VF11, VF00w           NOP
+        NOP                                 div     Q, VF00w, VF16w        ; Q = 1 / w
+        itof0   VF19, VF19                  NOP
+        .if \lm
+        mulz.x  VF19, VF08, VF19z           NOP                            ; lightmap u -> x
+        mulw.y  VF19, VF08, VF19w           NOP                            ; lightmap v -> y
+        .else
+        mul.xy  VF19, VF19, VF08            NOP
+        .endif
+        mulx.w  VF20, VF16, VF09            NOP                            ; fog: w * kf
+        NOP                                 lq      VF21, 0(VI05)          ; colour
+        addy.w  VF20, VF20, VF09            NOP
+        maxz.w  VF20, VF20, VF09            NOP                            ; >= 0 (fog.z = 0)
+        miniw.w VF20, VF20, VF09            NOP                            ; <= 4080
+        NOP                                 waitq
+        mulq.xyz VF18, VF16, Q              NOP                            ; ndc
+        adda.xyz ACC, VF24, VF00            NOP                            ; clip test on ndc: (x'/G, y'/G, 2z'-1)
+        madd.xyz VF17, VF18, VF07           NOP
+        clipw.xyz VF17, VF00                NOP                            ; |.| > 1 (VF00w = 1)
+        mulq.xy VF19, VF19, Q               NOP                            ; s/w, t/w
+        addq.z  VF19, VF00, Q               NOP                            ; q
+        adda.xyz ACC, VF06, VF00            NOP                            ; ACC = screen offset
+        madd.xyz VF18, VF18, VF05           NOP
+        ftoi0.w VF22, VF20                  NOP
+        ftoi4.xyz VF18, VF18                NOP
+        NOP                                 sq      VF19, \k*3+0(VI07)     ; ST, Q
+        NOP                                 sq      VF21, \k*3+1(VI07)     ; RGBAQ
+        NOP                                 sq.xyz  VF18, \k*3+2(VI07)     ; XYZ
+        NOP                                 sq.w    VF22, \k*3+2(VI07)     ; F (ADC bit patched per triangle)
+        NOP                                 iaddiu  VI03, VI03, 1
+        NOP                                 iaddiu  VI04, VI04, 1
+        NOP                                 iaddiu  VI05, VI05, 1
+        .endm
+
+        .macro BSP_PROGRAM lm
+        NOP                                 lq      VF01, 0(VI00)          ; clip matrix
+        NOP                                 lq      VF02, 1(VI00)
+        NOP                                 lq      VF03, 2(VI00)
+        NOP                                 lq      VF04, 3(VI00)
+        NOP                                 lq      VF05, 4(VI00)          ; constants
+        NOP                                 lq      VF06, 5(VI00)
+        NOP                                 lq      VF07, 6(VI00)
+        NOP                                 lq      VF08, 7(VI00)
+        NOP                                 lq      VF09, 9(VI00)
+        NOP                                 lq      VF24, 10(VI00)         ; clip-test bias
+        NOP                                 xtop    VI02
+        NOP                                 lq      VF10, 0(VI02)          ; batch centre, scale
+        NOP                                 ilw.x   VI08, 1(VI02)          ; vertex count
+        NOP                                 iaddiu  VI03, VI02, 4          ; position stream
+        NOP                                 iaddiu  VI04, VI02, 76         ; uv stream
+        NOP                                 iaddiu  VI05, VI02, 148        ; colour stream
+        NOP                                 iaddiu  VI06, VI02, 440        ; output / kick address
+        NOP                                 iaddiu  VI09, VI00, 0x7FFF
+        NOP                                 iaddiu  VI09, VI09, 1          ; VI09 = 0x8000 (ADC bit)
+        NOP                                 iaddiu  VI10, VI08, 0x7FFF
+        NOP                                 iaddiu  VI10, VI10, 1          ; VI10 = n | EOP
+        mulax   ACC, VF01, VF10x            lq      VF21, 8(VI00)          ; T = m0*cx + m1*cy + m2*cz + m3
+        madday  ACC, VF02, VF10y            NOP
+        maddaz  ACC, VF03, VF10z            NOP
+        maddw   VF11, VF04, VF00w           NOP
+        mulw    VF12, VF01, VF10w           NOP                            ; s_i = m_i * scale
+        mulw    VF13, VF02, VF10w           NOP
+        mulw    VF14, VF03, VF10w           NOP
+        NOP                                 sq      VF21, 0(VI06)          ; GIF tag template
+        NOP                                 isw.x   VI10, 0(VI06)          ; NLOOP | EOP
+        NOP                                 iaddiu  VI07, VI06, 1          ; first vertex slot
+tri_loop\@:
+        VERT 0, \lm
+        VERT 1, \lm
+        VERT 2, \lm
+        NOP                                 fcand   VI01, 0x3FFFF          ; any of the 3 vertices outside?
+        NOP                                 isubiu  VI08, VI08, 3
+        NOP                                 NOP
+        NOP                                 ibeq    VI01, VI00, tri_ok\@
+        NOP                                 NOP
+        NOP                                 sq.xyz  VF00, 2(VI07)          ; collapse all three vertices to (0,0,0):
+        NOP                                 sq.xyz  VF00, 5(VI07)          ; a zero-area triangle outside the scissor
+        NOP                                 sq.xyz  VF00, 8(VI07)
+tri_ok\@:
+        NOP                                 iaddiu  VI07, VI07, 9
+        NOP                                 ibne    VI08, VI00, tri_loop\@
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 xgkick  VI06                   ; PATH1
+        NOP[E]                              NOP
+        NOP                                 NOP
+        .endm
+
+        .global VU1Bsp_CodeStart
+        .global VU1Bsp_EntryLit
+        .global VU1Bsp_EntryLm
+        .global VU1Bsp_CodeEnd
+VU1Bsp_CodeStart:
+VU1Bsp_EntryLit:
+        BSP_PROGRAM 0
+        .align 4
+VU1Bsp_EntryLm:
+        BSP_PROGRAM 1
+        .align 4
+VU1Bsp_CodeEnd:

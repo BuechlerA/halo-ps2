@@ -1,7 +1,8 @@
 # Roadmap
 
-Phases are sequential; each ends with a **milestone gate** that must pass on
-PCSX2 *and* on a real console before the next phase starts. Effort figures are
+Phases are sequential; each ends with a **milestone gate** that must pass before the next phase
+starts. Until Phase 6 a gate means "passes on the PCSX2 interpreter" (ADR-015/022): wherever a gate below says
+"on hardware" read it that way; real-console verification of every gate is batched into Phase 6. Effort figures are
 rough person-months (pm) for experienced PS2/engine programmers and exist to set
 expectations, not deadlines: this is a multi-year project for a small team.
 
@@ -29,38 +30,61 @@ skeleton already starts.**
       and `make` missing from the ps2dev image)
 - [x] Frame pacing without hardware: `scripts/profile-pcsx2.sh --interpreter`
       (ADR-015). 600 frames, 0 dropped, EE 0.05 ms avg/0.06 ms max per frame.
-      Real-console TTY numbers are deferred to the M1 hardware check.
+      Real-console TTY numbers are deferred to the Phase 6 console pass (ADR-022).
 
 **Gate M0**: ELF runs at 60 Hz on hardware with a VU1-drawn triangle; every
 campaign map decompresses and inventories cleanly.
 
 ## Phase 1 — Static world at 60 fps (≈ 4 pm)
 Prove the rendering budget on the hardest static content before writing gameplay.
+**Status: complete. Gate M1 is met on the PCSX2 interpreter (ADR-022); the partial console results and the
+open findings are recorded below and in [10-m1-hardware-check.md](10-m1-hardware-check.md) and move to Phase 6.**
 
 - [x] `.hp2` pack format v1 ([07-hp2-format.md](07-hp2-format.md)): container,
       Python writer/reader (`tools/halo2ps2/hp2.py`), LZ4 block codec, EE-side
-      reader (`engine/src/stream/hp2.c`) cross-tested on the host
+      reader (`engine/src/stream/hp2.c`) cross-tested on the host; the EE loader reads one
+      section's payload straight from the file (`hp2_open_header` + `hp2_load_stored`)
 - [x] BSP block location and per-BSP summary (`tools/halo2ps2/bsp.py`): clusters,
-      leaves, nodes, triangles, lightmap materials, vertex counts for all 11 maps
-- [x] Converter, first cut: `tools/halo2ps2/bspconv.py` bakes every BSP of all 11
-      maps into per-material triangle batches of VIF `UNPACK` packets
-      ([08-bsp-section.md](08-bsp-section.md)), read back by `engine/src/world/bsp.c`.
-      Largest section 2.73 MiB raw (a10 BSP 6; Xbox block 8.2 MiB), well under the
-      7 MB BSP budget; round trip error ≤ radius/65534 per batch (worst absolute
-      0.023 units on b30's sky-sized batches), lightmap uv ≤ 2e-3.
-      Not yet baked: per-cluster grouping and portals, collision, strips, lightmap
-      atlases, texture conversion; no VU1 program or draw path consumes it yet
-- Remaining items below
-- Converter: `structure_bsp` render geometry → per-cluster baked VIF packets;
-  bitmaps → PSMT8/PSMT4 with mips; lightmaps → luminance atlases + vertex chroma
-- Engine: free-fly camera, cluster/portal visibility, `bsp_lit` + `bsp_lightmap`
-  programs, PATH3 texture streaming with LRU residency, fog, sky
-- Profiler overlay on screen (EE/VU1/GS ms, tris, uploads, dropped frames)
-- Targets in order: `a10` interiors → `a30` (largest outdoor) → `b40` (longest
-  sightlines) → `c10` (foliage alpha)
+      leaves, nodes, triangles, lightmap materials, vertex counts for all 11 maps; the
+      structure BSP layouts (clusters 104 B at +0x134, portals 64 B at +0x154, leaves, nodes, planes)
+      verified on all 69 BSPs
+- [x] Converter, geometry: `tools/halo2ps2/bspconv.py` writes **BSPS v2**
+      ([08-bsp-section.md](08-bsp-section.md), ADR-018): per-(cluster set, material) batches of ≤ 24
+      triangles as self-contained VIF packets, cluster/batch lists, convex portal polygons, the
+      BSP tree for point location. Largest section 3.83 MiB raw (a10), under the 7 MB BSP budget
+- [x] Converter, textures ([09-tex-section.md](09-tex-section.md), ADR-019): Xbox bitmaps (swizzled
+      DXT/ARGB/565/…) → half-resolution PSMT8/PSMT4 with CLUTs and mips; shader → texture binding table;
+      lightmap pages → luminance PSMT8 atlases (`LMn`) and per-vertex chroma baked into the BSP vertex
+      colours. All ten campaign maps convert in 1–2.5 s; BSP textures ≤ 1.1 MiB per map
+- [x] Engine: free-fly camera (DualShock 2) and scripted camera paths; cluster/portal visibility with
+      portal scissors; `bsp_lit` + `bsp_lightmap` VU1 programs; VIF1 chain builder; texture residency
+      (page-granular LRU, CLUT pool, 1.5 MB/frame upload budget, GIF-channel uploads); distance fog;
+      sky gradient; EE clipping fallback for guard-band/near-plane triangles (ADR-017)
+- [x] Profiler overlay on screen (EE/VIF1/GS ms, triangles, batches, clusters, texture traffic,
+      dropped frames) and a once-a-second TTY line; framebuffer dump over TTY for headless checks
+      (`fbdump`, `scripts/fb2png.py`); `halo.cfg` boot options (ADR-021)
+- [x] Targets in order: `a10` interiors → `a30` (largest outdoor) → `b40` (longest sightlines) →
+      `c10` (foliage alpha): all 28 BSPs of these four maps load and render on PCSX2; scripted
+      fly-throughs of a30, b40 and a10 run 36 s with **0 dropped frames** (recompiler and
+      interpreter, `scripts/profile-m1.sh`)
+- [x] **Hardware, partial and deferred (ADR-022)**: on the console (2026-10-16) the texture self test matched, a30 ran 60 fps with
+      14–17/2154 frames dropped (0.65–0.79 %, EE 4.6/5.0 ms), b40 BSP 11 dropped 40/2154 (1.86 %, EE 8.4/8.9 ms, GS ~7.9 ms).
+      The b40 miss, lightmap look, mips and the clip budget are Phase 6 items
 
-**Gate M1**: noclip fly-through of **a30 and b40** at 60 fps on hardware with
-< 1 % dropped frames; memory report under budget.
+Known limitations carried out of Phase 1 (none blocks the gate, each is a measured follow-up):
+- Mip chains are converted but the engine draws level 0 only (bilinear). Needs per-draw LOD selection;
+  decide after the hardware numbers show whether distant terrain stalls the GS texture cache.
+- The EE clipper costs ~2.5 ms in the worst interiors and is time-limited; a VU0/VU1 clipper is the fix
+  if hardware needs the time. Real batches average ~22 triangles, so ≤ 400 batches/frame means ≲ 9.6 k
+  visible triangles (budget text in [02-specs.md](02-specs.md) §5.2 needs revisiting at M1).
+- Sky is a gradient and fog is global (one distance range per run): sky models and per-cluster fog are
+  Phase 2 (they need the `model` converter and the fog tag reader). Additive/multiply shaders draw as
+  alpha blends; `senv` foliage whose alpha the converter drops draws opaque.
+- Confirmed on the console (2026-10-16): CSM1 CLUT swap, PSMT4 8x2 CLUT, nibble order. Still console-only questions: lightmap gain /
+  overall look, pad behaviour (Phase 6).
+
+**Gate M1**: noclip fly-through of **a30 and b40** at 60 fps with < 1 % dropped frames; memory report under
+budget. **Met on the PCSX2 interpreter** (0 dropped on a30, b40 and a10 in recompiler and interpreter modes, final tree 2026-10-16; EE build ≤ 9.1 ms; level arena ≤ 4.2 MB); console verification in Phase 6.
 
 ## Phase 2 — Objects, animation, first person (≈ 4 pm)
 - Converter: `model`/`gbxmodel` → VU1 strips with LOD chain; `model_animations`
@@ -125,6 +149,8 @@ minimum new tech:
 - Disc build: `scripts/build-iso.sh` (seek-aware layout, ≤ 4.37 GiB), boot on
   fat/slim; PAL 50 Hz mode (sim stays 30 Hz, render 50 Hz with 3:5 interpolation)
 - Final audio mix, subtitles, credits
+- **Real-console verification pass** (ADR-022): re-run every gate M1–M5 on hardware ([10-m1-hardware-check.md](10-m1-hardware-check.md) is the
+  template), fix what PCSX2 hid (GS fill, DMA contention, CLUT/lightmap look, the b40 BSP 11 drops, clip budget), then retire risk #8
 
 **Gate M6**: release ISO burned and played through on a retail console.
 
@@ -139,7 +165,7 @@ minimum new tech:
 | 5 | HSC built-in count (~400) | Medium | Medium | Implement only the subset used by campaign scripts (converter report); stub with logging |
 | 6 | Texture upload bandwidth per frame | Medium | High | Material sort + residency; cap 1.5 MB/frame; mip bias under pressure |
 | 7 | DVD seek times during BSP switches | Medium | Low | Contiguous per-mission chunks, read-ahead on IOP |
-| 8 | PCSX2 masks hardware bugs (DMA timing, cache) | High | Medium | Hardware gate at every milestone; ps2link TTY logging |
+| 8 | PCSX2 masks hardware bugs (DMA timing, cache) | High | Medium | PCSX2 interpreter as the gate until the Phase 6 console pass (ADR-022); GS cost treated as unmeasured; ps2link TTY / on-screen overlay |
 | 9 | Save size vs. memory card speed | Low | Medium | Compact serialisation, ≤ 512 KB |
 | 10 | Legal: repository must stay asset-free | — | Project-ending | R7, CI check, docs only describe formats |
 
