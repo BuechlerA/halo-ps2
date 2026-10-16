@@ -9,6 +9,7 @@ EE_BIN  = halo-ps2.elf
 EE_OBJS = src/main.o \
           src/platform/video.o \
           src/render/vu1_tri.o \
+          src/stream/hp2.o \
           src/vu1/tri.o
 EE_LIBS = -ldraw -lgraph -lmath3d -lpacket2 -ldma
 EE_INCS = -Isrc
@@ -28,10 +29,18 @@ clean:
 run: $(EE_BIN)
 	../scripts/run-pcsx2.sh $(EE_BIN)
 
+# Host-compiled unit tests for the platform-independent parts (no ps2sdk needed).
+test:
+	HP2_FIXTURE=$(HOST_TMP)/halo-test.hp2 python3 -I ../tools/tests/test_hp2.py
+	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Isrc \
+		tests/test_hp2.c src/stream/hp2.c -o $(HOST_TMP)/test_hp2
+	$(HOST_TMP)/test_hp2 $(HOST_TMP)/halo-test.hp2
+
 hw: $(EE_BIN)
 	ps2client -h $(PS2_IP) execee host:$(EE_BIN)
 
-.PHONY: all clean run hw
+HOST_TMP ?= $(or $(TMPDIR),/tmp)
+.PHONY: all clean run hw test
 
 include $(PS2SDK)/samples/Makefile.pref
 include $(PS2SDK)/samples/Makefile.eeglobal

@@ -18,12 +18,17 @@ skeleton already starts.**
       (2026-10-16: triangle matches PCSX2 on the console; hardware TTY / frame
       pacing numbers not captured yet)
 - [x] Header inventory of all maps → [reports/map-headers.txt](reports/map-headers.txt)
-- [ ] Decompress all 10 campaign maps; produce tag inventory per map (group
+- [x] Decompress all 10 campaign maps; produce tag inventory per map (group
       counts, raw data sizes, bitmap formats/resolutions, sound formats, script
-      built-in usage); commit the **reports** (not the data) to `docs/reports/`
-- [ ] Choose pipeline parser: `reclaimer` (Python, has Xbox tag definitions) vs
-      hand-written structs; record in [06-decisions.md](06-decisions.md)
-- [ ] CI: build ELF + run tool unit tests on every push
+      built-in usage, structure BSP counts) →
+      [reports/tag-inventory.md](reports/tag-inventory.md) (reports only, no data)
+- [x] Choose pipeline parser: hand-written structs, ADR-011
+- [x] CI: `.github/workflows/ci.yml` builds the ELF (ps2dev image), runs the tool
+      tests, the host C tests and the asset-free check on every push
+      (workflow written but not yet observed running on GitHub)
+- [x] Frame pacing without hardware: `scripts/profile-pcsx2.sh --interpreter`
+      (ADR-015). 600 frames, 0 dropped, EE 0.05 ms avg/0.06 ms max per frame.
+      Real-console TTY numbers are deferred to the M1 hardware check.
 
 **Gate M0**: ELF runs at 60 Hz on hardware with a VU1-drawn triangle; every
 campaign map decompresses and inventories cleanly.
@@ -31,7 +36,12 @@ campaign map decompresses and inventories cleanly.
 ## Phase 1 — Static world at 60 fps (≈ 4 pm)
 Prove the rendering budget on the hardest static content before writing gameplay.
 
-- `.hp2` pack format v1: `RES`/`BSP`/`TEX` sections, LZ decoder on EE
+- [x] `.hp2` pack format v1 ([07-hp2-format.md](07-hp2-format.md)): container,
+      Python writer/reader (`tools/halo2ps2/hp2.py`), LZ4 block codec, EE-side
+      reader (`engine/src/stream/hp2.c`) cross-tested on the host
+- [x] BSP block location and per-BSP summary (`tools/halo2ps2/bsp.py`): clusters,
+      leaves, nodes, triangles, lightmap materials, vertex counts for all 11 maps
+- Remaining items below; next is decoding the BSP's vertex/surface data into baked packets
 - Converter: `structure_bsp` render geometry → per-cluster baked VIF packets;
   bitmaps → PSMT8/PSMT4 with mips; lightmaps → luminance atlases + vertex chroma
 - Engine: free-fly camera, cluster/portal visibility, `bsp_lit` + `bsp_lightmap`
