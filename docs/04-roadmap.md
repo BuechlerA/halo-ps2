@@ -25,7 +25,7 @@ skeleton already starts.**
 - [x] Choose pipeline parser: hand-written structs, ADR-011
 - [x] CI: `.github/workflows/ci.yml` builds the ELF (ps2dev image), runs the tool
       tests, the host C tests and the asset-free check on every push
-      (workflow written but not yet observed running on GitHub)
+      (the workflow's steps were run in a clean clone with a stripped environment; it has not run on GitHub yet)
 - [x] Frame pacing without hardware: `scripts/profile-pcsx2.sh --interpreter`
       (ADR-015). 600 frames, 0 dropped, EE 0.05 ms avg/0.06 ms max per frame.
       Real-console TTY numbers are deferred to the M1 hardware check.

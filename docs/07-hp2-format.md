@@ -43,6 +43,6 @@ needs only byte loads, so it is correct on the EE but not yet fast; the 128-bit
 
 ## Verification
 `python3 -I tools/tests/test_hp2.py` round-trips packs through the Python codec.
-`make -C engine test` builds the C reader with the host compiler and decodes a
+`make -C engine/tests` builds the C reader with the host compiler and decodes a
 pack written by the Python tool, so both implementations are checked against
 each other on every CI run.
