@@ -12,6 +12,7 @@ jobs:
     container: ps2dev/ps2dev:latest
     steps:
       - uses: actions/checkout@v4
+      - run: apk add --no-cache make git
       - run: make -C engine PS2DEV=/usr/local/ps2dev
       - uses: actions/upload-artifact@v4
         with: { name: halo-ps2.elf, path: engine/halo-ps2.elf }
