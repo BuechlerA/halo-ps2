@@ -41,7 +41,15 @@ Prove the rendering budget on the hardest static content before writing gameplay
       reader (`engine/src/stream/hp2.c`) cross-tested on the host
 - [x] BSP block location and per-BSP summary (`tools/halo2ps2/bsp.py`): clusters,
       leaves, nodes, triangles, lightmap materials, vertex counts for all 11 maps
-- Remaining items below; next is decoding the BSP's vertex/surface data into baked packets
+- [x] Converter, first cut: `tools/halo2ps2/bspconv.py` bakes every BSP of all 11
+      maps into per-material triangle batches of VIF `UNPACK` packets
+      ([08-bsp-section.md](08-bsp-section.md)), read back by `engine/src/world/bsp.c`.
+      Largest section 2.73 MiB raw (a10 BSP 6; Xbox block 8.2 MiB), well under the
+      7 MB BSP budget; round trip error ≤ radius/65534 per batch (worst absolute
+      0.023 units on b30's sky-sized batches), lightmap uv ≤ 2e-3.
+      Not yet baked: per-cluster grouping and portals, collision, strips, lightmap
+      atlases, texture conversion; no VU1 program or draw path consumes it yet
+- Remaining items below
 - Converter: `structure_bsp` render geometry → per-cluster baked VIF packets;
   bitmaps → PSMT8/PSMT4 with mips; lightmaps → luminance atlases + vertex chroma
 - Engine: free-fly camera, cluster/portal visibility, `bsp_lit` + `bsp_lightmap`

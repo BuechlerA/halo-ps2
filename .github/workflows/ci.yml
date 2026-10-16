@@ -18,7 +18,7 @@ jobs:
             python3 -I "$t"
           done
       - name: Host tests for the engine's platform-independent code
-        run: make -C engine test
+        run: make -C engine/tests
       - name: Repository stays asset-free
         run: scripts/check-no-assets.sh
 

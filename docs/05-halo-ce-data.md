@@ -114,7 +114,7 @@ exceptions.
 ## 5. Host tools in this repo
 - `tools/halo2ps2/mapinfo.py` — header parse / decompress / summary (works today).
 - `tools/halo2ps2/tagindex.py` (tag index, report), `inventory.py` (bitmap, sound
-  and script-node statistics), `bsp.py` (BSP blocks and counts), `hp2.py` (pack
+  and script-node statistics), `bsp.py` (BSP blocks and counts), `bspconv.py` (BSP geometry → `BSPn` section, see [08-bsp-section.md](08-bsp-section.md)), `hp2.py` (pack
   container, see [07-hp2-format.md](07-hp2-format.md)). Each documents the byte
   layouts it verified in its module docstring.
 - Planned modules: `bitmaps.py`, `models.py`, `sounds.py`, `scripts.py`, `pack.py`.
