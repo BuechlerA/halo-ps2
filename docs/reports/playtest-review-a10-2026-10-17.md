@@ -3,7 +3,7 @@
 The first mission looks broken in a playtest: the intro cutscene shows a blurry close-up with a dark claw in the corner for
 its whole length, the first-person arms and gun are an unrecognisable dark mass, doors never open, the HUD sits in the wrong
 corners. This report says why (root causes, with the evidence) and orders the fixes. It covers the tree at `origin/main`
-(5aa9a55, Phase 4 work in progress, ADR-043..054). Nothing was fixed yet; the host tests pass (83 ok) and the ELF builds.
+(5aa9a55, Phase 4 work in progress, ADR-043..054). Section 4 records what was fixed the same day and what the Xbox reference showed.
 
 ## 1. How it was checked
 
@@ -96,3 +96,25 @@ Each step is one commit with its verification; format changes get an ADR. Steps 
 | 7 | Playable config and regression: `scripts/paths/a10play.cfg` (`mission 1`, `bot 0`, no frame limit) documented with the pad mapping; rerun `a10game`, `a10mission` (interpreter) and the M1/M2 configs for the dropped-frame numbers | `scripts/paths/`, docs/10, docs/04 | gates still 0 dropped; the intro plays end to end on the screen |
 
 Step 2 is the only format change. Steps 1 to 4 together make the playtest look like the game; 5 to 7 are polish and proof.
+
+## 4. Status after the first fixes (same day)
+
+Done on this branch (host tests 83 ok, PCSX2 recompiler runs of `a10mission` for four minutes and `a10game`):
+
+| Step | Result |
+|---|---|
+| 0 | xemu branch merged (ADR-055, docs/35); `scripts/xemu-setup.sh` binds the keyboard to controller port 1; reference frames of the a10 intro (bridge, hangar) and an attract-mode gameplay frame captured from xemu by window id |
+| 1 | the script camera renders: the intro shows the exterior, Threshold, the Longswords, the bridge, the hangar and the cryo bay in turn; `camera_t` has roll; the near clip follows `cinematic_set_near_clip_distance` |
+| 2 | ANIM v2 (graph node names) + name-based node map (ADR-056): rifle and pistol are held like the reference, reload and ready poses are right; overlay-type animations (`moving`, `overlays`) are no longer played as base poses |
+| 3 | letterbox bars during cinematics (verified against xemu, which shows them for the whole intro), view model and damage wash hidden while a cinematic runs |
+| 4 | device objects follow their device position (`mission_sync_devices`, `OBJ_F_POSED`); not yet checked on a door in a frame dump |
+
+Still open from the list above: F6 (HUD anchors; the reference has the shield top right, the ammo counter top right beside it, the motion tracker bottom left), F7 (sprite edges), the hands' colour: the gloves render navy because the colour-change / multipurpose maps are not converted (docs/11), and the Xbox tints them olive.
+
+New findings from the fixed intro (compare `frames/intro2`, `frames/cryo` with the xemu captures):
+
+* **F10. The exterior BSP (7) is a flat grey blob.** 14 of its 55 materials are flat (no decodable base map) and the lightmap dominates; the Xbox shows the ship's hull plating. Needs the shader kinds of BSP 7 listed and converted (probably `shader_transparent_*` and environment shaders with detail-only bases).
+* **F11. The hangar BSP (8) draws streaky black-and-white triangles** across the upper half of every frame (frames 4500-5700): large triangles crossing the near plane or the guard band are not clipped (ADR-017 clips nothing on VU1). The bridge (BSP 1) is also far darker than the Xbox: lightmap gain or the luminance-only conversion for that BSP.
+* **F12. Text and pacing.** The objective text is drawn twice at mission start (help and objective kinds hold the same string). The player starts the cryo bay holding a rifle; whether the Xbox start is unarmed is to be checked against the reference. The four-minute intro run drops 6.8 % of frames (BSP switches and the 50-unit hangar scene), so Gate M4's timing is still open.
+
+Reference capture recipe (macOS): bind the keyboard in the xemu config, send key codes with System Events (Return = Start, arrows = D-pad; character keystrokes do not reach SDL), find the window id with `CGWindowListCopyWindowInfo` and capture it with `screencapture -l <id>` even while another window covers it. A save state at the cryo bay would remove the menu crawl next time.

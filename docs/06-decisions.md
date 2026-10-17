@@ -461,5 +461,13 @@ reference gives the picture the port is meant to match. xemu is the maintained X
 **Consequences**: the boot files cannot be redistributed or downloaded by scripts, so a fresh checkout cannot boot the reference until the user
 supplies them; xemu timings say nothing about Xbox performance, so it is used for picture parity only. Booted to the Bungie logo with real files on 2026-10-17.
 
+## ADR-056 `ANIM` version 2 carries graph node names; models map onto graphs by name
+**Decision**: the ANIM graph record gains `names_off` (node_count x 32 B names in graph order, version 2) and `sim/objects.c` drives a model's node by the graph node
+of the same name, cached per (model, graph); the first-person weapon attaches to the hand node the graph names as the gun root's parent; `node_offset` and the
+"arms first, gun last" assumption are gone. **Why**: the first-person weapon graphs order their nodes breadth-first over hands + gun, so the index rule posed
+30 of 37 hand bones with another bone's track and the gun with fingertip tracks (the garbled view model of the a10 playtest); custom cinematic graphs on
+other models have the same exposure. **Consequences**: packs must be rebuilt (`anim_open` rejects version 1); about 60 KB more per map; one strcmp pass per
+new (model, graph) pair. Details: docs/12-anim-section.md section 8.
+
 ## Open decisions
 None.

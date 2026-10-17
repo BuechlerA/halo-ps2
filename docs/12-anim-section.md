@@ -1,4 +1,4 @@
-# `ANIM` section: converted `model_animations`, format version 1
+# `ANIM` section: converted `model_animations`, format version 2
 
 Converter `tools/halo2ps2/animconv.py` (writer, reference sampler), reader and sampler
 `engine/src/world/anim.c` (header `engine/src/world/anim.h`), tests `tools/tests/test_animconv.py` and
@@ -53,10 +53,11 @@ Full layouts are in the docstring of `tools/halo2ps2/animconv.py`. Summary:
 ## 4. Section layout
 
 ```
-0      header (64 B)   "ANIM" | u16 version = 1 | u16 0 | u32 graph_count | u32 anim_count | u32 graphs_off (64) |
+0      header (64 B)   "ANIM" | u16 version = 2 | u16 0 | u32 graph_count | u32 anim_count | u32 graphs_off (64) |
                        u32 anims_off | u32 pool_off (16-aligned) | u32 total size | zero
 64     graph  x G (32 B)   u32 tag_id | u16 node_count | u16 anim_count | u32 first_anim | u32 default_off |
-                       u32 model_tag (the model the rest pose came from, 0 = derived from the animations) | zero
+                       u32 model_tag (the model the rest pose came from, 0 = derived from the animations) |
+                       u32 names_off (version 2: node_count x 32 B node names in the pool, section 8) | zero
        anim   x A (96 B)   char[48] name | u16 type | u16 frame_count | u16 loop_frame | u16 flags | u16 node_count |
                        u16 root_type | u16 graph_nodes | 2 pad | f32 fps | u32 data_off | u32 data_bytes |
                        u32 root_off | u32 default_off | zero
@@ -166,7 +167,20 @@ at the end of `anim_info` and the function `anim_root_motion` (frame info is the
 animation; the Xbox stores it separately from the node tracks). Nothing else was changed. The hp2 section tag
 table in [07-hp2-format.md](07-hp2-format.md) should list `ANIM`.
 
-## 8. Verification
+## 8. Version 2: graph node names and the model-to-graph node map
+
+Version 1 assumed graph node i = model node i. That holds for every graph that has a model with the same node-list checksum
+(bipeds, vehicles, devices, scenery), but the first-person weapon graphs are assembled at runtime from the hands model and the
+weapon's first-person model, ordered breadth-first over the combined rig: the rifle graph (42 nodes) keeps the five gun nodes at
+indices 7, 18, 24, 25 and 31 between the hand nodes. Playing it with the version-1 rule gave every hand bone another bone's
+transform (the 2026-10-17 playtest review). Version 2 therefore stores the graph's node names: the graph record's bytes 20..23
+hold `names_off`, a pool offset of `node_count` x 32 B NUL-terminated names in graph order (graphs without a node block write
+empty names). The reader exposes `anim_node_name` / `anim_find_node`; `sim/objects.c` maps a model's nodes onto a graph by name
+once per (model, graph) pair (a 32-entry cache; a graph without names, or one whose order equals the model's, maps 1:1; a model
+node the graph does not name keeps its bind pose). The first-person weapon hangs from the hand node the graph names as the gun
+root's parent. Cost: about 60 KB more ANIM data on a10. ADR-056.
+
+## 9. Verification
 
 * `python3 -I tools/tests/test_animconv.py`: the compressed quaternion bit layout, quantisers, key reduction, a
   synthetic map (uncompressed and compressed animations, hinge/static/animated/scale channels, a node-less device

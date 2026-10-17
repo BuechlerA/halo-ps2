@@ -142,7 +142,9 @@ refreshes with `cine_cam_set_player_pose` every tick) and arrives exactly on the
 by another call; yaw and roll interpolate along the shortest arc, position, pitch and fov linearly; `CINE_EASE_SMOOTH` is `3u^2 -
 2u^3`. A relative camera composes its pose with an anchor frame `{position, yaw}` the host updates each tick (the object's own pitch and
 roll are ignored: **U**). Fades start from the current alpha: `fade_out` runs it to 1 over the given ticks in the given colour,
-`fade_in` to 0; a zero time is instant. `cine_letterbox` slides the bars in `CINE_LETTERBOX_TICKS` steps (exact integer position, so
+`fade_in` to 0; a zero time is instant. The bars are shown while a cinematic runs (`cinematic_start` .. `cinematic_stop`) and
+whenever `cine_letterbox` is on: the a10 scripts call `cinematic_show_letterbox` only for the title cards outside cinematics, so
+cinematic mode has to imply them (verified against the Xbox intro in xemu, 2026-10-17). `cine_letterbox` slides the bars in `CINE_LETTERBOX_TICKS` steps (exact integer position, so
 0 and 1 are exact) to `CINE_LETTERBOX_FRACTION` of the screen height per bar. **Constants no tag carries** (verified: none of the tags
 read has a fade, letterbox, transition or default message duration field; the fade colour and time are arguments of the script call):
 `CINE_LETTERBOX_FRACTION` 0.125, `CINE_LETTERBOX_TICKS` 15, the default easing (the built-in should pick `CINE_EASE_SMOOTH` or
