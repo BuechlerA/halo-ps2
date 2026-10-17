@@ -452,5 +452,14 @@ several seconds it teleports to the goal (counted **assist**, reported). The gat
 choices). **Why**: PCSX2 headless is the gate (ADR-022) and the scripts' progress depends on world state the bot can create; counting assists keeps the claim honest. **Consequences**: M4 means "the
 mission runs start to finish under script, AI and device control at 30 fps on PCSX2", not "a human can win it".
 
+## ADR-055 xemu is the Xbox reference emulator for parity checks
+**Decision**: the original Xbox build is run in xemu (Homebrew cask, `/Applications/xemu.app`) from `scripts/xemu-setup.sh` / `scripts/xemu-run.sh`,
+with a project-local config under `assets/xemu/` and the user-supplied MCPX ROM, flash BIOS and HDD image kept outside the repository
+(procedure in [35-xbox-reference.md](35-xbox-reference.md)).
+**Why**: parity questions (lighting, bump/specular, sky, object placement) were answered only from tag data and `refrender.py`; a running
+reference gives the picture the port is meant to match. xemu is the maintained Xbox emulator and runs natively on Apple silicon.
+**Consequences**: the boot files cannot be redistributed or downloaded by scripts, so a fresh checkout cannot boot the reference until the user
+supplies them; xemu timings say nothing about Xbox performance, so it is used for picture parity only. Booted to the Bungie logo with real files on 2026-10-17.
+
 ## Open decisions
 None.
