@@ -46,3 +46,6 @@ int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_pa
 /* Loads MODL, OTEX, ANIM and SCEN from the object pack `obj_path` (tools/halo2ps2/objpack.py). Returns 0 when the
  * models and the scenario are usable; animations and object textures are optional (static / flat objects). */
 int world_load_objects(world_t *w, arena_t *a, const char *obj_path);
+
+/* Texture source over a texture set (HUD / effect sprites); `ts` must outlive it. */
+void world_texset_source(tex_source_t *out, texset_t *ts);

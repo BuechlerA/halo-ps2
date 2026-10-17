@@ -93,3 +93,7 @@ void bsp_render_wait_gpu(void);
 void bsp_render_set_object_pass(render_pass_fn fn, void *user, const tex_source_t *obj_src);
 /* Sky pass: called right after the frame constants, before the BSP passes (depth writes are the pass's business). */
 void bsp_render_set_sky_pass(render_pass_fn fn, void *user);
+/* Overlay pass: after the object pass, before the profiler text (HUD, particles, decals). */
+void bsp_render_set_overlay_pass(render_pass_fn fn, void *user);
+/* Reserves `count` texture residency keys for another texture set (HUD, effects); returns the key base to pass to rb_extra_tex0. Call before the first frame. */
+unsigned bsp_render_reserve_keys(unsigned count);

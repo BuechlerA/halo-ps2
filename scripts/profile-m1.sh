@@ -9,7 +9,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INTERP=""
-MAPS="a30 b40 a10 a10obj a10obj-stress"
+MAPS="a30 b40 a10 a10obj a10obj-stress a10game"
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--interpreter) INTERP="--interpreter" ;;

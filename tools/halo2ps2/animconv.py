@@ -154,6 +154,9 @@ model at +0x28 and the graph at +0x38 (tag reference: 4 group, 4 path pointer, 4
                 sqrt(1 - sum of squares).
     root motion block: f32 scale[4], then frame_count x k x s16 (k = 2, 3, 4 components dx dy [dz] dyaw),
         padded to 4 bytes; component = s16 / 32767 * scale[component]
+    anim flags: 1 loops, 2 world relative, 4 STUB (only with build_section(..., animations_needed=...): the animation
+    keeps its name, frame count and loop flags but has no pose data, every channel is mode 0 = the rest pose; the
+    ASTB section of ansmconv.py references only the animations it names, see docs/19-ansm-section.md)
     Sampling (anim.c / `Section.sample`): frame f in [0, frame_count - 1] is evaluated by locating the key
     segment of each track (dense: floor(f); keyed: binary search) and interpolating linearly (nlerp for
     rotations along the shortest path). Looping animations wrap f >= frame_count to loop_frame +
@@ -196,6 +199,7 @@ OBJ_MODEL_AT, OBJ_ANIM_AT = 0x28, 0x38      # tag references in the object base 
 F_COMPRESSED, F_WORLD_RELATIVE, F_PAL = 1, 2, 4
 # ANIM flags (anim.h)
 ANIM_LOOPS, ANIM_WORLD_RELATIVE = 1, 2
+ANIM_STUB = 4                       # animations_needed: name/frames kept, no pose data (anim.h does not define it)
 # channel modes
 M_DEFAULT, M_STATIC, M_ANIMATED = 0, 1, 2
 # track flags
@@ -926,8 +930,15 @@ def rest_from_anims(anims: list[Anim], node_count: int) -> RestPose:
 
 
 def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | None = None,
-                              root_motion: bool = True) -> bytes:
-    """Serialise graphs (sorted by tag id here) into an ANIM section."""
+                              root_motion: bool = True,
+                              animations_needed: dict[int, "Iterable[int]"] | None = None) -> bytes:
+    """Serialise graphs (sorted by tag id here) into an ANIM section.
+
+    `animations_needed` maps a graph tag id to the animation indices that are really used. Every other animation of
+    such a graph is written as a STUB: same name, type, frame count and loop flags (so indices, names and timing stay
+    identical to a full conversion and ASTB's indices stay valid), but no pose data (all channels use the graph's rest
+    pose, ~nodes bytes) and no root motion, plus the flag `ANIM_STUB` (4; anim.c ignores it). Graphs that are not in the
+    dict are converted in full, as is everything when it is None (workstream E, ansmconv.needed_animations)."""
     graphs = sorted(graphs, key=lambda g: g.tag_id)
     if len({g.tag_id for g in graphs}) != len(graphs):
         raise ConvertError("duplicate graph tag id")
@@ -943,14 +954,25 @@ def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | Non
         graph_recs.append(struct.pack("<IHHII I 12x", g.tag_id, g.node_count, len(g.anims), len(anim_recs),
                                       default_off, g.model_tag))
         gbytes = len(default)
-        for a in g.anims:
-            d = decode(a)
+        needed = None if animations_needed is None or g.tag_id not in animations_needed \
+            else {int(i) for i in animations_needed[g.tag_id]}
+        if needed is not None and any(not 0 <= i < len(g.anims) for i in needed):
+            raise ConvertError(f"{g.path}: animations_needed holds an index outside 0..{len(g.anims) - 1}")
+        for ai, a in enumerate(g.anims):
+            stub = needed is not None and ai not in needed
+            if stub:
+                if not 1 <= a.node_count <= MAX_NODES or a.frame_count < 1:
+                    raise ConvertError(f"{a.name}: node count {a.node_count}, frame count {a.frame_count}")
+                d = Decoded(a.node_count, a.frame_count)
+                blob, est = bytes(_pad4(a.node_count)), ErrStats()      # every channel mode 0: the graph's rest pose
+            else:
+                d = decode(a)
+                blob, est = encode_animation(d, g.rest)
             if d.nn > g.node_count:
                 raise ConvertError(f"{g.path}: animation {a.name!r} has {d.nn} nodes, graph {g.node_count}")
-            blob, est = encode_animation(d, g.rest)
             stats.errors.add(est)
             data_off, shared = pool.add(blob)
-            rtype, rblock = encode_root_motion(d, a.frame_info_type) if root_motion else (0, b"")
+            rtype, rblock = encode_root_motion(d, a.frame_info_type) if root_motion and not stub else (0, b"")
             root_off = pool.add(rblock)[0] if rblock else 0
             if not shared:
                 gbytes += len(blob)
@@ -962,7 +984,8 @@ def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | Non
             if len(name) >= NAME_LEN:
                 raise ConvertError(f"{g.path}: animation name {a.name!r} too long")
             loop_frame = a.loop_frame if 0 <= a.loop_frame < a.frame_count else 0
-            anim_recs.append(struct.pack(ANIM_FMT, name, a.type, a.frame_count, loop_frame, loop_flags(a), d.nn,
+            anim_recs.append(struct.pack(ANIM_FMT, name, a.type, a.frame_count, loop_frame,
+                                         loop_flags(a) | (ANIM_STUB if stub else 0), d.nn,
                                          rtype, g.node_count, 25.0 if a.flags & F_PAL else 30.0, data_off,
                                          len(blob), root_off, default_off))
         stats.graph_bytes[g.tag_id] = gbytes
@@ -1047,10 +1070,11 @@ def load_graphs(src, anim_tags: list[int] | None = None) -> list[GraphSource]:
 
 
 def build_section(map_path: Path, anim_tags: list[int] | None = None, stats: BuildStats | None = None,
-                  root_motion: bool = True) -> bytes:
+                  root_motion: bool = True, animations_needed: dict[int, "Iterable[int]"] | None = None) -> bytes:
     """The ANIM section of a decompressed map: every `model_animations` tag (anim_tags None) or only the
-    tags with these ids, sorted by tag id."""
-    return build_section_from_graphs(load_graphs(Path(map_path), anim_tags), stats, root_motion)
+    tags with these ids, sorted by tag id. `animations_needed` (graph tag id -> animation indices) turns the other
+    animations of those graphs into pose-less stubs, see build_section_from_graphs."""
+    return build_section_from_graphs(load_graphs(Path(map_path), anim_tags), stats, root_motion, animations_needed)
 
 
 # ---- reading the section back (reference reader and sampler; engine/src/world/anim.c mirrors it) -------------

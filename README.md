@@ -17,12 +17,13 @@ campaign** from the user's own Xbox disc, targeting a **locked 30 fps** (60 fps 
 | [docs/06-decisions.md](docs/06-decisions.md) | Architecture decision records |
 | [docs/07-hp2-format.md](docs/07-hp2-format.md), [08-bsp-section.md](docs/08-bsp-section.md), [09-tex-section.md](docs/09-tex-section.md) | Pack container, BSP geometry and texture/lightmap sections |
 | [docs/11-model-section.md](docs/11-model-section.md), [12-anim-section.md](docs/12-anim-section.md), [13-scen-section.md](docs/13-scen-section.md) | Object models, animations, scenario placements and lighting |
+| [docs/14-phase3-plan.md](docs/14-phase3-plan.md) and [15](docs/15-coll-section.md) [16](docs/16-cmod-section.md) [17](docs/17-unit-section.md) [18](docs/18-weap-section.md) [19](docs/19-ansm-section.md) [20](docs/20-hud-section.md) [21](docs/21-snd-section.md) [22](docs/22-fx-section.md) | Phase 3 workstreams: collision, object hit shapes, units, weapons, animation state tables, HUD, sound, effects |
 | [docs/10-m1-hardware-check.md](docs/10-m1-hardware-check.md) | Console procedure (deferred to Phase 6) and the `halo.cfg` reference |
 
 ## Layout
 ```
 engine/   EE C sources + VU1 microprograms → halo-ps2.elf
-iop/      IOP modules (streaming, sound) — Phase 3+
+iop/      IOP modules (streaming) — Phase 4+; gameplay audio uses ps2sdk's audsrv.irx (ADR-030)
 tools/    Python pipeline (halo2ps2) + tests
 scripts/  extract-iso.sh, inventory-maps.sh, run-pcsx2.sh
 docs/     specs, architecture, roadmap, reports/
@@ -39,7 +40,7 @@ python3 -I tools/tests/test_mapinfo.py
 ```
 
 ## Status
-Phases 0–2 done (gates M0–M2 met on PCSX2; console verification deferred to Phase 6, ADR-022). Next: Phase 3 (player, physics, weapons, HUD). See the roadmap for the gate checklist.
+Phases 0–3 done (gates M0–M3 met on PCSX2; console verification deferred to Phase 6, ADR-022). Next: Phase 4 (AI, scripting, mission 1). See the roadmap for the gate checklist.
 
 ## PCSX2 notes
 `printf` from the EE only shows in PCSX2's log (`~/Library/Application Support/PCSX2/logs/emulog.txt`)

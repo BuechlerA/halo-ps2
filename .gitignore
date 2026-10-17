@@ -24,3 +24,4 @@ __pycache__/
 .idea/
 # Local boot configuration for debug/test runs (docs/10-m1-hardware-check.md)
 halo.cfg
+engine/src/audio/audsrv_irx.c

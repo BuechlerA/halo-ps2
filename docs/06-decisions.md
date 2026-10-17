@@ -284,5 +284,93 @@ instead of the `fog` key (default off: the sky's own fog values are tuned for Xb
 **Consequences**: the sky costs about one extra textured-triangle pass of EE time (see docs/04-roadmap.md Phase 2 for numbers); sky model animation
 (a30 clouds drift) and the second a30 sky (switched by script) are not handled; a10's sky (space) draws the same way.
 
+## ADR-030 Audio through ps2sdk's stock `audsrv.irx`
+**Decision**: the Phase 3 audio path uses the IOP server `audsrv.irx` shipped with ps2sdk (embedded in the ELF with `bin2c`, loaded with
+`SifExecModuleBuffer` after `sbv_patch_enable_lmb()`, on top of the BIOS's `rom0:LIBSD`) and its ADPCM API instead of the planned custom
+`hsound.irx`. Sounds are converted to the 16-byte `APCM` header + SPU2 ADPCM blocks audsrv loads (`soundconv.py`), uploaded to SPU2 RAM at level
+load and played on pooled voices with per-play volume and pan. `hstream.irx` (dialogue/music streaming) stays Phase 4.
+**Why**: it removes an IOP-side module (and the IOP toolchain from the critical path) for the gameplay sound set, works on PCSX2 and on the
+console from the same ELF, and the audsrv API already covers voices, volume and pan. Verified on PCSX2 (`audiotest` config key: audsrv starts,
+a sample loads and plays on a voice); audible quality is a console question (Phase 6, ADR-022).
+**Consequences**: audsrv owns the SPU2 memory map and voice allocation (24 voices on core 0), so reverb presets and 3D distance filtering are limited
+to what the client computes (volume, pan); `sound_environment` reverb is deferred; without `sbv_patch_enable_lmb` the module load hangs (found on PCSX2).
+
+## ADR-031 Phase 3 as data converters plus an engine integrator
+**Decision**: Phase 3 is split into eight data workstreams (world collision, object collision models, units/globals, weapons, animation state tables,
+HUD, sound, effects), each a Python converter with its own pack (`assets/hp2/<map>.<kind>.hp2`), a host-tested pure-C reader and a format doc, plus the
+engine systems that consume them (player controller, weapons, projectiles, damage, HUD and effect rendering, audio client, checkpoints). The contract is
+`docs/14-phase3-plan.md`; cross references are Xbox tag ids, as in Phase 2.
+**Why**: the converters are independent reverse-engineering jobs with tests against real maps; keeping their packs separate lets each be rebuilt and
+validated alone.
+**Consequences**: the engine loads up to eight extra packs per level (cfg keys `coll`, `cmod`, `unit`, `weap`, `ansm`, `hud`, `snd`, `fx`); objpack gets extra
+roots (models/animations the weapons and units reference).
+
+## ADR-032 World collision from the Xbox collision BSP (`COLn`)
+**Decision**: each `structure_bsp` collision BSP becomes a compact `COLn` section (8-byte 3D nodes, the 2D BSP, surfaces reduced to vertex loops, edges dropped). Ray hits take the
+tree's candidate surface and accept it when the crossing lies inside the polygon or solid space follows 1 mm further; sphere sweeps and depenetration test faces, edge cylinders and
+vertex spheres against the polygons through a capsule walk of the tree; the two-sided surfaces of the data are coincident twin pairs, so the reader has no back-face logic.
+**Why**: the Xbox data has no empty 2D leaves (the 2D tree names a surface even in open space) and about 1 mm slop between planes and polygons; dropping edges halves the size.
+**Consequences**: 0.3 to 1.66 MiB per BSP (62 MiB for the ten maps); results can differ from the original engine by millimetres at polygon edges and in sliver leaves; a sphere that starts inside a wall needs `coll_sphere_overlap` before sweeping; EE cost is unmeasured (host: about 460 walking sweeps per millisecond). Details: docs/15-coll-section.md.
+
+## ADR-033 Object hit shapes: conservative node-local boxes (`CMOD`)
+**Decision**: object hit detection uses one oriented box per (region, permutation, node, surface material), fitted to that group's collision vertices in the node's default-pose frame (smaller of
+the axis-aligned and principal-axes box plus 0.002 wu), posed with the node's world matrix and tested with a ray or sphere. Damage tables (materials with head flag and multipliers, regions, vitality
+constants) live in the same section. **Why**: the originals are small node-local BSPs; a box per group is conservative for 100 % of the source vertices and costs at most 31 box tests per model.
+**Consequences**: concave parts are filled in, render geometry outside the collision geometry is not hittable (as in the original), the tag bounding radius cannot be used for culling, the collision
+permutation is chosen by name. Details: docs/16-cmod-section.md.
+
+## ADR-034 Unit constants in their source units (`UNIT`)
+**Decision**: `globals` player constants, every biped, the basic vehicle data, seats and the material table are stored as the tags have them (wu/tick for jump and vehicle speeds, wu/s for player
+speeds and landing velocities); gravity is derived from the data (0.0035652 wu/tick^2 = 3.2087 wu/s^2 on every map, proved by the cached falling velocities); walking speeds come from `globals`
+(`use player physics`) and the animation graph's root motion; health, shield and recharge come from the collision model. **Why**: units are proved against the data and a tuning pass compares
+directly with the tags. **Consequences**: the engine converts at load (`player_params_from_tags`); look limits and per-material impact responses have no tag source; the acceleration unit of
+`globals` is unproved (engine constant); driving a Warthog needs the physics tag in a later phase. Details: docs/17-unit-section.md.
+
+## ADR-035 Weapons as tables plus a pure 30 Hz state machine (`WEAP`)
+**Decision**: one `WEAP` section holds every weapon, projectile, damage effect, equipment, grenade and item collection; projectile velocities stay in wu/tick; ready, put-away and melee times
+come from the first-person animation frame counts (the tags have none); `sim/weapdef.c` has the weapon state machine (ready, rate ramp, spread, ammo and reserve, reload incl. shell-by-shell,
+charge, heat, battery, melee, put away, zoom) with no engine dependencies. **Why**: deterministic and host-tested with every weapon of all ten maps. **Consequences**: the material-modifier order,
+the area-damage falloff and charge-on-release are modelled, not verified; item collections are untested (no campaign map has one). Details: docs/18-weap-section.md.
+
+## ADR-036 Animation state tables as a separate section (`ASTB`)
+**Decision**: the `model_animations` state blocks (unit/class/type tables, first person, vehicle, device, damage, per-animation variants and events) are converted into `ASTB`, keyed by the
+same graph tag id and animation index as `ANIM`; lookups are by name (unit label, weapon class, weapon type label). **Why**: ANIM's layout stays fixed and its pose data small.
+**Consequences**: ANIM and ASTB must be built from the same graph set (objpack passes the union of the roots); loops and the weapon class are resolved by the engine. Details: docs/19-ansm-section.md.
+
+## ADR-037 HUD data: pre-resolved 640x480 layouts and alpha-ramp textures (`HUD0`)
+**Decision**: `hudconv.py` writes HUD records (anchors resolved to a 640x480 virtual screen), a sprite table, `FONT`, `STRS` and `HUDT` (all HUD bitmaps as white alpha ramps or converted
+textures, one mip, power-of-two padded). **Why**: the engine needs no tag parser or layout maths; the data is host-tested and fuzzed. **Consequences**: the anchor rule for non-top-left anchors,
+meter semantics and overlay flags are unverified until Phase 6; the sniper scope and screen effects are not converted. Details: docs/20-hud-section.md.
+
+## ADR-038 Gameplay sounds as pre-wrapped audsrv samples (`SND0`/`SNDD`)
+**Decision**: gameplay `snd!` tags (roots: weapons, projectiles, damage effects, effects, bipeds, globals, equipment, unit HUDs) become SPU2 ADPCM mono <= 22050 Hz, one audsrv sample (APCM
+header + blocks) per permutation, <= 1.4 MiB resident per map chosen by loss per byte (drops reported; weapon sounds are never dropped). **Why**: fits ADR-030 and the SPU2 budget; the Xbox format
+was verified on 39 M block boundaries. **Consequences**: 85-90 % of the reachable audio does not fit (footsteps and scripted impacts are the casualties); quality about 25 dB SNR; dialogue and music
+are Phase 4. Details: docs/21-snd-section.md.
+
+## ADR-039 Effects as tables plus a sprite-sheet texture pack (`FXD0`/`FXTX`)
+**Decision**: the gameplay effect closure (roots `matg foot weap proj jpt! bipd vehi eqip garb itmc` plus particle death/collision effects) is converted into flat tables (effects, events, parts,
+emitters, particle/decal/light/physics/particle-system definitions, bitmap sequences); sounds, damage effects and objects are referenced by tag id; sprite sheets are single-mip PSMT8/PSMT4 textures
+keyed by bitmap tag id. **Why**: a billboard renderer on the EE needs no VU program. **Consequences**: dynamics of particle systems, lights and object parts are not created by the runtime
+(ADR-041). Details: docs/22-fx-section.md.
+
+## ADR-040 The game simulation: one pure-C module over the data readers
+**Decision**: `sim/game.c` owns the 30 Hz tick: player (capsule controller against `phys_world`, `sim/player.c`), inventory of two weapons with `weapon_fire_step`, projectiles (flight, gravity,
+material responses, impact and detonation damage, area damage through the detonation effect's damage parts), damage with the collision regions' multipliers (`sim/vitals.c`), death animations from
+the ASTB damage table, pickups, grenades, melee, zoom, camera shake. It emits events (`GE_*`) that audio, effects and the log consume; it is host-tested against the real a10 packs (every weapon of
+all maps fires, the checkpoint restores state). **Why**: no engine dependency means the whole gameplay loop runs under ASan in CI-style tests. **Consequences**: player/object collision is
+world-only (bodies do not block the player yet); enemy fire at the player and AI are Phase 4; vehicles are not driven.
+
+## ADR-041 Overlay pass: HUD, particles and decals as GS sprites
+**Decision**: after the object pass the renderer calls an overlay pass that draws effect billboards (depth tested, read-only Z, sorted by blend then depth) and then the HUD (`ui/hud.c` layout of
+the HUD0 records, `render/sprite.c` emitter through PATH2 DIRECT, 512x448 from the 640x480 layout). HUD and effect textures use their own residency key ranges (`bsp_render_reserve_keys`).
+**Why**: reuses the chain and texture cache with no new VU program. **Consequences**: decals are screen-facing sprites (no projective geometry), multiply blends are approximated by dark
+alpha, near-camera particles are capped in size, particle collision and particle systems are not simulated; visual tuning is part of the PCSX2 pass (ADR-022).
+
+## ADR-042 Checkpoints as a state snapshot
+**Decision**: `checkpoint_save` copies the game state, object table, first-person view and effects (about 300 KB) into a static block; `checkpoint_revert` restores it (also after the player has
+been dead for 3 s). Start saves, Select+Start reverts until scripts call `game_save`. **Why**: the state is plain data and pointers stay valid in one session. **Consequences**: script and AI
+state join the snapshot in Phase 4; saving to memory card is Phase 5.
+
 ## Open decisions
 None.

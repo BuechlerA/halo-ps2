@@ -90,6 +90,16 @@ static int src_lightmap(void *user, unsigned page, tex_image_t *out)
 	return 0;
 }
 
+/* Texture source over a TEXS-layout texture set (HUD and effect sprites): bindings keyed by tag id, textures by index. */
+void world_texset_source(tex_source_t *out, texset_t *ts)
+{
+	memset(out, 0, sizeof *out);
+	out->binding = src_binding;
+	out->texture = src_texture;
+	out->user = ts;
+	out->texture_count = ts->has ? ts->tex.texture_count : 0;
+}
+
 int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index)
 {
 	size_t raw;

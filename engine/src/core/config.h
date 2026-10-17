@@ -5,7 +5,7 @@
 #define CORE_CONFIG_H
 #include <stddef.h>
 
-#define CFG_MAX_ENTRIES 48
+#define CFG_MAX_ENTRIES 200
 #define CFG_KEY_LEN 24
 #define CFG_ARG_LEN 120
 

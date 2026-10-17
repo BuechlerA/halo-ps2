@@ -79,7 +79,7 @@ One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (op
 | `pack <path>` | BSP pack (BSPS v2) | `assets/hp2/a10.hp2` |
 | `tex <path>` | TEXS + LMn pack; omitted = everything flat | none |
 | `bsp <n>` | BSP index inside the pack | 0 |
-| `arena_mb <n>` | level arena size (the one boot-time malloc) | 20 |
+| `arena_mb <n>` | level arena size (the one boot-time malloc) | 24 |
 | `camera x y z yaw pitch` | start pose (degrees) | centre of the BSP bounds |
 | `pathkey t x y z yaw pitch` | scripted camera keys (seconds, looped, up to 24) | none |
 | `frames <n>` | stop after n frames, print `[done]` | run forever |
@@ -96,6 +96,13 @@ One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (op
 | `objhidden 1` | also spawn the placements scripts would create later (stress population) | 0 |
 | `objdist <wu>`, `objcap <n>` | object draw distance (units) and per-frame batch cap | 200, 900 |
 | `sky3d 0/1`, `skyfog 0/1` | draw the sky model from the object pack's `SKY0` section / take the world fog from the sky tag (ADR-029) | 1, 0 |
+| `game <prefix>` | gameplay mode: loads `<prefix>.{coll,cmod,unit,weap,ansm,hud,snd,fx}.hp2` (needs `obj`); the player replaces the free-fly camera | none |
+| `player x y z yaw` | player start (feet position, yaw in degrees); default: the `camera` pose lowered by the eye height | camera |
+| `input t lx ly rx ry buttons` | scripted pad (seconds, sticks -1..1, raw button bits of `platform/pad.h`, hex); each key holds until the next; up to 120 keys, replaces the pad | none |
+| `allweapons 0/1`, `difficulty 0..3`, `seed n` | Triangle cycles through every weapon of the map / difficulty / random seed of the simulation | 0, 1, 1 |
+| `gamelog 0/1`, `gamestat 0/1`, `audiolog 0/1` | print every game event / a status line per second / every sound played | 0, 1, 0 |
+| `hud 0/1`, `fx 0/1`, `fxdecals 0/1`, `fxparticles 0/1` | draw the HUD / effects / their decals / their particles | 1 |
+| `audio 0/1`, `audiopreload 0/1`, `audiotest <file>` | start the IOP audio server / upload every sound at level load / play one APCM file at boot (bring-up) | 1, 1, none |
 | `lodctl 0/1` | dynamic LOD controller | 1 |
 | `objlist 1` | print every placed object on the TTY | 0 |
 | `chief x y z yaw` / `chiefcam 1` | spawn the player's biped (third-person Master Chief) at a pose / 3 units ahead of the start camera | off |

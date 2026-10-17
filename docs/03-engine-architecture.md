@@ -225,7 +225,9 @@ engine/
     vu1/                   bsp.vsm (bsp_lit + bsp_lightmap entry points)
     world/                 bsp.c (BSPS v2 reader)  tex.c (TEXS/LMn reader)  world.c (loading, texture source)
     stream/                hp2.c file.c
-    sim/ anim/ ai/ script/ audio/ ui/ save/    later phases
+    sim/                   input player phys playerdef vitals game fx save (+ objects fpview skeleton); weapdef unitdef (data readers)
+    audio/ ui/             audio gameaudio snddef; hud huddef
+    ai/ script/            later phases
 iop/
   hstream/ hsound/         IRX modules (IOP toolchain)
 tools/
@@ -255,6 +257,16 @@ matrices, static objects skip it), look up the cluster light, then per part a st
 The 30 Hz tick advances animations (`objects_tick`, `fpview_tick`). Source layout additions: `sim/{objects,fpview,skeleton}.c`, `core/mat.c`,
 `render/{obj_render,lodctl}.c`, `world/{model,anim,scen}.c`, `vu1/model.vsm`, `tools/halo2ps2/{modelconv,objtex,animconv,scenconv,objpack}.py`.
 Decisions: ADR-024 (formats), ADR-025 (rendering), ADR-026 (lighting), ADR-027 (dynamic LOD), ADR-028 (30 fps pacing).
+
+## 10c. Phase 3 as built (player, weapons, HUD)
+Data: eight converters and readers (docs/14-phase3-plan.md): `COLn` collision, `CMOD` object hit shapes, `UNIT` units, `WEAP` weapons and the weapon state machine, `ASTB` animation state
+tables, `HUD0`/`FONT`/`STRS`/`HUDT`, `SND0`/`SNDD`, `FXD0`/`FXTX`; `world/gamedata.c` loads them (`game <prefix>`). Simulation (`sim/`): `input.c` (DualShock 2 mapping and scripted input),
+`player.c` + `phys.c` + `playerdef.c` (capsule controller over `coll.c`), `vitals.c`, `game.c` (the 30 Hz tick: player, two-weapon inventory with `weapon_fire_step`, projectiles and
+detonations, damage with `CMOD` region multipliers, death animations, pickups, grenades, melee, zoom, events), `fx.c` (particles and decals from `FXD0`), `save.c` (checkpoint snapshot). Output:
+`ui/hud.c` lays the HUD out (640x480), `render/hud_render.c` + `render/fx_render.c` draw it through `render/sprite.c` as an overlay pass (after objects, before the profiler text);
+`audio/gameaudio.c` plays sounds through `audio/audio.c` (stock `audsrv.irx`, ADR-030) with every sample uploaded at level load. main.c: `pad_read_raw` or the input script feeds `game_tick`
+once per frame at 30 fps; events drive audio and effects; `game_camera` replaces the free-fly camera. Decisions: ADR-030..ADR-042. Tests: `test_game.c` runs the real a10 packs headless
+(every weapon of all ten maps fires, checkpoint restore, HUD layout, effects lifecycle).
 
 ## 11. Coding rules (enforced by review)
 - C11, `-G0`, no `double`, no `malloc` after load, no recursion in tick paths,

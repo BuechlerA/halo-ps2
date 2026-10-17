@@ -7,6 +7,10 @@ export PATH := $(PS2DEV)/bin:$(PS2DEV)/ee/bin:$(PS2DEV)/iop/bin:$(PS2DEV)/dvp/bi
 
 EE_BIN  = halo-ps2.elf
 EE_OBJS = src/main.o \
+          src/audio/audio.o \
+          src/audio/gameaudio.o \
+          src/audio/snddef.o \
+          src/audio/audsrv_irx.o \
           src/core/config.o \
           src/core/mat.o \
           src/core/mem.o \
@@ -15,6 +19,16 @@ EE_OBJS = src/main.o \
           src/platform/profiler.o \
           src/platform/video.o \
           src/sim/fpview.o \
+          src/sim/fx.o \
+          src/sim/game.o \
+          src/sim/input.o \
+          src/sim/phys.o \
+          src/sim/player.o \
+          src/sim/playerdef.o \
+          src/sim/save.o \
+          src/sim/unitdef.o \
+          src/sim/vitals.o \
+          src/sim/weapdef.o \
           src/sim/objects.o \
           src/sim/skeleton.o \
           src/render/bsp_render.o \
@@ -22,9 +36,12 @@ EE_OBJS = src/main.o \
           src/render/chain.o \
           src/render/clip.o \
           src/render/flycam.o \
+          src/render/fx_render.o \
+          src/render/hud_render.o \
           src/render/lodctl.o \
           src/render/obj_render.o \
           src/render/selftest.o \
+          src/render/sprite.o \
           src/render/text.o \
           src/render/texcache.o \
           src/render/upload.o \
@@ -32,13 +49,20 @@ EE_OBJS = src/main.o \
           src/stream/file.o \
           src/stream/hp2.o \
           src/vu1/world.o \
+          src/ui/hud.o \
+          src/ui/huddef.o \
           src/world/anim.o \
+          src/world/ansm.o \
           src/world/bsp.o \
+          src/world/cmod.o \
+          src/world/coll.o \
+          src/world/fxdef.o \
+          src/world/gamedata.o \
           src/world/model.o \
           src/world/scen.o \
           src/world/tex.o \
           src/world/world.o
-EE_LIBS = -ldraw -lgraph -lpacket2 -ldma -ldebug -lpad -lm
+EE_LIBS = -ldraw -lgraph -lpacket2 -ldma -ldebug -lpad -laudsrv -lpatches -lm
 EE_INCS = -Isrc
 EE_CFLAGS = -std=gnu11 -Wextra -Wno-unused-parameter -MMD -MP
 EE_DVP  = dvp-as
@@ -52,8 +76,12 @@ all: $(EE_BIN)
 
 src/vu1/world.o: src/vu1/bsp.vsm src/vu1/model.vsm
 
+# ps2sdk's stock IOP audio server is embedded in the ELF (loaded with SifExecModuleBuffer): ADR-030
+src/audio/audsrv_irx.c:
+	bin2c $(PS2SDK)/iop/irx/audsrv.irx $@ audsrv_irx
+
 clean:
-	rm -f $(EE_BIN) $(EE_OBJS) $(EE_OBJS:.o=.d)
+	rm -f src/audio/audsrv_irx.c $(EE_BIN) $(EE_OBJS) $(EE_OBJS:.o=.d)
 
 run: $(EE_BIN)
 	../scripts/run-pcsx2.sh $(EE_BIN)

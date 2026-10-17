@@ -70,6 +70,10 @@ static render_pass_fn   s_obj_pass;
 static void            *s_obj_user;
 static tex_source_t     s_obj_src;
 static unsigned         s_obj_key_base;
+static unsigned         s_obj_count;                 /* object textures */
+static unsigned         s_extra_total;               /* texture keys reserved for HUD / effect sprites */
+static render_pass_fn   s_overlay_pass;
+static void            *s_overlay_user;
 static render_options_t s_opt;
 static render_stats_t   s_stats;
 
@@ -665,6 +669,11 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt;
 		s_obj_pass(s_obj_user, &rc);
 	}
+	if (s_overlay_pass) {
+		render_ctx_t rc;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt;
+		s_overlay_pass(s_overlay_user, &rc);
+	}
 
 	/* overlay + FINISH */
 	{
@@ -777,9 +786,29 @@ void bsp_render_set_object_pass(render_pass_fn fn, void *user, const tex_source_
 	if (obj_src) {
 		s_obj_src = *obj_src;
 		s_obj_key_base = s_src.texture_count + s_page_slots;
+		s_obj_count = obj_src->texture_count;
 		/* the residency cache keys are textures, lightmap pages, then object textures */
-		tc_init(&s_tc, s_window_pages - CACHE_FIRST_PAGE, FONT_CLUT_SLOT, s_obj_key_base + obj_src->texture_count, 1536u * 1024u);
+		tc_init(&s_tc, s_window_pages - CACHE_FIRST_PAGE, FONT_CLUT_SLOT, s_obj_key_base + obj_src->texture_count + s_extra_total, 1536u * 1024u);
 	}
+}
+
+unsigned bsp_render_reserve_keys(unsigned count)
+{
+	unsigned base = s_obj_key_base + s_obj_count + s_extra_total;
+	s_extra_total += count;
+	tc_init(&s_tc, s_window_pages - CACHE_FIRST_PAGE, FONT_CLUT_SLOT, s_obj_key_base + s_obj_count + s_extra_total, 1536u * 1024u);
+	return base;
+}
+
+u64 rb_extra_tex0(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx)
+{
+	return resident_tex0(key_base + index, img, tfx);
+}
+
+void bsp_render_set_overlay_pass(render_pass_fn fn, void *user)
+{
+	s_overlay_pass = fn;
+	s_overlay_user = user;
 }
 
 void bsp_render_set_sky_pass(render_pass_fn fn, void *user)

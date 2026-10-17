@@ -13,6 +13,8 @@
 #include <math.h>
 
 #include "core/config.h"
+#include "audio/audio.h"
+#include "audio/gameaudio.h"
 #include "core/mem.h"
 #include "platform/fbdump.h"
 #include "platform/pad.h"
@@ -20,10 +22,17 @@
 #include "platform/timer.h"
 #include "platform/video.h"
 #include "render/bsp_render.h"
+#include "render/fx_render.h"
+#include "render/hud_render.h"
 #include "render/flycam.h"
 #include "render/lodctl.h"
 #include "render/obj_render.h"
 #include "sim/fpview.h"
+#include "sim/fx.h"
+#include "sim/game.h"
+#include "sim/input.h"
+#include "sim/save.h"
+#include "world/gamedata.h"
 #include "sim/objects.h"
 #include "render/selftest.h"
 #include "world/world.h"
@@ -41,13 +50,33 @@ static fpview_t   s_fp;
 static lodctl_t   s_lod;
 static obj_render_t s_objr;
 static int        s_have_objects;
+static gamedata_t s_gd;
+static game_t     s_game;
+static input_script s_script;
+static int        s_game_on;
+static unsigned   s_tick;
+static gameaudio_t s_ga;
+static hud_render_t s_hudr;
+static fx_t       s_fx;
+static checkpoint_t s_ckpt;
+static hud_state_t s_hs;
+static int        s_paused;
+static uint32_t   s_unit_hud;
+static fx_render_t s_fxr;
+
+static void overlay_pass(void *u, struct render_ctx *rc)
+{
+	(void)u;
+	fx_render_pass(&s_fxr, rc);          /* particles and decals are depth tested: before the HUD */
+	hud_render_pass(&s_hudr, rc);
+}
 static int        s_vblanks = 2;                /* vblanks per frame: 2 = 30 fps (default), 1 = 60 fps */
 #define VBLANK_S (1.0f / 59.94f)
 #define VBLANK_MS (1000.0f / 59.94f)
 
 static void load_config(void)
 {
-	static char text[4096];
+	static char text[16384];
 	FILE *f = fopen("host:halo.cfg", "rb");
 	size_t n;
 	if (!f) { printf("[cfg] no host:halo.cfg, defaults\n"); return; }
@@ -131,12 +160,27 @@ int main(int argc, char *argv[])
 	printf("halo-ps2 phase 1 boot\n");
 	load_config();
 
-	arena_bytes = (size_t)cfg_int(&s_cfg, "arena_mb", 20) * 1024u * 1024u;
+	arena_bytes = (size_t)cfg_int(&s_cfg, "arena_mb", 24) * 1024u * 1024u;
 	heap = malloc(arena_bytes);                         /* the one boot-time allocation (ADR-006) */
 	if (!heap) { printf("[err] cannot allocate %u MB arena\n", (unsigned)(arena_bytes >> 20)); return 1; }
 	arena_init(&s_arena, "level", heap, arena_bytes);
 
 	pad_init();
+	if (cfg_int(&s_cfg, "audio", 1)) audio_init();
+	{
+		const char *at = cfg_str(&s_cfg, "audiotest", NULL);     /* an APCM file: load and play it once (bring-up check) */
+		if (at && audio_ready()) {
+			FILE *af = fopen(at, "rb");
+			if (af) {
+				static unsigned char abuf[65536] __attribute__((aligned(64)));
+				int n = (int)fread(abuf, 1, sizeof abuf, af);
+				audio_sample smp;
+				fclose(af);
+				printf("[audio] test file %d bytes: load %d, ", n, audio_load(&smp, abuf, n));
+				printf("play ch %d\n", audio_play(&smp, 1.0f, 0.0f));
+			} else printf("[audio] cannot open %s\n", at);
+		}
+	}
 	dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
 	dma_channel_fast_waits(DMA_CHANNEL_GIF);
 	video_init(&s_video);
@@ -219,6 +263,61 @@ int main(int argc, char *argv[])
 		pos[0] = s_cam.pos[0] + f[0] * 3.0f; pos[1] = s_cam.pos[1] + f[1] * 3.0f; pos[2] = s_cam.pos[2] - 1.4f;
 		printf("[obj] third-person biped: %s\n", pl.biped_def && objects_spawn_def(&s_objects, &s_objr.world, pl.biped_def - 1, pos, s_cam.yaw + 3.14159265f) >= 0 ? "spawned" : "not available");
 	}
+	if (s_have_objects && cfg_str(&s_cfg, "game", NULL)) {
+		/* Phase 3: gameplay packs (docs/14-phase3-plan.md): `game <prefix>` loads <prefix>.{coll,cmod,unit,weap,ansm,hud,snd,fx}.hp2 */
+		int n = gamedata_load(&s_gd, &s_arena, cfg_str(&s_cfg, "game", NULL), s_world.bsp_index);
+		if (n > 0) {
+			game_init_t gi;
+			float pp[5];
+			memset(&gi, 0, sizeof gi);
+			gi.unit = s_gd.has_unit ? &s_gd.unit : NULL; gi.weap = s_gd.has_weap ? &s_gd.weap : NULL; gi.cmod = s_gd.has_cmod ? &s_gd.cmod : NULL;
+			gi.ansm = s_gd.has_ansm ? &s_gd.ansm : NULL; gi.fx = s_gd.has_fx ? &s_gd.fx : NULL; gi.coll = s_gd.has_coll ? &s_gd.coll : NULL;
+			gi.ow = s_objr.world; gi.objects = &s_objects; gi.fp = &s_fp; gi.seed = (uint32_t)cfg_int(&s_cfg, "seed", 1);
+			if (cfg_floats(&s_cfg, "player", pp, 4) < 3) { pp[0] = s_cam.pos[0]; pp[1] = s_cam.pos[1]; pp[2] = s_cam.pos[2] - 0.62f; pp[3] = s_cam.yaw * 57.29578f; }
+			game_init(&s_game, &gi, pp, pp[3] * 3.14159265f / 180.0f);
+			s_game.all_weapons = (int)cfg_int(&s_cfg, "allweapons", 0);
+			s_game.difficulty = (int)cfg_int(&s_cfg, "difficulty", 1);
+			s_game_on = 1;
+			checkpoint_save(&s_ckpt, &s_game, &s_fp, NULL);          /* the level-start checkpoint (fx are saved from the first Start press) */
+			printf("[game] fp: arms model %d graph %d anim %u, weapon model %d graph %d anim %u offset %u hand marker %d node %d\n", s_fp.arms_model, s_fp.arms_graph, s_fp.arms_anim,
+			       s_fp.weapon_model, s_fp.weapon_graph, s_fp.weapon_anim, s_fp.weapon_node_offset, s_fp.hand_marker, s_fp.hand_node);
+			{
+				int sl, k;
+				for (sl = 0; sl < GAME_SLOTS; sl++) {
+					const game_slot_t *gs = &s_game.slot[sl];
+					anim_graph ag;
+					if (gs->weapon < 0 || gs->fp_graph < 0) continue;
+					ag = anim_get_graph(s_objr.world.anims, (uint32_t)gs->fp_graph);
+					printf("[game] slot %d %s: fp model %d graph %d idle %d (%s), nodes %u\n", sl, gs->def.name, gs->fp_model, gs->fp_graph, gs->fp_anim_idle,
+					       gs->fp_anim_idle >= 0 ? anim_get(s_objr.world.anims, &ag, (uint32_t)gs->fp_anim_idle).name : "-", (unsigned)ag.node_count);
+					for (k = 0; k < (int)ag.anim_count && k < 16; k++) printf("[game]     anim %d: %s\n", k, anim_get(s_objr.world.anims, &ag, (uint32_t)k).name);
+				}
+			}
+			printf("[game] player at %.2f %.2f %.2f; health %.0f shield %.0f; weapon slots %d %d; %u objects\n", pp[0], pp[1], pp[2], s_game.vitals.health,
+			       s_game.vitals.shield, s_game.slot[0].weapon, s_game.slot[1].weapon, s_objects.count);
+		}
+		if (s_game_on && s_gd.has_snd && audio_ready()) gameaudio_init(&s_ga, &s_gd.snd, s_gd.sndd, s_gd.sndd_size, s_gd.has_fx ? &s_gd.fx : NULL, (int)cfg_int(&s_cfg, "audiolog", 0));
+		if (s_ga.snd && cfg_int(&s_cfg, "audiopreload", 1)) { u32 pt = timer_cycles(); unsigned pn = gameaudio_preload(&s_ga); printf("[audio] preloaded %u samples in %.0f ms (%u failed)\n", pn, timer_ms(pt, timer_cycles()), s_ga.failed); }
+		if (s_game_on) {
+			s_hudr.game = &s_game;
+			if (s_gd.has_hud && s_gd.hud_tex.has) {
+				s_hudr.hud = &s_gd.hud; s_hudr.tex = &s_gd.hud_source;
+				s_hudr.fonts = s_gd.has_fonts ? &s_gd.fonts : NULL; s_hudr.state = &s_hs; hud_state_init(&s_hs);
+				if (s_game.has_biped) huddef_find_link(&s_gd.hud, HUDDEF_L_UNIT, s_game.biped.tag_id, 0, &s_unit_hud);
+				s_hudr.key_base = bsp_render_reserve_keys(s_gd.hud_tex.tex.texture_count);
+				s_hudr.enabled = (int)cfg_int(&s_cfg, "hud", 1);
+			}
+			if (s_gd.has_fx && s_gd.fx_tex.has) {
+				fx_init(&s_fx, &s_gd.fx, s_game.globals.gravity > 0.0f ? s_game.globals.gravity * 900.0f : 3.2f, (uint32_t)cfg_int(&s_cfg, "seed", 1) + 99u);
+				s_fxr.fx = &s_fx; s_fxr.tex = &s_gd.fx_source;
+				s_fxr.key_base = bsp_render_reserve_keys(s_gd.fx_tex.tex.texture_count);
+				s_fxr.enabled = (int)cfg_int(&s_cfg, "fx", 1); s_fxr.decals = (int)cfg_int(&s_cfg, "fxdecals", 1); s_fxr.particles = (int)cfg_int(&s_cfg, "fxparticles", 1);
+			}
+			bsp_render_set_overlay_pass(overlay_pass, NULL);
+		}
+		input_script_parse(&s_script, &s_cfg);
+		if (s_script.count) printf("[game] scripted input: %d keys\n", s_script.count);
+	}
 	s_vblanks = cfg_int(&s_cfg, "fps", 30) >= 60 ? 1 : 2;
 	printf("[cfg] target %d fps (%d vblank(s) per frame)\n", 60 / s_vblanks, s_vblanks);
 	profiler_init(&s_prof, ((float)s_vblanks + 0.5f) * VBLANK_MS);   /* late by more than half a frame time = dropped */
@@ -233,11 +332,90 @@ int main(int argc, char *argv[])
 		unsigned down = pad_poll(&in);
 
 		if (down & PAD_BTN_START) s_prof.overlay ^= 1;
-		if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
+		if (s_game_on) {
+			if (s_vblanks == 2 || (frame & 1) == 0) {            /* the 30 Hz simulation tick */
+				raw_input_t raw;
+				game_input_t gin;
+				if (s_script.count) input_script_eval(&s_script, (float)s_tick * (1.0f / 30.0f), &raw);
+				else if (!pad_read_raw(&raw)) memset(&raw, 0, sizeof raw);
+				input_map(&gin, &raw, s_game.prev_held);
+				if (gin.pressed & IN_PAUSE) { s_paused ^= 1; s_hs.paused = s_paused; }
+				if (gin.pressed & IN_SAVE) { checkpoint_save(&s_ckpt, &s_game, &s_fp, s_fx.def ? &s_fx : NULL); hud_message(&s_hs, "Checkpoint saved", 90); printf("[game] checkpoint saved at tick %u\n", s_game.tick); }
+				if ((gin.pressed & IN_REVERT) || s_game.dead_ticks > 90) {
+					if (checkpoint_revert(&s_ckpt, &s_game, &s_objects, &s_fp, s_fx.def ? &s_fx : NULL)) { gin.held = gin.pressed = 0; hud_message(&s_hs, "Reverted to the last checkpoint", 90); printf("[game] reverted to the checkpoint of tick %u\n", s_game.tick); }
+					else s_game.dead_ticks = 0;
+				}
+				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
+				game_tick(&s_game, &gin);
+				s_tick++;
+				s_hudr.tick = s_tick;
+				if (s_fx.def) {
+					unsigned ei, ec;
+					const game_event_t *ev = game_events(&s_game, &ec);
+					for (ei = 0; ei < ec; ei++) {
+						const game_event_t *e = &ev[ei];
+						if (!e->tag) continue;
+						switch (e->type) {
+						case GE_IMPACT: fx_spawn(&s_fx, e->tag, e->pos, e->normal, 1); break;
+						case GE_DETONATE: fx_spawn(&s_fx, e->tag, e->pos, e->normal, 1); break;
+						case GE_FIRE: {                               /* muzzle effects: out in front of the view model, right hand side */
+							float d[3] = { e->normal[0], e->normal[1], e->normal[2] }, r[3] = { sinf(s_game.player.yaw), -cosf(s_game.player.yaw), 0.0f }, mp[3];
+							mp[0] = e->pos[0] + d[0] * 0.75f + r[0] * 0.12f; mp[1] = e->pos[1] + d[1] * 0.75f + r[1] * 0.12f; mp[2] = e->pos[2] + d[2] * 0.75f - 0.08f;
+							fx_spawn(&s_fx, e->tag, mp, d, 0);
+						} break;
+						case GE_THROW: case GE_RELOAD: case GE_READY: case GE_EMPTY: case GE_OVERHEAT: {
+							float eye[3], fwd[3];
+							game_eye(&s_game, eye, fwd);
+							eye[0] += fwd[0] * 0.75f; eye[1] += fwd[1] * 0.75f; eye[2] += fwd[2] * 0.75f - 0.08f;
+							fx_spawn(&s_fx, e->tag, eye, fwd, 0);
+						} break;
+						default: break;
+						}
+					}
+					fx_tick(&s_fx);
+				}
+				if (s_ga.snd) { camera_t ac; game_camera(&s_game, &ac); gameaudio_events(&s_ga, &s_game, &ac); }
+				{
+					unsigned ei, ec;
+					const game_event_t *ev = game_events(&s_game, &ec);
+					hud_tick(&s_hs);
+					for (ei = 0; ei < ec; ei++) {
+						const game_event_t *e = &ev[ei];
+						if (e->type == GE_PICKUP && s_gd.has_strings && s_gd.has_hud && s_gd.has_weap) {      /* "Picked up a pistol" from the item strings */
+							int wi = weap_find_weapon(&s_gd.weap, e->tag), li = huddef_find_list(&s_gd.strings, huddef_get_globals(&s_gd.hud).item_strings);
+							weap_weapon wd;
+							if (wi >= 0 && li >= 0 && weap_get_weapon(&s_gd.weap, (uint32_t)wi, &wd)) {
+								uint16_t u[HUD_MSG_LEN];
+								char txt[HUD_MSG_LEN];
+								uint32_t l = huddef_get_string(&s_gd.strings, (uint32_t)li, wd.hud_message, u, HUD_MSG_LEN), k;
+								if (l != HUDDEF_STR_NONE) { for (k = 0; k < l && k < HUD_MSG_LEN - 1; k++) txt[k] = u[k] < 128 ? (char)u[k] : '?'; txt[k] = 0; hud_message(&s_hs, txt, 90); }
+							}
+						}
+						if (s_ga.snd && s_unit_hud) {
+							if (e->type == GE_PLAYER_HURT) gameaudio_hud_sound(&s_ga, &s_gd.hud, s_unit_hud, s_game.vitals.shield > 0.0f ? 2u : 64u);
+							else if (e->type == GE_SHIELD_DOWN) gameaudio_hud_sound(&s_ga, &s_gd.hud, s_unit_hud, 8u);
+							else if (e->type == GE_SHIELD_UP) gameaudio_hud_sound(&s_ga, &s_gd.hud, s_unit_hud, 1u);
+						}
+					}
+				}
+				if (cfg_int(&s_cfg, "gamelog", 0)) {
+					unsigned ei, ec;
+					const game_event_t *ev = game_events(&s_game, &ec);
+					for (ei = 0; ei < ec; ei++)
+						printf("[ev] t%u type %u tag %08x arg %u obj %d val %.1f\n", s_tick, ev[ei].type, (unsigned)ev[ei].tag, ev[ei].arg, ev[ei].obj, ev[ei].value);
+				}
+				if ((s_tick % 30) == 0 && cfg_int(&s_cfg, "gamestat", 1))
+					printf("[game] t=%us pos %.1f %.1f %.1f hp %.0f sh %.0f shots %u proj %u hits %u kills %u\n", s_tick / 30, s_game.player.pos[0], s_game.player.pos[1],
+					       s_game.player.pos[2], s_game.vitals.health, s_game.vitals.shield, (unsigned)s_game.st_shots, (unsigned)s_game.st_projectiles,
+					       (unsigned)s_game.st_hits, (unsigned)s_game.st_kills);
+			}
+			sim_done:
+			game_camera(&s_game, &s_cam);
+		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
 		else flycam_update(&s_cam, &in, (float)s_vblanks * VBLANK_S);
 
 		if (s_have_objects) {
-			if (s_vblanks == 2 || (frame & 1) == 0) {         /* the 30 Hz tick: every frame at 30 fps, every other at 60 */
+			if ((s_vblanks == 2 || (frame & 1) == 0) && !s_paused) {         /* the 30 Hz tick: every frame at 30 fps, every other at 60 */
 				objects_tick(&s_objects, &s_objr.world);
 				fpview_tick(&s_fp, &s_objr.world);
 			}
@@ -259,6 +437,7 @@ int main(int argc, char *argv[])
 		t2 = timer_cycles();
 
 		profiler_frame(&s_prof, timer_ms(t0, t1), timer_ms(t1, t2), bsp_render_stats(), t2);
+		if (frame > 0 && s_prof.last_interval > s_prof.drop_ms) printf("[prof] DROP frame %u interval %.1f ms (ee %.1f ms)\n", (unsigned)frame, s_prof.last_interval, timer_ms(t0, t1));
 		if (s_have_objects) {
 			s_prof.obj_visible = s_objr.st_visible; s_prof.obj_culled = s_objr.st_culled;
 			s_prof.obj_batches = s_objr.st_batches; s_prof.obj_tris = s_objr.st_triangles; s_prof.lod_level = (unsigned)s_lod.level;

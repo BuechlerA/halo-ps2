@@ -228,6 +228,11 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 		model_info mi;
 		unsigned r;
 		light_at(o, cam->pos, &light);
+		{                                                  /* the view model is never in the dark: Halo lights it with its own rig */
+			unsigned k;
+			for (k = 0; k < 3; k++) { if (light.ambient[k] < 80) light.ambient[k] = 80; if (light.sun[k] < 60) light.sun[k] = 60; }
+			light.sun_dir[0] = 0.3f; light.sun_dir[1] = 0.2f; light.sun_dir[2] = 0.93f;
+		}
 		mi = model_get(o->world.models, (uint32_t)f->arms_model);
 		model_select_permutations(o->world.models, &mi, NULL, perm);
 		for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
