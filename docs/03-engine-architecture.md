@@ -268,6 +268,16 @@ detonations, damage with `CMOD` region multipliers, death animations, pickups, g
 once per frame at 30 fps; events drive audio and effects; `game_camera` replaces the free-fly camera. Decisions: ADR-030..ADR-042. Tests: `test_game.c` runs the real a10 packs headless
 (every weapon of all ten maps fires, checkpoint restore, HUD layout, effects lifecycle).
 
+## 10d. Phase 4 as built (scripts, AI, mission 1)
+Data (docs/23-phase4-plan.md): `SCRP` scripts, `AIDT` actors and encounters, `PATn` navigation meshes (derived from the collision BSP), `DEVS` devices and trigger volumes, `CINE` recorded animations and
+camera tracks, `STRM`/`STRD` streamed audio. Runtime: `script/hs.c` (cooperative tree-walking VM, pointer-free state) with host built-ins in `script/hs_host_{obj,misc,ai}.c`; `ai/ai.c` (actor brains),
+`ai/units.c` (non-player bipeds on the player's capsule controller), `ai/path.c` (A* + funnel); `sim/devices.c`, `sim/cine.c`; `audio/stream.c` (IO thread + audsrv ring). `sim/mission.c` binds them in
+`mission_t`; `mission_tick` order: sync player, scripts, devices, object pre-hook, AI, units, game, object post-hook, misc, cinematics. `mission_app.c` owns the statics and wires hooks;
+`main.c` serves what the mission asks for between ticks (BSP switch, checkpoint, revert, win/loss). Level manager: a persistent arena (models, packs, textures) plus a per-BSP arena released on a
+switch; the object table holds the objects of every BSP. Saves: `sim/msave.c` (game + units + AI + scripts + devices + cinematics + host state) to RAM checkpoints and, through `platform/memcard.c`,
+the memory card. `sim/bot.c` is the gate's player (ADR-054). Decisions: ADR-043..ADR-054. Tests: one host test per module under `engine/tests/` (units, AI, host objects, host misc, script machine,
+path, cinematics, devices, streams) against the real a10 packs where present.
+
 ## 11. Coding rules (enforced by review)
 - C11, `-G0`, no `double`, no `malloc` after load, no recursion in tick paths,
   no `float` ↔ `int` conversions in inner loops without VU0.

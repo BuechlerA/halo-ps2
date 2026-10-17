@@ -70,6 +70,7 @@ static render_pass_fn   s_obj_pass;
 static void            *s_obj_user;
 static tex_source_t     s_obj_src;
 static unsigned         s_obj_key_base;
+#define KEY_LM_SLOTS 64u                             /* texture residency keys reserved for lightmap pages (a10: 55 at most) */
 static unsigned         s_obj_count;                 /* object textures */
 static unsigned         s_extra_total;               /* texture keys reserved for HUD / effect sprites */
 static render_pass_fn   s_overlay_pass;
@@ -232,7 +233,8 @@ int bsp_render_set_world(arena_t *a, const bsp_section *s, const tex_source_t *s
 				if (p > bx[3 + k]) bx[3 + k] = p;
 			}
 	}
-	tc_init(&s_tc, pages, FONT_CLUT_SLOT, src->texture_count + s_page_slots, 1536u * 1024u);
+	if (s_page_slots > KEY_LM_SLOTS) { printf("[err] %u lightmap pages exceed the %u reserved texture keys\n", (unsigned)s_page_slots, (unsigned)KEY_LM_SLOTS); return -1; }
+	tc_init(&s_tc, pages, FONT_CLUT_SLOT, s_obj_pass ? s_obj_key_base + s_obj_count + s_extra_total : src->texture_count + KEY_LM_SLOTS, 1536u * 1024u);
 	return 0;
 }
 
@@ -785,7 +787,7 @@ void bsp_render_set_object_pass(render_pass_fn fn, void *user, const tex_source_
 	s_obj_user = user;
 	if (obj_src) {
 		s_obj_src = *obj_src;
-		s_obj_key_base = s_src.texture_count + s_page_slots;
+		s_obj_key_base = s_src.texture_count + KEY_LM_SLOTS;          /* stable across BSP switches (lightmap keys come first) */
 		s_obj_count = obj_src->texture_count;
 		/* the residency cache keys are textures, lightmap pages, then object textures */
 		tc_init(&s_tc, s_window_pages - CACHE_FIRST_PAGE, FONT_CLUT_SLOT, s_obj_key_base + obj_src->texture_count + s_extra_total, 1536u * 1024u);

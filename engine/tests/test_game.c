@@ -259,6 +259,22 @@ int main(int argc, char **argv)
 		CHECK(detonated > 0);
 	}
 
+	/* 5b. an AI unit's shot hits the player and hurts the shield */
+	new_scene(21);
+	run_ticks(&g_game, &in, 45);
+	{
+		float eye[3], fwd[3], from[3], dir[3];
+		int pi = weap_find_projectile(&g_weap, g_game.slot[0].def.trigger[0].projectile);
+		float s0 = g_game.vitals.shield;
+		game_eye(&g_game, eye, fwd);
+		from[0] = eye[0] + 1.5f; from[1] = eye[1]; from[2] = eye[2] - 0.2f;
+		dir[0] = eye[0] - from[0]; dir[1] = eye[1] - from[1]; dir[2] = (eye[2] - 0.2f) - from[2];
+		CHECK(pi >= 0 && game_fire_projectile(&g_game, 0, (unsigned)pi, from, dir, 0.0f));
+		run_ticks(&g_game, &in, 6);
+		CHECK(g_game.vitals.shield < s0 || g_game.vitals.health < 75.0f);
+		CHECK(g_game.hurt_flash > 0.0f || g_game.vitals.shield < s0);
+	}
+
 	/* 6. pickup: the unarmed placement of a weapon object swaps it in (if the map places one in BSP 0, skipped otherwise) */
 	/* 7. the HUD lays out inside the screen and shows something */
 	if (g_has_hud) {

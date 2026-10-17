@@ -18,12 +18,13 @@ campaign** from the user's own Xbox disc, targeting a **locked 30 fps** (60 fps 
 | [docs/07-hp2-format.md](docs/07-hp2-format.md), [08-bsp-section.md](docs/08-bsp-section.md), [09-tex-section.md](docs/09-tex-section.md) | Pack container, BSP geometry and texture/lightmap sections |
 | [docs/11-model-section.md](docs/11-model-section.md), [12-anim-section.md](docs/12-anim-section.md), [13-scen-section.md](docs/13-scen-section.md) | Object models, animations, scenario placements and lighting |
 | [docs/14-phase3-plan.md](docs/14-phase3-plan.md) and [15](docs/15-coll-section.md) [16](docs/16-cmod-section.md) [17](docs/17-unit-section.md) [18](docs/18-weap-section.md) [19](docs/19-ansm-section.md) [20](docs/20-hud-section.md) [21](docs/21-snd-section.md) [22](docs/22-fx-section.md) | Phase 3 workstreams: collision, object hit shapes, units, weapons, animation state tables, HUD, sound, effects |
+| [docs/23-phase4-plan.md](docs/23-phase4-plan.md) and [24](docs/24-script-section.md) [25](docs/25-ai-section.md) [26](docs/26-path-section.md) [27](docs/27-dev-section.md) [28](docs/28-cine-section.md) [29](docs/29-strm-section.md) [30](docs/30-mission-host.md) [31](docs/31-units.md) [32](docs/32-ai-runtime.md) [33](docs/33-host-objects.md) [34](docs/34-host-misc.md) | Phase 4 workstreams: scripts, AI data, pathfinding, devices, cinematics, streamed audio, mission host, units, AI runtime, script built-ins |
 | [docs/10-m1-hardware-check.md](docs/10-m1-hardware-check.md) | Console procedure (deferred to Phase 6) and the `halo.cfg` reference |
 
 ## Layout
 ```
 engine/   EE C sources + VU1 microprograms → halo-ps2.elf
-iop/      IOP modules (streaming) — Phase 4+; gameplay audio uses ps2sdk's audsrv.irx (ADR-030)
+iop/      IOP modules — none needed so far; gameplay and streamed audio use ps2sdk's audsrv.irx (ADR-030, ADR-048)
 tools/    Python pipeline (halo2ps2) + tests
 scripts/  extract-iso.sh, inventory-maps.sh, run-pcsx2.sh
 docs/     specs, architecture, roadmap, reports/

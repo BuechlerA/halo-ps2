@@ -27,5 +27,8 @@ typedef struct {
 /* Capsule standing on `pos` (feet centre): spheres of `radius` stacked from pos.z + radius to pos.z + height - radius. Sweeps all of them
  * along `delta` and returns the earliest hit (1) or 0. `lift` raises the whole capsule first (step-up probing). */
 int phys_sweep_capsule(const phys_world *w, const float pos[3], const float delta[3], float radius, float height, float lift, phys_hit *h);
+/* The same with at most `max_spheres` spheres along the capsule (0 = as many as its height needs): actors (units.c) use 2, which halves their
+ * collision cost; two spheres leave no gap while the capsule is not taller than about four radii. */
+int phys_sweep_capsule_n(const phys_world *w, const float pos[3], const float delta[3], float radius, float height, float lift, unsigned max_spheres, phys_hit *h);
 
 #endif

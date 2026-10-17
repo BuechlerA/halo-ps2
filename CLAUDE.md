@@ -14,6 +14,9 @@ order (01 → 06) before changing architecture; `docs/06-decisions.md` is the AD
 - Phase 1-3 world: `scripts/build-world.sh a10 a30 b40` converts maps to `assets/hp2/` (BSP, textures, objects, and the gameplay packs `.coll .cmod .unit .weap .ansm .hud .snd .fx .hp2`, docs/14-phase3-plan.md); `scripts/run-headless.sh -c halo.cfg`
   runs the ELF in PCSX2 against a config (`docs/10-m1-hardware-check.md`); `scripts/profile-m1.sh` runs the M1
   fly-throughs (incl. `a10game`, the Gate M3 shooting scenario with scripted `input` lines; `game <prefix>` in halo.cfg turns gameplay on); `fbdump <frame>` in the config + `scripts/fb2png.py` is how rendering is checked without a screen.
+- Phase 4 mission: `build-world.sh` also writes `.script .ai .path .dev .cin .strm .hp2` (strm is ~120 MB per map); `scripts/paths/a10mission.cfg` is the Gate M4 run (`mission 1`, `bot 1`: the in-engine
+  mission bot, ADR-054; `exitonend 1` stops at game_won/lost; `SPEED=n scripts/run-headless.sh ...` speeds PCSX2 up for development only, timings then mean nothing; `threaddump 1` lists what scripts wait on).
+  Reports must state the bot's assists (teleports) and what it does not cover.
 - Game data lives only in `assets/` and `*.iso` (both gitignored). Never commit it,
   never copy tag data into docs or tests.
 

@@ -17,6 +17,10 @@
 #include "audio/gameaudio.h"
 #include "core/mem.h"
 #include "platform/fbdump.h"
+#include "platform/memcard.h"
+#include "mission_app.h"
+#include "audio/stream.h"
+#include "stream/file.h"
 #include "platform/pad.h"
 #include "platform/profiler.h"
 #include "platform/timer.h"
@@ -55,11 +59,18 @@ static game_t     s_game;
 static input_script s_script;
 static int        s_game_on;
 static unsigned   s_tick;
+static const char *s_pack, *s_tex;
+static size_t     s_bsp_mark;
+static int        s_gpu_idle;
+static int        s_mission_done;
 static gameaudio_t s_ga;
 static hud_render_t s_hudr;
 static fx_t       s_fx;
 static checkpoint_t s_ckpt;
 static hud_state_t s_hs;
+static stream_player s_sp;
+static stream_ee  s_see;
+static int        s_stream_on;
 static int        s_paused;
 static uint32_t   s_unit_hud;
 static fx_render_t s_fxr;
@@ -149,6 +160,117 @@ static void prime_finish(void)
 	packet2_free(p);
 }
 
+/* Writes the current checkpoint to the memory card slot and reads it back (debug round trip when `verify`). Returns 0 on success. */
+static int card_save(int slot, int verify)
+{
+	size_t mark = arena_mark(&s_arena), cap = mapp_active() ? msave_pack_max() : checkpoint_pack_max(), n;
+	uint8_t *buf = arena_alloc(&s_arena, cap, 64);
+	int rc = -1;
+	if (!buf) return -1;
+	n = mapp_active() ? msave_pack(mapp_checkpoint(), buf, cap) : checkpoint_pack(&s_ckpt, buf, cap);
+	if (n && memcard_save(slot, buf, n) == 0) {
+		rc = 0;
+		printf("[mc] saved slot %d: %u bytes\n", slot, (unsigned)n);
+		if (verify) {
+			long got = memcard_load(slot, buf, cap);
+			static checkpoint_t back;
+			rc = (got == (long)n && (mapp_active() ? 1 : checkpoint_unpack(&back, buf, (size_t)got)) && (mapp_active() ? 1 : back.tick == s_ckpt.tick)) ? 0 : -2;
+			printf("[mc] read back %ld bytes: %s\n", got, rc == 0 ? "ok" : "MISMATCH");
+		}
+	}
+	arena_release(&s_arena, mark);
+	return rc;
+}
+
+static int load_bsp(int idx);
+
+/* ---- checkpoints and mission requests ---- */
+static void do_checkpoint_save(void)
+{
+	if (mapp_active()) mapp_checkpoint_save(); else checkpoint_save(&s_ckpt, &s_game, &s_fp, s_fx.def ? &s_fx : NULL);
+	hud_message(&s_hs, "Checkpoint saved", 90);
+	printf("[game] checkpoint saved at tick %u\n", s_game.tick);
+}
+
+static int do_revert(void)
+{
+	int ok;
+	if (mapp_active()) {
+		int b = mapp_checkpoint_bsp();
+		if (b < 0) return 0;
+		if (b != s_world.bsp_index) {
+			if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }
+			s_gpu_idle = 1;
+			if (load_bsp(b)) return 0;
+			mapp_set_bsp(b);
+		}
+		ok = mapp_checkpoint_restore();
+	} else ok = checkpoint_revert(&s_ckpt, &s_game, &s_objects, &s_fp, s_fx.def ? &s_fx : NULL);
+	if (ok) { hud_message(&s_hs, "Reverted to the last checkpoint", 90); printf("[game] reverted to the checkpoint of tick %u\n", s_game.tick); }
+	return ok;
+}
+
+/* the mission asks for things the platform must do between ticks */
+static void serve_mission(void)
+{
+	mission_t *mm = mapp_mission();
+	if (mm->want_bsp >= 0) {
+		int want = mm->want_bsp;
+		mm->want_bsp = -1;
+		if (want != s_world.bsp_index) {
+			u32 t0 = timer_cycles();
+			if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }
+			s_gpu_idle = 1;
+			if (load_bsp(want) == 0) {
+				mapp_set_bsp(want);
+				if (mm->want_teleport) game_teleport(&s_game, mm->want_pos, mm->want_yaw);
+			}
+			printf("[mission] switched to BSP %d in %.0f ms\n", want, timer_ms(t0, timer_cycles()));
+		}
+	}
+	if (mm->save_requested) { mm->save_requested = 0; do_checkpoint_save(); }
+	if (mm->misc.revert_requested) { mm->misc.revert_requested = 0; do_revert(); }
+	if (mm->won && !s_mission_done) { s_mission_done = 1; printf("[mission] WON at tick %u (%.1f minutes)\n", mm->tick, (double)mm->tick / 1800.0); mapp_log_status(); }
+	if (mm->lost && !s_mission_done) { s_mission_done = 2; printf("[mission] LOST at tick %u\n", mm->tick); mapp_log_status(); }
+}
+
+/* (Re)loads BSP `idx` after the arena mark: render geometry, lightmap, collision; rebinds everything that points at BSP data. */
+static int load_bsp(int idx);
+
+/* Debug: `bspswitch <seconds> <bsp> <x> <y> <z> <yaw deg>` lines switch the loaded BSP and teleport the player (what the scripts' switch_bsp does). */
+static void check_bsp_switch(void)
+{
+	int i;
+	const char *v;
+	for (i = 0; (v = cfg_nth(&s_cfg, "bspswitch", i)) != NULL; i++) {
+		float f[6];
+		char buf[CFG_ARG_LEN];
+		strncpy(buf, v, sizeof buf - 1); buf[sizeof buf - 1] = 0;
+		{ char *e = buf; int n; for (n = 0; n < 6; n++) { f[n] = strtof(e, &e); } }
+		if ((unsigned)(f[0] * 30.0f) == s_tick && s_tick > 0) {
+			u32 t0 = timer_cycles();
+			float pos[3] = { f[2], f[3], f[4] };
+			if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }      /* the GS must be done with the old BSP's memory */
+			s_gpu_idle = 1;                                                    /* the FINISH of the in-flight frame is consumed: the loop must not wait for it again */
+			if (load_bsp((int)f[1]) == 0 && s_game_on) game_teleport(&s_game, pos, f[5] * 3.14159265f / 180.0f);
+			printf("[game] switched to BSP %d in %.0f ms; arena %u KB\n", (int)f[1], timer_ms(t0, timer_cycles()), (unsigned)(s_arena.used / 1024));
+		}
+	}
+}
+
+static int load_bsp(int idx)
+{
+	arena_release(&s_arena, s_bsp_mark);
+	if (world_load_bsp(&s_world, &s_arena, s_pack, s_tex, idx)) return -1;
+	if (bsp_render_set_world(&s_arena, &s_world.bsp, &s_world.source)) return -1;
+	if (s_have_objects) { s_objr.bsp = &s_world.bsp; s_objr.bsp_index = idx; objects_set_active_bsp(&s_objects, (unsigned)idx); }
+	if (cfg_str(&s_cfg, "game", NULL)) {
+		gamedata_load_bsp(&s_gd, &s_arena, cfg_str(&s_cfg, "game", NULL), idx);
+		if (s_game_on) game_set_collision(&s_game, s_gd.has_coll ? &s_gd.coll : NULL);
+	}
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	u32 frame = 0, limit;
@@ -166,6 +288,7 @@ int main(int argc, char *argv[])
 	arena_init(&s_arena, "level", heap, arena_bytes);
 
 	pad_init();
+	if (cfg_int(&s_cfg, "memcard", 1)) memcard_init((int)cfg_int(&s_cfg, "mcformat", 0));
 	if (cfg_int(&s_cfg, "audio", 1)) audio_init();
 	{
 		const char *at = cfg_str(&s_cfg, "audiotest", NULL);     /* an APCM file: load and play it once (bring-up check) */
@@ -197,18 +320,18 @@ int main(int argc, char *argv[])
 	}
 	pack = cfg_str(&s_cfg, "pack", "assets/hp2/a10.hp2");
 	tex = cfg_str(&s_cfg, "tex", NULL);
-	if (world_load(&s_world, &s_arena, pack, tex, (int)cfg_int(&s_cfg, "bsp", 0))) return 1;
-	apply_options();
-	if (bsp_render_set_world(&s_arena, &s_world.bsp, &s_world.source)) return 1;
+	s_pack = pack; s_tex = tex;
+	memset(&s_world, 0, sizeof s_world);
+	world_load_tex(&s_world, &s_arena, tex);                 /* map-wide textures stay resident; BSPs are loaded after the arena mark */
 	{
 		const char *obj = cfg_str(&s_cfg, "obj", NULL);
 		if (obj && world_load_objects(&s_world, &s_arena, obj) == 0) {
 			object_world_t ow;
 			ow.scen = &s_world.scen; ow.models = &s_world.models; ow.anims = s_world.anims.graph_count ? &s_world.anims : NULL;
 			objects_clear(&s_objects);
-			objects_spawn_bsp(&s_objects, &ow, (unsigned)s_world.bsp_index, (int)cfg_int(&s_cfg, "objhidden", 0));
-			printf("[obj] BSP %d: %u objects placed (skipped: %u no model, %u hidden, %u other BSP, %u over capacity)\n", s_world.bsp_index,
-			       s_objects.count, s_objects.skipped_no_model, s_objects.skipped_hidden, s_objects.skipped_other_bsp, s_objects.skipped_cap);
+			objects_spawn_all(&s_objects, &ow, (int)cfg_int(&s_cfg, "objhidden", 0));
+			printf("[obj] %u objects placed in all BSPs (skipped: %u no model, %u hidden, %u over capacity)\n",
+			       s_objects.count, s_objects.skipped_no_model, s_objects.skipped_hidden, s_objects.skipped_cap);
 			{
 				scen_player pl = scen_get_player(&s_world.scen);
 				fpview_init(&s_fp, &ow, &pl);
@@ -236,7 +359,7 @@ int main(int argc, char *argv[])
 			s_objr.table = &s_objects;
 			s_objr.world = ow;
 			s_objr.bsp = &s_world.bsp;
-			s_objr.bsp_index = s_world.bsp_index;
+			s_objr.bsp_index = 0;
 			s_objr.textures = &s_world.obj_source;
 			s_objr.fp = &s_fp;
 			s_objr.lod = &s_lod;
@@ -248,11 +371,31 @@ int main(int argc, char *argv[])
 			s_objr.sky_model = -1;
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
 			printf("[obj] sky model: %s\n", s_objr.sky_model >= 0 ? "drawn" : "none");
-			bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);
-			bsp_render_set_sky_pass(obj_render_sky, &s_objr);
-			apply_options();                                     /* sky-derived fog needs the sky data */
 			s_have_objects = 1;
 		}
+	}
+	if (s_have_objects && cfg_str(&s_cfg, "game", NULL)) gamedata_load(&s_gd, &s_arena, cfg_str(&s_cfg, "game", NULL), -1);   /* persistent packs; -1: no BSP yet */
+	if (s_have_objects && cfg_str(&s_cfg, "game", NULL) && cfg_int(&s_cfg, "stream", 1) && audio_ready()) {
+		char sp[160];
+		snprintf(sp, sizeof sp, "%s.strm.hp2", cfg_str(&s_cfg, "game", NULL));
+		if (file_size_of(sp) >= 0 && stream_ee_open(&s_see, &s_sp, &s_arena, sp, (int)cfg_int(&s_cfg, "streamlog", 0)) == 0) { s_stream_on = 1; printf("[stream] %s open\n", sp); }
+	}
+	mapp_reserve(&s_arena);                                   /* persistent mission memory (path scratch) before the BSP mark */
+	s_bsp_mark = arena_mark(&s_arena);
+	{
+		int first_bsp = (int)cfg_int(&s_cfg, "bsp", 0);
+		if (cfg_int(&s_cfg, "mission", 0) && s_gd.has_dev && s_gd.dev.start_count && !cfg_str(&s_cfg, "bsp", NULL)) {   /* the scenario's first start decides */
+			devdef_start st = devdef_get_start(&s_gd.dev, 0);
+			unsigned b;
+			for (b = 0; b < 32; b++) if (st.bsp_mask & (1u << b)) { first_bsp = (int)b; break; }
+		}
+		if (load_bsp(first_bsp)) return 1;
+	}
+	if (s_have_objects) {
+		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
+		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
+		apply_options();                                     /* sky-derived fog needs the sky data */
+		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
 	printf("[mem] level arena: %u KB used of %u KB\n", (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024));
 	setup_camera();
@@ -265,7 +408,7 @@ int main(int argc, char *argv[])
 	}
 	if (s_have_objects && cfg_str(&s_cfg, "game", NULL)) {
 		/* Phase 3: gameplay packs (docs/14-phase3-plan.md): `game <prefix>` loads <prefix>.{coll,cmod,unit,weap,ansm,hud,snd,fx}.hp2 */
-		int n = gamedata_load(&s_gd, &s_arena, cfg_str(&s_cfg, "game", NULL), s_world.bsp_index);
+		int n = (s_gd.has_unit + s_gd.has_weap + s_gd.has_cmod + s_gd.has_ansm + s_gd.has_hud + s_gd.has_snd + s_gd.has_fx + s_gd.has_coll);
 		if (n > 0) {
 			game_init_t gi;
 			float pp[5];
@@ -273,7 +416,10 @@ int main(int argc, char *argv[])
 			gi.unit = s_gd.has_unit ? &s_gd.unit : NULL; gi.weap = s_gd.has_weap ? &s_gd.weap : NULL; gi.cmod = s_gd.has_cmod ? &s_gd.cmod : NULL;
 			gi.ansm = s_gd.has_ansm ? &s_gd.ansm : NULL; gi.fx = s_gd.has_fx ? &s_gd.fx : NULL; gi.coll = s_gd.has_coll ? &s_gd.coll : NULL;
 			gi.ow = s_objr.world; gi.objects = &s_objects; gi.fp = &s_fp; gi.seed = (uint32_t)cfg_int(&s_cfg, "seed", 1);
-			if (cfg_floats(&s_cfg, "player", pp, 4) < 3) { pp[0] = s_cam.pos[0]; pp[1] = s_cam.pos[1]; pp[2] = s_cam.pos[2] - 0.62f; pp[3] = s_cam.yaw * 57.29578f; }
+			if (cfg_floats(&s_cfg, "player", pp, 4) < 3 && cfg_int(&s_cfg, "mission", 0) && s_gd.has_dev && s_gd.dev.start_count) {
+				devdef_start st = devdef_get_start(&s_gd.dev, 0);
+				pp[0] = st.pos[0]; pp[1] = st.pos[1]; pp[2] = st.pos[2]; pp[3] = st.facing * 57.29578f;
+			} else if (cfg_floats(&s_cfg, "player", pp, 4) < 3) { pp[0] = s_cam.pos[0]; pp[1] = s_cam.pos[1]; pp[2] = s_cam.pos[2] - 0.62f; pp[3] = s_cam.yaw * 57.29578f; }
 			game_init(&s_game, &gi, pp, pp[3] * 3.14159265f / 180.0f);
 			s_game.all_weapons = (int)cfg_int(&s_cfg, "allweapons", 0);
 			s_game.difficulty = (int)cfg_int(&s_cfg, "difficulty", 1);
@@ -315,6 +461,13 @@ int main(int argc, char *argv[])
 			}
 			bsp_render_set_overlay_pass(overlay_pass, NULL);
 		}
+		if (s_game_on && cfg_int(&s_cfg, "mission", 0)) {
+			mapp_env me;
+			memset(&me, 0, sizeof me);
+			me.gd = &s_gd; me.game = &s_game; me.objects = &s_objects; me.ow = s_objr.world; me.fx = s_fx.def ? &s_fx : NULL; me.hud = &s_hs;
+			me.ga = &s_ga; me.sp = s_stream_on ? &s_sp : NULL; me.cfg = &s_cfg; me.arena = &s_arena; me.bsp = s_world.bsp_index;
+			if (mapp_init(&me) == 0) { s_hudr.cine = mapp_mission()->cine; mapp_set_bsp(s_world.bsp_index); mapp_checkpoint_save(); }
+		}
 		input_script_parse(&s_script, &s_cfg);
 		if (s_script.count) printf("[game] scripted input: %d keys\n", s_script.count);
 	}
@@ -340,15 +493,17 @@ int main(int argc, char *argv[])
 				else if (!pad_read_raw(&raw)) memset(&raw, 0, sizeof raw);
 				input_map(&gin, &raw, s_game.prev_held);
 				if (gin.pressed & IN_PAUSE) { s_paused ^= 1; s_hs.paused = s_paused; }
-				if (gin.pressed & IN_SAVE) { checkpoint_save(&s_ckpt, &s_game, &s_fp, s_fx.def ? &s_fx : NULL); hud_message(&s_hs, "Checkpoint saved", 90); printf("[game] checkpoint saved at tick %u\n", s_game.tick); }
+				if (gin.pressed & IN_SAVE) { do_checkpoint_save(); if (cfg_int(&s_cfg, "savetest", 0)) card_save(0, 1); }
 				if ((gin.pressed & IN_REVERT) || s_game.dead_ticks > 90) {
-					if (checkpoint_revert(&s_ckpt, &s_game, &s_objects, &s_fp, s_fx.def ? &s_fx : NULL)) { gin.held = gin.pressed = 0; hud_message(&s_hs, "Reverted to the last checkpoint", 90); printf("[game] reverted to the checkpoint of tick %u\n", s_game.tick); }
-					else s_game.dead_ticks = 0;
+					if (s_game.dead_ticks > 90) printf("[game] dead for 3 s at %.1f %.1f %.1f (bsp %d, hp %.0f/%.0f): reverting\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_game.vitals.health, (double)s_game.vitals.shield);
+					if (do_revert()) { gin.held = gin.pressed = 0; } else s_game.dead_ticks = 0;
 				}
 				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
-				game_tick(&s_game, &gin);
+				if (mapp_active()) { mapp_tick(&gin); serve_mission(); } else game_tick(&s_game, &gin);
+				check_bsp_switch();
 				s_tick++;
 				s_hudr.tick = s_tick;
+				if (s_stream_on) stream_ee_tick(&s_see);
 				if (s_fx.def) {
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -424,14 +579,14 @@ int main(int argc, char *argv[])
 		if ((frame % 6) == 0) profiler_overlay(&s_prof, &s_text);   /* a few updates a second: float formatting is slow */
 		bsp_render_build(frame, &s_cam, &s_text);          /* overlaps the GS drawing frame-1 */
 		t1 = timer_cycles();
-		bsp_render_wait_gpu();
-		video_wait_gpu();                                  /* FINISH seen: burning vsyncs below clears the flag */
+		if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }      /* FINISH seen: burning vsyncs below clears the flag */
+		s_gpu_idle = 0;
 		{
 			/* Present exactly s_vblanks vblanks after the previous flip (30 fps: 2). flip() itself waits for the next
 			 * vsync; if the build finished before the vsync that is already (s_vblanks - 1) vblanks after the last
 			 * flip, burn the vsyncs that have not happened yet. A build that ran long just lands on a later vsync. */
 			int passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS), v;
-			for (v = passed; v < s_vblanks - 1; v++) graph_wait_vsync();
+			for (v = passed; v < s_vblanks - 1; v++) { if (s_stream_on) stream_ee_pump(&s_see); graph_wait_vsync(); }
 		}
 		video_present(&s_video);                           /* vsync + display */
 		t2 = timer_cycles();
@@ -451,7 +606,9 @@ int main(int argc, char *argv[])
 			fbdump_frame(&s_video.fb[s_video.back ^ 1], frame - 1);   /* the buffer that was just displayed */
 			s_prof.last_flip = timer_cycles();
 		}
+		if (s_mission_done && cfg_int(&s_cfg, "exitonend", 1)) limit = frame;
 		if (limit && frame >= limit) {
+			if (mapp_active()) { if (cfg_int(&s_cfg, "threaddump", 0)) mapp_dump_threads(); mapp_report(); }
 			profiler_report(&s_prof);
 			{
 				const render_stats_t *rs = bsp_render_stats();

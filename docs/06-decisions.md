@@ -372,5 +372,85 @@ alpha, near-camera particles are capped in size, particle collision and particle
 been dead for 3 s). Start saves, Select+Start reverts until scripts call `game_save`. **Why**: the state is plain data and pointers stay valid in one session. **Consequences**: script and AI
 state join the snapshot in Phase 4; saving to memory card is Phase 5.
 
+## ADR-043 Scripts: a cooperative tree-walking machine over `SCRP`
+**Decision**: `SCRP` holds the reachable expression trees of a scenario as pre-order 16-byte nodes with built-ins resolved to names; `script/hs.[ch]` evaluates them with explicit frame and value stacks (no C
+recursion, no heap), one thread per script (128 in the pool), `sleep` / `sleep_until` by suspending the thread (default poll 30 ticks), special forms in the evaluator, library built-ins in `hs_core.c`, every
+other built-in registered by name by the host; an unregistered one is a counted neutral no-op. The mutable state is one fixed-size (72 KB) pointer-free `hs_state` that checkpoints and memory-card saves copy
+as bytes. **Why**: the original is itself a node-tree interpreter (17.5 k nodes on a10); a tree walk keeps the converter trivial and checkable against the data, an explicit stack makes suspension free and
+bounded, a flat state makes saves and bit-exact restore tests trivial. **Consequences**: about 100 node evaluations per tick on average (about 50 us on the EE), bounded by budgets; the host owns every
+game built-in and `hs_unregistered()` shows what is missing; sleeping is tick-quantised as in the original. Details: docs/24-script-section.md.
+
+## ADR-044 Pathfinding: a navigation mesh derived from the collision BSP (`PATn`)
+**Decision**: the Xbox data has no sectors, links or hints (one walkable byte per collision surface), so `pathconv.py` derives a mesh per BSP: convex walkable sectors with plane, headroom and thickness,
+links typed WALK / STEP / VAULT / DROP / CLIMB with width and cost, components; `ai/path.c` answers `path_route` with A* over sectors plus a funnel, with radius, height, kind-mask and drop filters and
+caller-provided scratch (no heap). **Why**: the actors and the mission bot need routes through a level whose data does not describe them; deriving from the collision surfaces keeps routes consistent with
+what the capsule controller can walk. **Consequences**: the rules and thresholds are ours (validated on all 69 BSPs by sphere-swept leg tests), not read from the data; at most 300 KiB per BSP; areas the
+player reaches only through scripted devices are disconnected until the doors are modelled as links (the bot then uses counted assists). Details: docs/26-path-section.md.
+
+## ADR-045 AI data: actors, variants, encounters and command lists as flat tables (`AIDT`)
+**Decision**: `AIDT` carries every actor and actor-variant tag as the whole Xbox record with references flattened to tag ids (so each field sits at its tag offset and nothing is lost), plus the scenario's
+encounters, squads, starting locations, firing positions, command lists, conversations and the difficulty-dependent blocks; the reader names the identified fields (verified / plausible / unverified is
+marked per field). **Why**: the behavioural thresholds are raw words in the tags; keeping the record whole lets the runtime tune constants in one place without a format change. **Consequences**:
+unverified fields are used only with conservative defaults; unit and weapon tags the actors name are pulled into the object pack by `referenced_object_tags`. Details: docs/25-ai-section.md.
+
+## ADR-046 Devices as Q32 fixed-point state machines (`DEVS`)
+**Decision**: machines (doors, lifts, switches), controls and light fixtures are converted to a flat `DEVS` section (device definitions, placements, groups, trigger volumes, the script-name to placement
+table, scenario markup) and run by the pure `sim/devices.c` with 1/30 s ticks and Q32 positions/powers, deterministic and without heap; device bodies do not collide with objects (a door is passable
+when its power is high; the BSP stays the only collision). **Why**: scripts drive doors by power and position and wait on them; fixed-point makes saves and tests bit-exact. **Consequences**: doors do not
+shove or block bodies; trigger volumes are tested against the player and unit bodies every tick. Details: docs/27-dev-section.md.
+
+## ADR-047 Cinematics: recorded animations as control streams plus camera tracks (`CINE`)
+**Decision**: scripted scenes (the intro and the mission's cutscenes) are `CINE` data: per-recording control streams for actors (replayed through the units' control record), camera tracks, titles, fades
+and letterbox events, driven by `sim/cine.c` from script built-ins; the renderer draws letterbox bars, fade and titles in the overlay pass; the player is frozen while a cinematic runs. **Why**: the
+originals are recorded animations driving the same engine objects, not pre-rendered video, so the existing renderer and objects play them; no FMV, no new disc budget. **Consequences**: recordings
+reference objects of other BSPs (the intro crosses four BSP switches); effect overlays on actors are not drawn. Details: docs/28-cine-section.md.
+
+## ADR-048 Streamed audio: IMA ADPCM from disc through an IO thread into the audsrv ring (`STRM`/`STRD`)
+**Decision**: dialogue, music and long ambience stay in the Xbox IMA ADPCM container (stored, 2048-aligned in `STRD`, about 120 MB per map), are read in ranges by an IO thread, decoded on the EE with a
+24-tap resampler and pushed to a 53 ms audsrv ring, three voices; a small `STRM` index (19-393 KiB) is resident. `sound_impulse_time` comes from the index (ADR-051). **Why**: audio does not fit in
+2 MB of SPU2 RAM (ADR-038) and the EE reads disc ranges with no stall when done on a thread. **Consequences**: decoding costs EE time per voice; quality was measured (SNR, level), not heard (ADR-022);
+the audsrv ring must be fed from the vsync burn loop as well as the tick (`stream_ee_pump`). Details: docs/29-strm-section.md.
+
+## ADR-049 Units: the player's capsule controller driven by a control record
+**Decision**: non-player bipeds are `unit_t` over object slots (`ai/units.c`); locomotion is `player_tick` fed by a command made from `unit_control_t` with the actor's own speeds from root motion, weapons
+use the Phase 3 state machine and `game_fire_projectile`, health is the game's vitals scaled by the difficulty block, animation is the ASTB base slots, state is a pointer-free `units_t` (40 KB, 380 B per
+unit) with a distance LOD and an event list. **Why**: one physics (the player's) to validate, no second set of tag numbers to prove; EE cost is dominated by capsule sweeps, so the knobs are sweeps per tick
+and rate (settled skip, LOD). **Consequences**: actors collide with the BSP only; aim and fire overlays are not drawn; the EE cost per moving actor is the main risk of the AI + units budget. Details:
+docs/31-units.md.
+
+## ADR-050 AI runtime: a pointer-free state machine per actor that writes unit controls only
+**Decision**: `ai/ai.[ch]` keeps all mutable AI state (actors, squads, encounters, conversations, noise, relations, counters) in one 56 KB pointer-free `ai_state`; per actor a behaviour state (sleep, idle,
+patrol, alert, search, combat, charge, retreat, flee, follow) with command lists above it; perception staggered over 3-4 ticks with at most 4 rays per look; movement by `path_route` (one per tick, six
+cached waypoints); combat from the named variant fields and the difficulty table; the `ai_*` built-ins map onto it through `mission_t.ai`. **Why**: the original is a large hierarchical planner whose
+thresholds are not in the data; a small robust machine over the named fields reproduces the visible behaviours within the EE budget and is bit-reproducible. **Consequences**: behaviour is plausible, not
+identical; sight ignores objects; tuning constants are in one place. Details: docs/32-ai-runtime.md.
+
+## ADR-051 The script host: tagged handles, split by domain, waits data-driven
+**Decision**: object, unit and device values built-ins produce at run time are `MISSION_OBJ_BIT | slot`, lists `MISSION_LIST_BIT | slot` (ring of 64), a handle with neither bit is an object-name index
+resolved through DEVS; the host built-ins live in `hs_host_obj.c`, `hs_host_misc.c`, `hs_host_ai.c`, reach everything through `mission_t` and keep persistent state in plain-data structs (`mission_hostobj`
+9.3 KB, `mission_misc` 1 KB). No built-in blocks: waits end by themselves because `sound_impulse_time` is computed from the stream index length, `camera_time` from the camera track and `game_saving` is
+bounded; integrator side effects (checkpoint, BSP switch, revert, HUD, navigation points) are `mission_t` flags. **Why**: the data cannot tell a constant name from a computed object; scripts wait for
+minutes on dialogue and cameras and coupling that to audio hardware or main's timing would make pace, saves and the bot non-deterministic. **Consequences**: dialogue timing is the file's, not the DAC's;
+overlapping lines replace each other (one dialogue voice). Details: docs/30-mission-host.md, 33-host-objects.md, 34-host-misc.md.
+
+## ADR-052 The mission app and the multi-BSP level manager
+**Decision**: `mission_app.c` owns static `units_t`, script machine, devices, cinematics, AI and bot; the mission tick order is sync player, scripts, devices, object pre-hook, AI, units, game, object
+post-hook, misc, cinematics. A persistent arena holds models, packs and textures; each BSP's data (render, collision, navigation) lives in a second arena released on a switch (`s_bsp_mark`); the object
+table keeps objects of every BSP, inactive ones frozen and not drawn; texture keys are stable across switches. Switches happen on `want_bsp` from the script (loading stalls 0.5-2.4 s on PCSX2,
+unmasked). **Why**: a10 has nine BSPs and the intro crosses four; reloading models per switch would cost far more than the BSP data. **Consequences**: the level arena stays near 21 MB of 24 MB; frame drops
+concentrate at switches; masking the load with the cinematic fade is a Phase 6 item.
+
+## ADR-053 Mission checkpoints and memory-card saves
+**Decision**: `msave` = game checkpoint + units + AI + script state + devices + cinematics + host misc/objects, as raw struct copies with pointer fixups; the card image is a zero-run RLE (`blob_pack`)
+written through libmc; death, `game_save` and the pause menu use it. **Why**: all state is plain data (ADR-043, 046, 049-051). **Consequences**: a save is valid only for the same build and pack
+(section hash); saving blocks the tick for the card write.
+
+## ADR-054 Gate M4 is checked with a mission bot
+**Decision**: a10 cannot be played headless, so `sim/bot.c` plays it inside the engine: it picks the nearest hostile it can see, fights with the weapon it holds, picks up weapons when unarmed, goes to the
+trigger volume or navigation point the scripts wait on, follows `path_route` waypoints, and cycles the control "exercise" pattern when scripts wait for tutorial actions. When it cannot reach a goal for
+several seconds it teleports to the goal (counted **assist**, reported). The gate statement reports the assists and states what the bot does not cover (human timing, camera, vehicles, hand-to-hand
+choices). **Why**: PCSX2 headless is the gate (ADR-022) and the scripts' progress depends on world state the bot can create; counting assists keeps the claim honest. **Consequences**: M4 means "the
+mission runs start to finish under script, AI and device control at 30 fps on PCSX2", not "a human can win it".
+
 ## Open decisions
 None.

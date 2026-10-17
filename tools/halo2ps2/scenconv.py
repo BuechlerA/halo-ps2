@@ -514,8 +514,9 @@ def locate_mask(probes: list[BspProbe], pos: tuple[float, float, float], manual:
 
 
 # ---- collecting ---------------------------------------------------------------------------------
-def collect_objects(m: texconv.MapData, probes: list[BspProbe]) -> ObjectSet:
-    """Placements, definitions and player data of a map (no lighting). ``probes`` may be empty."""
+def collect_objects(m: texconv.MapData, probes: list[BspProbe], extra: dict[int, str] | None = None) -> ObjectSet:
+    """Placements, definitions and player data of a map (no lighting). ``probes`` may be empty. ``extra`` maps object tag ids
+    (biped / weapon) to their group: definitions that run-time spawning (AI units, dropped weapons) needs although no placement uses them."""
     r = Region(m)
     problems: list[str] = []
     dt = DefTable(r, problems)
@@ -548,6 +549,11 @@ def collect_objects(m: texconv.MapData, probes: list[BspProbe]) -> ObjectSet:
             mask, tier = locate_mask(probes, pos, manual) if probes else (0, "none")
             placements.append(Placement(d.tag_id, kind, flags, pos, rot, ni if ni < nname else -1,
                                         mask, "", manual, tier))
+    for tid, group in sorted((extra or {}).items()):
+        if group == "bipd":
+            dt.get(tid, BIPED, "bipd", 0)
+        elif group == "weap":
+            dt.get(tid, WEAPON, "weap", 2)
     player = read_player(r, dt, problems)
     order = sorted(dt.defs)
     index = {t: i for i, t in enumerate(order)}
@@ -570,10 +576,10 @@ def collect_objects(m: texconv.MapData, probes: list[BspProbe]) -> ObjectSet:
                      Counter(pl.mask_tier for pl in placements), unresolved, problems)
 
 
-def collect(map_path: Path) -> ObjectSet:
+def collect(map_path: Path, extra: dict[int, str] | None = None) -> ObjectSet:
     """Everything of the SCEN section except the lighting probes."""
     m = texconv.MapData.open(map_path)
-    return collect_objects(m, load_bsps(m))
+    return collect_objects(m, load_bsps(m), extra)
 
 
 # ---- lighting probes ----------------------------------------------------------------------------
@@ -841,13 +847,13 @@ def parse_section(data: bytes) -> Section:
     return Section(size, defs, pls, lights, player, list(struct.unpack_from("<10I", data, 0x38)))
 
 
-def build_section(map_path: Path, bsp_filter: list[int] | None = None) -> bytes:
+def build_section(map_path: Path, bsp_filter: list[int] | None = None, extra: dict[int, str] | None = None) -> bytes:
     """The SCEN section of a decompressed map. ``bsp_filter`` restricts the (expensive) lighting probes to those
     BSP indices (the others store no probes and read back as the neutral default); placements and their BSP masks
     always cover every BSP of the map."""
     m = texconv.MapData.open(map_path)
     probes = load_bsps(m)
-    objs = collect_objects(m, probes)
+    objs = collect_objects(m, probes, extra)
     lights = map_lights(m, bsp_filter) if probes else []
     return build(objs.defs, objs.placements, objs.player, lights, len(probes))
 

@@ -3,6 +3,7 @@
 #define RENDER_HUD_RENDER_H
 #include "render/render_internal.h"
 #include "render/sprite.h"
+#include "sim/cine.h"
 #include "sim/game.h"
 #include "ui/hud.h"
 #include "world/tex.h"
@@ -14,6 +15,7 @@ typedef struct {
 	const tex_source_t   *tex;          /* HUDT textures */
 	unsigned              key_base;     /* bsp_render_reserve_keys result */
 	const game_t         *game;
+	const cine_state     *cine;         /* letterbox, fades, titles and messages (NULL: none) */
 	uint32_t              tick;
 	int                   enabled;
 	/* statistics */

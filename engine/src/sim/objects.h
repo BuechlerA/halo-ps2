@@ -10,14 +10,20 @@
 #include "world/model.h"
 #include "world/scen.h"
 
-#define OBJ_MAX 1024
+#define OBJ_MAX 1280
+#define OBJ_MAX_PLACEMENTS 2048
 #define OBJ_MAX_REGIONS 16
 
 #define OBJ_F_ANIMATED 1u       /* has a graph and an animation to play */
 #define OBJ_F_VISIBLE 2u        /* initially visible placement */
+#define OBJ_F_INACTIVE 4u       /* lies in a BSP that is not loaded: kept, frozen, not drawn */
+#define OBJ_F_FREE 8u           /* unused slot (destroyed object), reused by the next spawn */
+#define OBJ_F_HIDDEN 16u        /* exists but is not drawn (scripts hide objects) */
 
 typedef struct {
 	int16_t  def;                         /* scen definition */
+	int16_t  placement;                   /* scenario placement index it was created from, -1 for runtime objects */
+	uint32_t bsp_mask;                    /* BSPs the object lives in (0 = everywhere); mobile objects follow the player */
 	uint8_t  type, flags;
 	int16_t  model, graph;                /* MODL / ANIM index, -1 = none */
 	uint16_t anim;                        /* animation index in the graph (SCEN_NO_ANIM = static) */
@@ -30,7 +36,8 @@ typedef struct {
 
 typedef struct {
 	object_t obj[OBJ_MAX];
-	unsigned count;
+	unsigned count;                       /* slots in use (high-water mark) */
+	int16_t  by_placement[OBJ_MAX_PLACEMENTS];   /* placement index -> object slot, -1 not spawned */
 	unsigned skipped_no_model, skipped_hidden, skipped_cap, skipped_other_bsp;
 } object_table_t;
 
@@ -42,8 +49,16 @@ typedef struct {
 
 void objects_clear(object_table_t *t);
 /* Instantiate every initially visible placement that lies inside BSP `bsp` (include_hidden: also the ones scripts
- * would create later, as a worst-case population for budget tests). Returns the count. */
+ * would create later, as a worst-case population for budget tests). Clears the table first; returns the count. */
 unsigned objects_spawn_bsp(object_table_t *t, const object_world_t *w, unsigned bsp, int include_hidden);
+/* Phase 4: every initially visible placement of every BSP of the map (the table is not cleared); returns how many were created. */
+unsigned objects_spawn_all(object_table_t *t, const object_world_t *w, int include_hidden);
+/* Create the object of scenario placement `placement` (a script's object_create); returns the slot, the existing slot when it was spawned already, or -1. */
+int  objects_spawn_placement(object_table_t *t, const object_world_t *w, unsigned placement);
+/* Remove an object (its slot is reused). */
+void objects_destroy(object_table_t *t, unsigned index);
+/* Marks objects of other BSPs inactive and the ones in `bsp` (or in every BSP) active. */
+void objects_set_active_bsp(object_table_t *t, unsigned bsp);
 /* Spawn one object of definition `def` (scen definition index) at `pos` facing `yaw` (radians), e.g. the player's biped
  * for third-person views. Returns the object index or -1. */
 int objects_spawn_def(object_table_t *t, const object_world_t *w, unsigned def, const float pos[3], float yaw);

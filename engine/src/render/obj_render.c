@@ -202,7 +202,9 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 
 	for (i = 0; o->draw_objects && o->table && i < o->table->count; i++) {
 		const object_t *ob = &o->table->obj[i];
-		model_info mi = model_get(o->world.models, (uint32_t)ob->model);
+		model_info mi;
+		if (ob->model < 0 || (ob->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
+		mi = model_get(o->world.models, (uint32_t)ob->model);
 		float c[3], d[3], dist, w, diameter;
 		scen_light light;
 		unsigned lod;

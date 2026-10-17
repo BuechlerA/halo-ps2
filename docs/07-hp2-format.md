@@ -19,7 +19,7 @@ inside a section everything is 16-byte aligned by the converter.
 ## Section table (32 bytes per entry, immediately after the header)
 | Offset | Type | Field |
 |---|---|---|
-| 0x00 | char[4] | section tag: `RES\0`, `BSP0`..`BSP9` then `BSPA`..`BSPZ` (maps with more than 10 BSPs: b40, c40), `TEXS`, `LM0`..`LM12` (per BSP, decimal index), object packs: `SCEN`, `MODL`, `OTEX`, `ANIM`, `SKY0` (docs/11-13); gameplay packs (docs/14): `COL0`..`COLZ` (collision, 15), `CMOD` (16), `UNIT` (17), `WEAP` (18), `ASTB` (19), `HUD0` `FONT` `STRS` `HUDT` (20), `SND0` `SNDD` (21), `FXD0` `FXTX` (22) |
+| 0x00 | char[4] | section tag: `RES\0`, `BSP0`..`BSP9` then `BSPA`..`BSPZ` (maps with more than 10 BSPs: b40, c40), `TEXS`, `LM0`..`LM12` (per BSP, decimal index), object packs: `SCEN`, `MODL`, `OTEX`, `ANIM`, `SKY0` (docs/11-13); gameplay packs (docs/14): `COL0`..`COLZ` (collision, 15), `CMOD` (16), `UNIT` (17), `WEAP` (18), `ASTB` (19), `HUD0` `FONT` `STRS` `HUDT` (20), `SND0` `SNDD` (21), `FXD0` `FXTX` (22); Phase 4 packs: `SCRP` (script, 24), `AIDT` (ai, 25), `PAT0`..`PATZ` (path, 26), `DEVS` (dev, 27), `CINE` (cin, 28), `STRM` `STRD` (strm, 29) |
 | 0x04 | u32 | file offset of the stored payload (multiple of 2048) |
 | 0x08 | u32 | stored size in bytes |
 | 0x0C | u32 | raw (decompressed) size in bytes |

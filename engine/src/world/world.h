@@ -43,6 +43,10 @@ uint8_t *world_load_section(arena_t *a, const char *path, const char *tag, size_
  * missing or broken texture data is reported and the world draws flat. */
 int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index);
 
+/* Phase 4: the map-wide texture set (TEXS: persistent) and one BSP with its lightmap (replaceable on a BSP switch). world_load = both. */
+int world_load_tex(world_t *w, arena_t *a, const char *tex_path);
+int world_load_bsp(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index);
+
 /* Loads MODL, OTEX, ANIM and SCEN from the object pack `obj_path` (tools/halo2ps2/objpack.py). Returns 0 when the
  * models and the scenario are usable; animations and object textures are optional (static / flat objects). */
 int world_load_objects(world_t *w, arena_t *a, const char *obj_path);

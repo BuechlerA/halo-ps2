@@ -14,20 +14,21 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from halo2ps2 import animconv, ansmconv, fxconv, hp2, modelconv, scenconv, skyconv, unitconv, weapconv  # noqa: E402
+from halo2ps2 import aiconv, animconv, ansmconv, devconv, cinconv, fxconv, hp2, modelconv, scenconv, skyconv, unitconv, weapconv  # noqa: E402
 
 
 def build(map_path: Path) -> tuple[bytes, dict]:
     t0 = time.time()
-    objs = scenconv.collect(map_path)
-    scen = scenconv.build_section(map_path)
+    extra = aiconv.referenced_object_tags(map_path)          # AI units and their weapons: SCEN definitions for run-time spawning
+    objs = scenconv.collect(map_path, extra)
+    scen = scenconv.build_section(map_path, extra=extra)
     sky = skyconv.read_sky(map_path)
     model_tags = set(objs.model_tags)
     anim_tags = set(objs.anim_tags)
     # Phase 3 roots: models and animation graphs that weapons, units and effects reference but no placement mentions
-    for mod in (unitconv, weapconv, fxconv):
+    for mod in (unitconv, weapconv, fxconv, aiconv, devconv):
         model_tags |= set(mod.referenced_models(map_path))
-    for mod in (unitconv, weapconv, ansmconv):
+    for mod in (unitconv, weapconv, ansmconv, aiconv, devconv, cinconv):
         anim_tags |= set(mod.referenced_anims(map_path))
     if sky and sky["model_tag"]:
         model_tags.add(sky["model_tag"])               # the sky model is drawn by the engine's sky pass

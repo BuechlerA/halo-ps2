@@ -14,7 +14,7 @@ void player_params_default(player_params_t *p)
 	p->accel = 14.0f; p->air_accel = 2.5f;
 	p->jump_speed = 2.0f; p->gravity = 3.5f; p->terminal_speed = 8.0f;
 	p->step_height = 0.17f; p->max_slope_cos = 0.55f;
-	p->turn_rate = 2.8f; p->pitch_limit = 1.45f;
+	p->turn_rate = 2.8f; p->pitch_limit = 1.45f; p->sweep_spheres = 0;
 }
 
 void player_init(player_t *pl, const float pos[3], float yaw)
@@ -51,7 +51,7 @@ static int slide(const phys_world *w, const player_params_t *par, float height, 
 		phys_hit h;
 		float len2 = dot3(delta, delta);
 		if (len2 < 1e-10f) break;
-		if (phys_sweep_capsule(w, pos, delta, par->radius, height, lift, &h)) {
+		if (phys_sweep_capsule_n(w, pos, delta, par->radius, height, lift, par->sweep_spheres, &h)) {
 			float tt = h.t > 0.0f ? h.t : 0.0f, back, into, n[3];
 			float len = sqrtf(len2);
 			/* stop short of the surface by a skin distance along the path */
@@ -81,7 +81,7 @@ static int find_ground(const phys_world *w, const player_params_t *par, float he
 {
 	phys_hit h;
 	float down[3] = { 0.0f, 0.0f, -dist };
-	if (phys_sweep_capsule(w, pos, down, par->radius, height, 0.0f, &h) && h.normal[2] >= par->max_slope_cos) {
+	if (phys_sweep_capsule_n(w, pos, down, par->radius, height, 0.0f, par->sweep_spheres ? 1u : 0u, &h) && h.normal[2] >= par->max_slope_cos) {
 		pos[2] -= dist * h.t - EPS;
 		if (h.t <= 0.0f) pos[2] += EPS;
 		normal[0] = h.normal[0]; normal[1] = h.normal[1]; normal[2] = h.normal[2];
@@ -123,7 +123,7 @@ void player_tick(player_t *pl, const player_params_t *par, const phys_world *w, 
 			/* standing up needs headroom */
 			float up[3] = { 0.0f, 0.0f, par->height - par->crouch_height };
 			phys_hit h;
-			if (!phys_sweep_capsule(w, pl->pos, up, par->radius, par->crouch_height, 0.0f, &h) || h.t >= 1.0f) {
+			if (!phys_sweep_capsule_n(w, pl->pos, up, par->radius, par->crouch_height, 0.0f, par->sweep_spheres, &h) || h.t >= 1.0f) {
 				pl->crouch -= step; if (pl->crouch < goal) pl->crouch = goal;
 			}
 		}
@@ -178,7 +178,7 @@ void player_tick(player_t *pl, const player_params_t *par, const phys_world *w, 
 			phys_hit h;
 			memcpy(p1, pl->pos, sizeof p1); memcpy(v1, pl->vel, sizeof v1);
 			d1[0] = delta[0]; d1[1] = delta[1]; d1[2] = 0.0f;
-			if (!phys_sweep_capsule(w, p1, up, par->radius, height, 0.0f, &h) || h.t >= 1.0f) {
+			if (!phys_sweep_capsule_n(w, p1, up, par->radius, height, 0.0f, par->sweep_spheres, &h) || h.t >= 1.0f) {
 				float n[3];
 				p1[2] += par->step_height;
 				slide(w, par, height, p1, d1, v1, 0.0f);

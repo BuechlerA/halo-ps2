@@ -100,14 +100,32 @@ void world_texset_source(tex_source_t *out, texset_t *ts)
 	out->texture_count = ts->has ? ts->tex.texture_count : 0;
 }
 
-int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index)
+int world_load_tex(world_t *w, arena_t *a, const char *tex_path)
+{
+	size_t raw;
+	uint8_t *sec;
+	memset(&w->bsp_tex, 0, sizeof w->bsp_tex);
+	if (!tex_path) return 0;
+	sec = world_load_section(a, tex_path, "TEXS", &raw, 0);
+	if (sec && tex_open(&w->bsp_tex.tex, sec, raw) == TEX_OK) {
+		w->bsp_tex.has = 1;
+		printf("[tex] %s TEXS: %u textures, %u shader bindings, %u KB\n", tex_path, (unsigned)w->bsp_tex.tex.texture_count,
+		       (unsigned)w->bsp_tex.tex.binding_count, (unsigned)(raw / 1024));
+	} else {
+		printf("[warn] no usable TEXS in %s: drawing flat\n", tex_path);
+	}
+	return 0;
+}
+
+int world_load_bsp(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index)
 {
 	size_t raw;
 	uint8_t *sec;
 	char tag[8];
 	bsp_status bs;
-	memset(w, 0, sizeof *w);
 	w->bsp_index = bsp_index;
+	w->has_lm = 0;
+	memset(&w->lm, 0, sizeof w->lm);
 	/* section tags: BSP0..BSP9, BSPA.. (docs/08-bsp-section.md) */
 	snprintf(tag, sizeof tag, "BSP%c", bsp_index < 10 ? '0' + bsp_index : 'A' + (bsp_index - 10));
 	sec = world_load_section(a, pack_path, tag, &raw, 0);
@@ -117,16 +135,7 @@ int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_pa
 	printf("[pack] %s %s: %u materials, %u batches, %u tris, %u clusters, %u portals, %u KB\n", pack_path, tag,
 	       (unsigned)w->bsp.material_count, (unsigned)w->bsp.batch_count, (unsigned)w->bsp.triangle_count,
 	       (unsigned)w->bsp.cluster_count, (unsigned)w->bsp.portal_count, (unsigned)(raw / 1024));
-
 	if (tex_path) {
-		sec = world_load_section(a, tex_path, "TEXS", &raw, 0);
-		if (sec && tex_open(&w->bsp_tex.tex, sec, raw) == TEX_OK) {
-			w->bsp_tex.has = 1;
-			printf("[tex] %s TEXS: %u textures, %u shader bindings, %u KB\n", tex_path, (unsigned)w->bsp_tex.tex.texture_count,
-			       (unsigned)w->bsp_tex.tex.binding_count, (unsigned)(raw / 1024));
-		} else {
-			printf("[warn] no usable TEXS in %s: drawing flat\n", tex_path);
-		}
 		snprintf(tag, sizeof tag, "LM%d", bsp_index);
 		sec = world_load_section(a, tex_path, tag, &raw, 1);
 		if (sec && lm_open(&w->lm, sec, raw) == TEX_OK) {
@@ -143,6 +152,13 @@ int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_pa
 	w->source.user = w;
 	w->source.texture_count = w->bsp_tex.has ? w->bsp_tex.tex.texture_count : 0;
 	return 0;
+}
+
+int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index)
+{
+	memset(w, 0, sizeof *w);
+	world_load_tex(w, a, tex_path);
+	return world_load_bsp(w, a, pack_path, tex_path, bsp_index);
 }
 
 int world_load_objects(world_t *w, arena_t *a, const char *obj_path)

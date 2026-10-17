@@ -7,6 +7,8 @@
 #define MELEE_RANGE 1.1f
 #define PICKUP_RANGE 1.6f
 
+#define OBJ_OFF(o) ((o)->model < 0 || ((o)->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)))
+
 /* ---- small helpers ---------------------------------------------------------------------------------------------------- */
 static float rnd01(game_t *g)
 {
@@ -122,26 +124,46 @@ static uint32_t object_tag(const game_t *g, const object_t *o)
 	return g->ow.scen ? scen_get_def(g->ow.scen, (uint32_t)o->def).tag_id : 0;
 }
 
+static void unit_init_one(game_t *g, unsigned i)
+{
+	const object_t *o = &g->objects->obj[i];
+	cmod_object co;
+	cmod_model m;
+	game_unit_t *u = &g->unit_state[i];
+	memset(u, 0, sizeof *u);
+	u->model = -1;
+	if (!g->cmod || o->model < 0 || (o->flags & OBJ_F_FREE) || !cmod_find_object(g->cmod, object_tag(g, o), &co, &m)) return;
+	u->model = (int32_t)m.index;
+	if (m.max_body_vitality > 0.0f && m.max_body_vitality < 1e9f) {
+		float shield = m.max_shield_vitality < 1e9f ? m.max_shield_vitality : 0.0f;
+		vitals_init(&u->vitals, m.max_body_vitality, shield, m.shield_recharge_rate, (uint16_t)(m.shield_stun_time * TICKS));
+		u->has_vitals = 1;
+	}
+}
+
 static void unit_init_all(game_t *g)
 {
 	unsigned i;
 	for (i = 0; i < OBJ_MAX; i++) g->unit_state[i].model = -1;
-	if (!g->cmod || !g->objects) return;
-	for (i = 0; i < g->objects->count; i++) {
-		const object_t *o = &g->objects->obj[i];
-		cmod_object co;
-		cmod_model m;
-		game_unit_t *u = &g->unit_state[i];
-		if (o->model < 0 || !cmod_find_object(g->cmod, object_tag(g, o), &co, &m)) continue;
-		u->model = (int32_t)m.index;
-		if (m.max_body_vitality > 0.0f && m.max_body_vitality < 1e9f) {
-			float shield = m.max_shield_vitality < 1e9f ? m.max_shield_vitality : 0.0f;
-			vitals_init(&u->vitals, m.max_body_vitality, shield, m.shield_recharge_rate,
-			            (uint16_t)(m.shield_stun_time * TICKS));
-			u->has_vitals = 1;
-		}
-	}
+	if (!g->objects) return;
+	for (i = 0; i < g->objects->count; i++) unit_init_one(g, i);
 }
+
+void game_teleport(game_t *g, const float pos[3], float yaw)
+{
+	g->player.pos[0] = pos[0]; g->player.pos[1] = pos[1]; g->player.pos[2] = pos[2];
+	g->player.vel[0] = g->player.vel[1] = g->player.vel[2] = 0.0f;
+	g->player.yaw = yaw; g->player.on_ground = 0;
+}
+
+void game_set_collision(game_t *g, const coll_bsp *coll)
+{
+	g->coll = coll;
+	g->has_phys = coll != NULL;
+	if (coll) phys_world_from_coll(&g->phys, coll);
+}
+
+void game_object_spawned(game_t *g, unsigned index) { if (g->objects && index < g->objects->count) unit_init_one(g, index); }
 
 static const game_unit_t *unit_of(const game_t *g, int obj) { return (obj >= 0 && obj < OBJ_MAX) ? &g->unit_state[obj] : NULL; }
 
@@ -168,7 +190,7 @@ static int ray_objects(game_t *g, const float a[3], const float b[3], int ignore
 		cmod_segment seg;
 		cmod_hit h;
 		float rel[3], t, c[3], r;
-		if ((int)i == ignore || u->model < 0 || o->model < 0) continue;
+		if ((int)i == ignore || u->model < 0 || OBJ_OFF(o)) continue;
 		/* broad phase: the segment against the object's bounding sphere (padded: the tag radius is not a hull) */
 		r = o->radius * 1.5f + 0.3f;
 		rel[0] = o->pos[0] - a[0]; rel[1] = o->pos[1] - a[1]; rel[2] = o->pos[2] - a[2];
@@ -227,7 +249,7 @@ static void apply_damage_to_player(game_t *g, float amount, const float from[3])
 {
 	float dealt;
 	(void)from;
-	if (vitals_dead(&g->vitals)) return;
+	if (vitals_dead(&g->vitals) || g->player_frozen) return;      /* the player is out of the fight during a cinematic */
 	dealt = vitals_damage(&g->vitals, amount, 1.0f, 1.0f, 0.0f);
 	if (dealt > 0.0f) {
 		game_event_t *e = push(g, GE_PLAYER_HURT, 0, g->player.pos, NULL);
@@ -253,7 +275,7 @@ static void area_damage(game_t *g, const weap_damage *d, const float c[3], int i
 		const object_t *o = &g->objects->obj[i];
 		float dv[3] = { o->pos[0] - c[0], o->pos[1] - c[1], o->pos[2] - c[2] };
 		float dist = len3(dv), amount;
-		if (!g->unit_state[i].has_vitals || g->unit_state[i].dead) continue;
+		if (!g->unit_state[i].has_vitals || g->unit_state[i].dead || OBJ_OFF(o)) continue;
 		if ((int)i == ignore_obj) continue;
 		/* distance to the object's surface, approximated by its centre minus the bounding radius */
 		dist -= o->radius * 0.5f;
@@ -332,6 +354,50 @@ static void proj_spawn(game_t *g, unsigned pidx, const float pos[3], const float
 	g->st_projectiles++;
 }
 
+int game_fire_projectile(game_t *g, int owner, unsigned proj, const float pos[3], const float dir[3], float speed_per_tick)
+{
+	unsigned i;
+	for (i = 0; i < GAME_MAX_PROJ && g->proj[i].active; i++) {}
+	if (i == GAME_MAX_PROJ || !g->weap) return 0;
+	proj_spawn(g, proj, pos, dir, speed_per_tick, 0);
+	g->proj[i].owner = (int16_t)owner;
+	return 1;
+}
+
+int game_throw_grenade(game_t *g, int owner, int type, const float pos[3], const float dir[3], float speed)
+{
+	weap_grenade gr;
+	int pi;
+	unsigned i;
+	if (!g->weap || type < 0 || !weap_get_grenade(g->weap, (uint32_t)type, &gr) || !gr.projectile) return 0;
+	pi = weap_find_projectile(g->weap, gr.projectile);
+	if (pi < 0) return 0;
+	for (i = 0; i < GAME_MAX_PROJ && g->proj[i].active; i++) {}
+	if (i == GAME_MAX_PROJ) return 0;
+	proj_spawn(g, (unsigned)pi, pos, dir, speed > 0.0f ? speed / TICKS : 0.0f, 1);
+	if (!g->proj[i].active) return 0;
+	g->proj[i].owner = (int16_t)owner;
+	g->st_throws++;
+	return 1;
+}
+
+void game_set_vitals(game_t *g, int obj, float health, float shield, float recharge_per_tick, uint16_t stun_ticks)
+{
+	game_unit_t *u;
+	if (obj < 0 || obj >= (int)OBJ_MAX) return;
+	u = &g->unit_state[obj];
+	if (u->dead) return;
+	vitals_init(&u->vitals, health, shield, recharge_per_tick, stun_ticks);
+	u->has_vitals = health > 0.0f;
+}
+
+float game_damage_player(game_t *g, float amount, const float from[3])
+{
+	g->vitals.last_damage = 0.0f;
+	apply_damage_to_player(g, amount, from);
+	return g->vitals.last_damage;
+}
+
 static void detonate(game_t *g, game_proj_t *p, const weap_projectile *def, const float normal[3], int hit_obj)
 {
 	game_event_t *e;
@@ -340,6 +406,25 @@ static void detonate(game_t *g, game_proj_t *p, const weap_projectile *def, cons
 	run_effect_damage(g, def->detonation_effect, p->pos, hit_obj);
 	if (def->super_detonation) run_effect_damage(g, def->super_detonation, p->pos, hit_obj);
 	proj_free(p);
+}
+
+/* Segment a->b against the player's capsule (feet centre + radius .. + height - radius, radius `pr` plus the projectile's). Returns the
+ * fraction of the segment at the first contact, or 2 for none (sampled: capsule and segment are tiny compared with a tick's flight). */
+static float segment_vs_player(const game_t *g, const float a[3], const float b[3], float pr)
+{
+	float lo = g->player.pos[2] + g->pp.radius, hi = g->player.pos[2] + (g->player.crouch > 0.5f ? g->pp.crouch_height : g->pp.height) - g->pp.radius;
+	float r = g->pp.radius + pr, d[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] }, dl2 = dot3(d, d), t = 0.0f;
+	int step, steps = dl2 > 4.0f ? 32 : 8;
+	if (hi < lo) hi = lo;
+	for (step = 0; step <= steps; step++) {
+		float p[3], cz, dx, dy, dz;
+		t = (float)step / (float)steps;
+		p[0] = a[0] + d[0] * t; p[1] = a[1] + d[1] * t; p[2] = a[2] + d[2] * t;
+		cz = p[2] < lo ? lo : p[2] > hi ? hi : p[2];
+		dx = p[0] - g->player.pos[0]; dy = p[1] - g->player.pos[1]; dz = p[2] - cz;
+		if (dx * dx + dy * dy + dz * dz <= r * r) return t;
+	}
+	return 2.0f;
 }
 
 static void proj_step(game_t *g, game_proj_t *p)
@@ -366,6 +451,27 @@ static void proj_step(game_t *g, game_proj_t *p)
 	obj = ray_objects(g, a, b, p->owner, &oh, &t_obj);
 	if (obj >= 0 && (!hit_world || t_obj <= t_world)) hit_world = 0;
 	else obj = -1;
+	if (p->owner >= 0 && !vitals_dead(&g->vitals) && !(p->owner < (int)OBJ_MAX && g->unit_state[p->owner].ally)) {   /* shots of hostile AI units can hit the player */
+		float tp = segment_vs_player(g, a, b, def.collision_radius > 0.0f ? def.collision_radius : 0.02f);
+		float tbest = obj >= 0 ? t_obj : (hit_world ? t_world : 2.0f);
+		if (tp <= 1.0f && tp <= tbest) {
+			int di = def.impact_damage ? weap_find_damage(g->weap, def.impact_damage) : -1;
+			weap_damage d;
+			weap_material_response resp;
+			unsigned mt = g->vitals.shield > 0.0f ? g->biped.shield_material : g->biped.body_material;
+			float hp[3], amount = 0.0f, diff = g->unit ? unitdef_difficulty(g->unit, UNITDEF_D_ENEMY_DAMAGE, (unsigned)g->difficulty) : 1.0f;
+			for (i = 0; i < 3; i++) hp[i] = a[i] + (b[i] - a[i]) * tp;
+			if (diff <= 0.0f) diff = 1.0f;
+			if (p->owner < (int)OBJ_MAX && g->unit_state[p->owner].dmg_scale > 0.0f) diff = g->unit_state[p->owner].dmg_scale;   /* units.c: difficulty x variant */
+			p->pos[0] = hp[0]; p->pos[1] = hp[1]; p->pos[2] = hp[2];
+			if (di >= 0 && weap_get_damage(g->weap, (uint32_t)di, &d)) { amount = weap_damage_at_range(&def, &d, p->dist, rnd01(g)) * diff; camera_shake_from(g, &d); }
+			if (amount > 0.0f) apply_damage_to_player(g, amount, hp);
+			{ float nrm[3] = { -p->vel[0], -p->vel[1], -p->vel[2] }; float nl = len3(nrm); if (nl > 0) { nrm[0] /= nl; nrm[1] /= nl; nrm[2] /= nl; }
+			  if (weap_get_material(g->weap, &def, mt, &resp) && resp.response == WEAP_RESP_DETONATE) { detonate(g, p, &def, nrm, -1); return; } }
+			proj_free(p);
+			return;
+		}
+	}
 	if (hit_world || obj >= 0) {
 		float t = obj >= 0 ? t_obj : t_world;
 		const weap_material_response *rp = NULL;
@@ -401,6 +507,7 @@ static void proj_step(game_t *g, game_proj_t *p)
 				camera_shake_from(g, &d);
 				if (obj >= 0 && amount > 0.0f) {
 					float dealt;
+					if (p->owner >= 0 && p->owner < (int)OBJ_MAX && g->unit_state[p->owner].dmg_scale > 0.0f) amount *= g->unit_state[p->owner].dmg_scale;
 					if (d.modifiers[material_type < WEAP_MAX_MATERIALS ? material_type : 0] > 0.0f) amount *= d.modifiers[material_type < WEAP_MAX_MATERIALS ? material_type : 0];
 					dealt = game_damage_object(g, obj, amount, &oh);
 					if (dealt > 0.0f) g->st_hits++;
@@ -448,7 +555,7 @@ void game_init(game_t *g, const game_init_t *in, const float pos[3], float yaw)
 	g->unit = in->unit; g->weap = in->weap; g->cmod = in->cmod; g->ansm = in->ansm; g->fx = in->fx; g->coll = in->coll;
 	g->ow = in->ow; g->objects = in->objects; g->fp = in->fp;
 	g->rng = in->seed ? in->seed : 12345u;
-	g->cur = -1; g->switch_to = -1; g->fp_action = -1; g->difficulty = 1; g->autoaim = 1; g->nearby_weapon = -1;
+	g->cur = -1; g->switch_to = -1; g->fp_action = -1; g->difficulty = 1; g->autoaim = 1; g->nearby_weapon = -1; g->player_obj = -1;
 	if (g->coll) { phys_world_from_coll(&g->phys, g->coll); g->has_phys = 1; }
 	if (g->unit) {
 		unitdef_globals(g->unit, &g->globals);
@@ -482,7 +589,7 @@ static void autoaim(game_t *g, const weap_weapon *w, const float eye[3], const f
 		const game_unit_t *u = &g->unit_state[i];
 		float d[3], dist, cosang, ang;
 		phys_hit h;
-		if (!u->has_vitals || u->dead || o->model < 0) continue;
+		if (!u->has_vitals || u->dead || OBJ_OFF(o)) continue;
 		d[0] = o->pos[0] - eye[0]; d[1] = o->pos[1] - eye[1]; d[2] = o->pos[2] + 0.35f - eye[2];
 		dist = len3(d);
 		if (dist < 0.3f || (w->autoaim_range > 0.0f && dist > w->autoaim_range)) continue;
@@ -591,7 +698,7 @@ static int find_pickup(const game_t *g)
 	for (i = 0; g->objects && g->weap && i < g->objects->count; i++) {
 		const object_t *o = &g->objects->obj[i];
 		float d[3] = { o->pos[0] - g->player.pos[0], o->pos[1] - g->player.pos[1], o->pos[2] - g->player.pos[2] }, dist;
-		if (o->type != SCEN_WEAPON || o->model < 0) continue;
+		if (o->type != SCEN_WEAPON || OBJ_OFF(o)) continue;
 		dist = len3(d);
 		if (dist < bestd && weap_find_weapon(g->weap, object_tag(g, o)) >= 0) { bestd = dist; best = (int)i; }
 	}
@@ -604,12 +711,13 @@ static void switch_weapons(game_t *g, const game_input_t *in)
 	/* pick up a weapon lying nearby (replaces the current one) */
 	{
 		int best = find_pickup(g);
-		if (best >= 0 && g->cur >= 0) {
+		if (best >= 0) {
 			object_t *o = &g->objects->obj[best];
 			uint32_t tag = object_tag(g, o);
+			int slot = g->cur >= 0 ? g->cur : (g->slot[0].weapon < 0 ? 0 : 1);
 			o->model = -1;                                       /* taken: no longer drawn */
 			push(g, GE_PICKUP, tag, o->pos, NULL);
-			game_give_weapon(g, g->cur, tag);
+			game_give_weapon(g, slot, tag);
 			return;
 		}
 	}
@@ -638,7 +746,7 @@ void game_tick(game_t *g, const game_input_t *in)
 		(void)speed0;
 		if (vitals_dead(&g->vitals)) memset(&cmd, 0, sizeof cmd);
 		g->player.landed_speed = 0.0f;
-		player_tick(&g->player, &g->pp, g->has_phys ? &g->phys : &(phys_world){ 0 }, &cmd, 1.0f / TICKS);
+		if (!g->player_frozen) player_tick(&g->player, &g->pp, g->has_phys ? &g->phys : &(phys_world){ 0 }, &cmd, 1.0f / TICKS);
 		if (g->player.landed_speed > 0.0f) {
 			game_event_t *e = push(g, GE_LAND, 0, g->player.pos, NULL);
 			if (e) e->value = g->player.landed_speed;
@@ -775,7 +883,7 @@ void game_tick(game_t *g, const game_input_t *in)
 		unsigned i;
 		for (i = 0; g->objects && i < g->objects->count; i++) {
 			game_unit_t *u = &g->unit_state[i];
-			if (u->has_vitals && !u->dead) vitals_tick(&u->vitals);
+			if (u->has_vitals && !u->dead && !OBJ_OFF(&g->objects->obj[i])) vitals_tick(&u->vitals);
 			if (u->dead && u->death_ticks < 65000) u->death_ticks++;
 		}
 	}

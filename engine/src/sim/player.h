@@ -22,6 +22,7 @@ typedef struct {
 	float max_slope_cos;        /* steepest walkable slope: normal.z must exceed this */
 	float turn_rate;            /* radians per second at full stick deflection */
 	float pitch_limit;          /* radians */
+	unsigned sweep_spheres;     /* collision spheres along the capsule: 0 as many as the height needs (the player), n at most n (actors: 2, and one for the ground probe) */
 } player_params_t;
 
 typedef struct {
