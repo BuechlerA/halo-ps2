@@ -20,7 +20,7 @@ The PS2 is not a "weaker Xbox". It is a different machine:
 | I/O CPU | — | IOP: MIPS R3000A @ 36.9 MHz, 2 MB RAM (drives DVD, pads, memcard, SPU2) |
 | Storage | 5x DVD, 8 GB HDD | 4x DVD (~5 MB/s), no HDD assumed |
 | Output | 640×480 | 640×448i NTSC typical (480p possible with component cable) |
-| Halo CE shipped at | 30 fps, 640×480 | **our target: 60 fps** |
+| Halo CE shipped at | 30 fps, 640×480 | **our target: 30 fps** (60 later, ADR-023) |
 
 So the port is **roughly half the CPU, half the RAM, a tenth of the texture
 memory, no pixel shaders, and a 2× frame rate target**. That is why this is a
@@ -176,8 +176,9 @@ recorded in [06-decisions.md](06-decisions.md).
   microprograms we need.
 - Emulator: PCSX2 (`/Applications/PCSX2.app`, BIOS configured) with EE/VU/GS
   debugger. **PCSX2 is forgiving** about DMA timing, cache behaviour and VU hazards;
-  every milestone must also be checked on a real console (FreeMcBoot + ps2link over
-  the network adapter, or an ELF launched from USB via wLaunchELF).
+  milestones are gated on the PCSX2 interpreter and re-checked on a real console in
+  Phase 6 (ADR-022; FreeMcBoot + ps2link over the network adapter, or an ELF launched
+  from USB via wLaunchELF). PCSX2 does not model GS fill or DMA contention.
 - Host tools for the asset pipeline run on macOS (Python 3 + a C/C++ converter).
 
 ## 8. Reference reading

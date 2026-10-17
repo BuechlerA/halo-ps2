@@ -55,13 +55,22 @@ engines, except we also own the data converter.
 Rule of thumb: **the EE never touches a vertex** and **VU1 never touches game
 state**. The EE builds command lists; hardware executes them.
 
-## 3. Timing model: 30 Hz simulation, 60 Hz presentation
+## 3. Timing model: 30 Hz simulation, 30 fps presentation (60 fps stretch)
 
-Halo CE's simulation is a fixed 30 Hz tick. We keep that exactly (R3) and present
-at 60 Hz by **interpolating** between the previous and current tick for everything
-visible: object transforms, camera, animation node matrices, particle positions.
-This is the same technique MCC uses to run the engine above 30 fps, and it halves
-the simulation cost per rendered frame.
+Halo CE's simulation is a fixed 30 Hz tick. We keep that exactly (R3). **Current target (ADR-023): present at
+30 fps**, one frame per two vblanks, so the tick and the frame coincide: no interpolation, the render reads the
+state the tick just wrote (still through a snapshot, so the 60 fps path stays open).
+
+```
+ vblank:   |0        |1        |2        |3        |4
+ EE:       [tick k  ][prep k  ][stream     ] [tick k+1][prep k+1 ][stream     ]
+ VU1/GS:            [frame k - 1 (previous prep)    ] [frame k              ] ...
+ shown:    frame k-1 for two vblanks         frame k for two vblanks
+```
+
+**Stretch (60 fps, ADR-002/023):** present every vblank by **interpolating** between the previous and current
+tick for everything visible: object transforms, camera, animation node matrices, particle positions (the technique
+MCC uses to run the engine above 30 fps; it halves the simulation cost per rendered frame):
 
 ```
  vblank:   |0        |1        |2        |3        |4
@@ -72,10 +81,11 @@ the simulation cost per rendered frame.
 
 - `render/` consumes a double-buffered **render snapshot** (compact POD arrays of
   visible object transforms, node palettes, effect states) written by the tick;
-  it never reads live sim structures. Interpolation factor `alpha ∈ {0, 0.5}`.
-- Input is sampled every frame (60 Hz) but applied at tick boundaries, with the
-  look delta accumulated so aiming feels 60 Hz.
+  it never reads live sim structures. Interpolation factor `alpha = 0` at 30 fps, `{0, 0.5}` at 60.
+- Input is sampled every frame (30 Hz now, 60 Hz in the stretch) but applied at tick boundaries, with the
+  look delta accumulated.
 - One frame of latency is accepted (identical to the original's render-behind).
+- `fps 60` in `halo.cfg` switches the Phase 1 loop to one frame per vblank (used to compare headroom).
 
 ## 4. Memory model
 - **No heap after load.** `core/mem.c` provides arenas: `g_level_arena` (reset per
@@ -204,30 +214,69 @@ upload bytes, triangle counts, dropped frames).
 
 ```
 engine/
-  Makefile                 ps2sdk-style; builds halo-ps2.elf
+  Makefile                 ps2sdk-style; builds halo-ps2.elf (dependency files, host tests in tests/)
   src/
-    main.c                 boot, frame scheduler
-    platform/              video.c timer.c pad.c sif.c profiler.c
-    core/                  mem.c (arenas/pools) math.h (VU0 inline) log.c
-    render/                frame.c visibility.c materials.c textures.c chains.c
-    vu1/                   *.vsm microprograms (+ host-side loaders)
-    world/                 bsp.c clusters.c pack.c
-    stream/                hp2.c lz.c
-    sim/                   objects.c physics.c damage.c units.c weapons.c devices.c
-    anim/                  animations.c
-    ai/                    actors.c encounters.c pathfinding.c
-    script/                hsc.c builtins/*.c
-    audio/                 sound.c looping.c
-    ui/                    hud.c menus.c fonts.c
-    save/                  checkpoint.c memcard.c
+    main.c                 boot, halo.cfg, pipelined frame loop
+    platform/              video.c pad.c fbdump.c profiler.c timer.h
+    core/                  mem.c (arenas) config.c (halo.cfg)
+    render/                bsp_render.c (frame build + kick)  vis.c (cluster/portal visibility)
+                           camera.c flycam.c  clip.c (EE clipper)  chain.c upload.c gs.h (DMA/GS encodings)
+                           texcache.c (VRAM residency)  text.c (overlay font)  selftest.c
+    vu1/                   bsp.vsm (bsp_lit + bsp_lightmap entry points)
+    world/                 bsp.c (BSPS v2 reader)  tex.c (TEXS/LMn reader)  world.c (loading, texture source)
+    stream/                hp2.c file.c
+    sim/                   input player phys playerdef vitals game fx save (+ objects fpview skeleton); weapdef unitdef (data readers)
+    audio/ ui/             audio gameaudio snddef; hud huddef
+    ai/ script/            later phases
 iop/
   hstream/ hsound/         IRX modules (IOP toolchain)
 tools/
-  halo2ps2/                Python pipeline: map parsing → .hp2 packs
-scripts/                   extract-iso.sh, run-pcsx2.sh, build-iso.sh (later)
+  halo2ps2/                Python pipeline: map parsing -> .hp2 packs (bsp, bspconv, bitmaps, texconv, ...)
+scripts/                   run-pcsx2.sh run-headless.sh profile-pcsx2.sh profile-m1.sh build-world.sh
+                           fb2png.py campos.py scout-views.py refrender.py paths/*.cfg
 docs/                      this folder
 assets/                    gitignored: extracted ISO, converted packs
 ```
+
+Pure-C modules (everything except `platform/`, `bsp_render.c`, `selftest.c`, `world.c`, `file.c`) have host
+tests in `engine/tests/` built with ASan/UBSan (`make -C engine/tests`, also run by CI).
+
+## 10a. Phase 1 as built
+Frame: `vis_run` (portals, frustum, per-batch culling) -> material sort -> `tc_acquire` for each texture
+(uploads queued on a GIF chain) -> one VIF1 chain: frame constants, then per material a state chunk
+(A+D through PATH2, `FLUSHA` first) and one REF tag per batch carrying the previous MSCAL, then the
+lightmap pass grouped by page, the EE-clipped polygons (PATH2 `DIRECT`), the overlay and a GS FINISH.
+Decisions: ADR-017 (projection and clipping), ADR-018/019 (data formats), ADR-020 (lighting, fog, sky),
+ADR-021 (loop, config, headless checks). VU1 data memory layout is documented at the top of `vu1/bsp.vsm`.
+
+## 10b. Phase 2 as built (objects)
+Per frame, after the BSP passes and before the overlay, `render/obj_render.c` draws the object table (`sim/objects.c`) and the first-person
+view model (`sim/fpview.c`) through `vu1/model.vsm`: cull by distance, frustum and screen size, pick the LOD from the projected diameter plus the
+dynamic LOD bias (`render/lodctl.c`), pose the skeleton (`sim/skeleton.c`: animation sample -> node world matrices -> bind-pose skinning
+matrices, static objects skip it), look up the cluster light, then per part a state chunk and per batch the packet reference, palette and MSCAL.
+The 30 Hz tick advances animations (`objects_tick`, `fpview_tick`). Source layout additions: `sim/{objects,fpview,skeleton}.c`, `core/mat.c`,
+`render/{obj_render,lodctl}.c`, `world/{model,anim,scen}.c`, `vu1/model.vsm`, `tools/halo2ps2/{modelconv,objtex,animconv,scenconv,objpack}.py`.
+Decisions: ADR-024 (formats), ADR-025 (rendering), ADR-026 (lighting), ADR-027 (dynamic LOD), ADR-028 (30 fps pacing).
+
+## 10c. Phase 3 as built (player, weapons, HUD)
+Data: eight converters and readers (docs/14-phase3-plan.md): `COLn` collision, `CMOD` object hit shapes, `UNIT` units, `WEAP` weapons and the weapon state machine, `ASTB` animation state
+tables, `HUD0`/`FONT`/`STRS`/`HUDT`, `SND0`/`SNDD`, `FXD0`/`FXTX`; `world/gamedata.c` loads them (`game <prefix>`). Simulation (`sim/`): `input.c` (DualShock 2 mapping and scripted input),
+`player.c` + `phys.c` + `playerdef.c` (capsule controller over `coll.c`), `vitals.c`, `game.c` (the 30 Hz tick: player, two-weapon inventory with `weapon_fire_step`, projectiles and
+detonations, damage with `CMOD` region multipliers, death animations, pickups, grenades, melee, zoom, events), `fx.c` (particles and decals from `FXD0`), `save.c` (checkpoint snapshot). Output:
+`ui/hud.c` lays the HUD out (640x480), `render/hud_render.c` + `render/fx_render.c` draw it through `render/sprite.c` as an overlay pass (after objects, before the profiler text);
+`audio/gameaudio.c` plays sounds through `audio/audio.c` (stock `audsrv.irx`, ADR-030) with every sample uploaded at level load. main.c: `pad_read_raw` or the input script feeds `game_tick`
+once per frame at 30 fps; events drive audio and effects; `game_camera` replaces the free-fly camera. Decisions: ADR-030..ADR-042. Tests: `test_game.c` runs the real a10 packs headless
+(every weapon of all ten maps fires, checkpoint restore, HUD layout, effects lifecycle).
+
+## 10d. Phase 4 as built (scripts, AI, mission 1)
+Data (docs/23-phase4-plan.md): `SCRP` scripts, `AIDT` actors and encounters, `PATn` navigation meshes (derived from the collision BSP), `DEVS` devices and trigger volumes, `CINE` recorded animations and
+camera tracks, `STRM`/`STRD` streamed audio. Runtime: `script/hs.c` (cooperative tree-walking VM, pointer-free state) with host built-ins in `script/hs_host_{obj,misc,ai}.c`; `ai/ai.c` (actor brains),
+`ai/units.c` (non-player bipeds on the player's capsule controller), `ai/path.c` (A* + funnel); `sim/devices.c`, `sim/cine.c`; `audio/stream.c` (IO thread + audsrv ring). `sim/mission.c` binds them in
+`mission_t`; `mission_tick` order: sync player, scripts, devices, object pre-hook, AI, units, game, object post-hook, misc, cinematics. `mission_app.c` owns the statics and wires hooks;
+`main.c` serves what the mission asks for between ticks (BSP switch, checkpoint, revert, win/loss). Level manager: a persistent arena (models, packs, textures) plus a per-BSP arena released on a
+switch; the object table holds the objects of every BSP. Saves: `sim/msave.c` (game + units + AI + scripts + devices + cinematics + host state) to RAM checkpoints and, through `platform/memcard.c`,
+the memory card. `sim/bot.c` is the gate's player (ADR-054). Decisions: ADR-043..ADR-054. Tests: one host test per module under `engine/tests/` (units, AI, host objects, host misc, script machine,
+path, cinematics, devices, streams) against the real a10 packs where present.
 
 ## 11. Coding rules (enforced by review)
 - C11, `-G0`, no `double`, no `malloc` after load, no recursion in tick paths,

@@ -9,6 +9,7 @@ build/
 # Build outputs
 *.elf
 *.o
+*.d
 *.irx
 *.a
 *.map.txt
@@ -21,3 +22,6 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+# Local boot configuration for debug/test runs (docs/10-m1-hardware-check.md)
+halo.cfg
+engine/src/audio/audsrv_irx.c
