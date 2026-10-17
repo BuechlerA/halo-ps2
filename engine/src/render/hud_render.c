@@ -14,7 +14,7 @@ void hud_render_pass(void *user, render_ctx_t *rc)
 	if (!h->enabled || !h->game) return;
 	spr_begin(&spr, rc->chain, *rb_zbuf_page_ptr(), VIDEO_WIDTH, VIDEO_HEIGHT);
 	/* damage wash */
-	if (h->game->hurt_flash > 0.0f) {
+	if (h->game->hurt_flash > 0.0f && !(h->cine && h->cine->screen.cinematic)) {
 		unsigned a = (unsigned)(h->game->hurt_flash * 40.0f);
 		spr_state(&spr, 0, SPR_BLEND_ALPHA, 0);
 		spr_quad(&spr, 0.0f, 0.0f, (float)VIDEO_WIDTH, (float)VIDEO_HEIGHT, 0, 0, 0, 0, 0xFFFFFFu, 0x80u | 0x10u << 8 | 0x10u << 16 | (a > 0x60 ? 0x60u : a) << 24);

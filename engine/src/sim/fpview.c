@@ -29,8 +29,8 @@ void fpview_init(fpview_t *f, const object_world_t *w, const scen_player *p)
 		}
 	}
 	memcpy(f->offset, p->fp_offset, sizeof f->offset);
-	/* Halo's first-person arms and gun share one animation graph: arms nodes first, then the weapon's */
-	if (f->weapon_model >= 0 && f->weapon_graph >= 0 && f->weapon_graph == f->arms_graph) f->weapon_node_offset = mi.node_count;
+	/* Halo's first-person arms and gun share one animation graph whose node order interleaves both (the engine maps
+	 * nodes by name, objects_pose_model); the gun's root node hangs off the hand node named by the data. */
 	f->active = 1;
 }
 
@@ -62,11 +62,11 @@ void fpview_place(fpview_t *f, const object_world_t *w, const camera_t *cam)
 	camera_basis(cam, right, up, fwd);
 	for (k = 0; k < 3; k++) pos[k] = cam->pos[k] + right[k] * f->offset[0] + up[k] * f->offset[1] + fwd[k] * f->offset[2];
 	mat4_from_ypr(&f->arms_root, cam->yaw, cam->pitch, 0.0f, pos);     /* model +x forward, +y left, +z up like the world */
-	objects_pose_model(w, f->arms_model, f->arms_graph, f->arms_anim, f->arms_frame, 0, &f->arms_root, &f->arms_nodes);
+	objects_pose_model(w, f->arms_model, f->arms_graph, f->arms_anim, f->arms_frame, &f->arms_root, &f->arms_nodes);
 	f->weapon_root = f->arms_root;
-	if (f->weapon_model >= 0 && f->weapon_node_offset == 0 && f->hand_node >= 0 && (unsigned)f->hand_node < f->arms_nodes.count && f->hand_marker < 0) {
+	if (f->weapon_model >= 0 && f->hand_node >= 0 && (unsigned)f->hand_node < f->arms_nodes.count && f->hand_marker < 0) {
 		f->weapon_root = f->arms_nodes.world[f->hand_node];       /* separate graphs: attach to the hand node */
-	} else if (f->weapon_model >= 0 && f->weapon_node_offset == 0 && f->hand_marker >= 0 && f->arms_nodes.count) {
+	} else if (f->weapon_model >= 0 && f->hand_marker >= 0 && f->arms_nodes.count) {
 		model_info mi = model_get(w->models, (uint32_t)f->arms_model);
 		model_marker mk = model_get_marker(w->models, &mi, (uint32_t)f->hand_marker);
 		if (mk.node >= 0 && (unsigned)mk.node < f->arms_nodes.count) {

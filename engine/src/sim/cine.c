@@ -400,6 +400,7 @@ void cine_pose_to_camera(const cine_pose *p, camera_t *cam)
 	for (i = 0; i < 3; i++) cam->pos[i] = p->pos[i];
 	cam->yaw = p->yaw;
 	cam->pitch = clampf(p->pitch, -MAX_PITCH_CAMERA, MAX_PITCH_CAMERA);
+	cam->roll = p->roll;
 	cam->hfov = p->fov;
 }
 
@@ -470,8 +471,9 @@ void cine_fade_in(cine_state *s, float r, float g, float b, uint32_t ticks) { fa
 
 static void screen_tick(cine_screen *sc)
 {
-	if (sc->letterbox_on && sc->letterbox_pos < CINE_LETTERBOX_TICKS) sc->letterbox_pos++;
-	else if (!sc->letterbox_on && sc->letterbox_pos > 0) sc->letterbox_pos--;
+	int want = sc->letterbox_on || sc->cinematic;            /* cinematic mode shows the bars by itself; the built-in adds them outside one */
+	if (want && sc->letterbox_pos < CINE_LETTERBOX_TICKS) sc->letterbox_pos++;
+	else if (!want && sc->letterbox_pos > 0) sc->letterbox_pos--;
 	sc->letterbox = (float)sc->letterbox_pos / (float)CINE_LETTERBOX_TICKS;
 	if (sc->fade_elapsed < sc->fade_ticks) {
 		sc->fade_elapsed++;

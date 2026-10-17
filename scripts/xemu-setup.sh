@@ -54,6 +54,9 @@ bootrom_path = '$MCPX'
 flashrom_path = '$FLASH'
 eeprom_path = '$STATE/eeprom.bin'
 hdd_path = '$HDD'
+# Keyboard on controller port 1 so the reference can be driven without a gamepad (xemu's keyboard device GUID is "keyboard").
+[input.bindings]
+port1 = 'keyboard'
 EOF
 echo "wrote $STATE/xemu.toml"
 echo "  MCPX  $MCPX"
