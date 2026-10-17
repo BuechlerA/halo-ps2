@@ -1,17 +1,37 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+
 jobs:
   tools:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -I tools/tests/test_mapinfo.py
-      - run: python3 -I tools/tests/test_tagindex.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tool unit tests
+        run: |
+          for t in tools/tests/test_*.py; do
+            echo "== $t"
+            python3 -I "$t"
+          done
+      - name: Host tests for the engine's platform-independent code
+        run: make -C engine/tests
+      - name: Repository stays asset-free
+        run: scripts/check-no-assets.sh
+
   engine:
     runs-on: ubuntu-latest
     container: ps2dev/ps2dev:latest
     steps:
       - uses: actions/checkout@v4
-      - run: make -C engine PS2DEV=/usr/local/ps2dev
+      - name: Install make (the ps2dev image is minimal)
+        run: apk add --no-cache make || (apt-get update && apt-get install -y make)
+      - name: Build EE ELF (includes the VU1 microprogram)
+        run: make -C engine
       - uses: actions/upload-artifact@v4
-        with: { name: halo-ps2.elf, path: engine/halo-ps2.elf }
+        with:
+          name: halo-ps2-elf
+          path: engine/halo-ps2.elf

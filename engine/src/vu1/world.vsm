@@ -1,0 +1,8 @@
+; world.vsm — the single VU1 microprogram the world renderer uploads: BSP passes (bsp.vsm) followed by the
+; object model program (model.vsm). Entry points are MSCAL addresses relative to VU1Bsp_CodeStart.
+        .align 4
+        .include "src/vu1/bsp.vsm"
+        .include "src/vu1/model.vsm"
+        .global VU1World_CodeEnd
+VU1World_CodeEnd:
+        .align 4

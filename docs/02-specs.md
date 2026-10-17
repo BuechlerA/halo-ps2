@@ -3,7 +3,7 @@
 ## 1. Goal
 
 Play the **complete 10-mission Halo: Combat Evolved campaign** on a retail
-PlayStation 2 at a **locked 60 frames per second**, from the user's own Xbox copy of
+PlayStation 2 at a **locked 30 frames per second** (60 is a deferred stretch goal, ADR-023), from the user's own Xbox copy of
 the game. Gameplay rules, encounter design, AI behaviour, scripting, weapons,
 vehicles and level layouts must match the Xbox original as closely as the data
 allows. Visual fidelity is traded away first; frame rate and gameplay are never.
@@ -21,13 +21,13 @@ allows. Visual fidelity is traded away first; frame rate and gameplay are never.
 | ID | Requirement | How it is verified |
 |---|---|---|
 | R1 | All 10 campaign missions completable start to finish, all difficulties, on real hardware | Playthrough log per mission, per milestone gate |
-| R2 | **60 fps** (59.94 Hz): < 1 % missed vsyncs over a full mission, 0 missed in the 95th-percentile encounter | Built-in profiler overlay + frame-drop counter dumped at mission end |
+| R2 | **30 fps** (29.97 Hz, one frame per two vblanks; 60 fps is the stretch, ADR-023): < 1 % dropped frames (flip interval > 1.5 frames) over a full mission, 0 in the 95th-percentile encounter | Built-in profiler overlay + frame-drop counter dumped at mission end |
 | R3 | 30 Hz simulation tick, identical to the original engine's tick rate | Tick counter vs. wall clock; scripted sequences time-match the Xbox |
 | R4 | Fits in 32 MB EE RAM + 4 MB VRAM + 2 MB SPU2 RAM with **no runtime heap allocation after level load** | Allocator asserts; per-level memory report |
 | R5 | Single-layer DVD (≤ 4.37 GiB), boots on fat and slim NTSC consoles | ISO build script + hardware boot |
 | R6 | Checkpoint/resume in RAM, save to 8 MB memory card ≤ 512 KB per slot | Save size report |
 | R7 | Repository ships **no copyrighted assets**; the pipeline converts the user's own ISO | `.gitignore` + CI check that `assets/` is untracked |
-| R8 | Every milestone verified on PCSX2 **and** on a real console | Milestone checklist |
+| R8 | Every milestone verified on the PCSX2 interpreter; all of them re-verified on a real console in Phase 6 (ADR-022) | Milestone checklist |
 
 ## 4. Reference baseline (what we start from)
 
@@ -58,9 +58,12 @@ Campaign total **≈ 1.49 GiB** compressed. Measured with
 | Resident tag data (index + all non-BSP tags, incl. animations, collision, AI, scripts) | 8.5 MiB (`c20`) | 16.2 MiB (`b40`) |
 | Share of the Xbox tag-space limit (23 MiB, `0x1700000`) | 37 % | 70.5 % |
 
-Everything else in a cache file is raw data streamed by the Xbox engine: model
-vertex/index buffers, bitmap pixels, sound samples and the structure BSPs. Our
-resident budget (9 MB, below) is ~55 % of the worst-case Xbox tag data, so
+Of that tag data, 2.3–4.9 MiB per map is model vertex data (converted to VU1
+strips on PS2) and 5.9–11.0 MiB is tag structs
+([reports/tag-index.md](reports/tag-index.md)). Everything else in a
+cache file is raw data streamed by the Xbox engine: bitmap pixels, sound samples
+and the structure BSPs. Our resident budget (9 MB, below) covers both the
+structs and the converted models, i.e. ~55 % of the worst-case Xbox figure, so
 conversion must shrink data (quantised animations, pruned permutations,
 pointer-free layouts), not just reformat it.
 
@@ -71,26 +74,29 @@ hand-tuned.
 
 ## 5. Performance budgets
 
-### 5.1 Frame (16.67 ms, 59.94 Hz)
-Simulation runs every other frame. The schedule is fixed so frame time is
-predictable; slack on non-tick frames is used for streaming and audio.
+### 5.1 Frame (33.33 ms, 29.97 Hz: two vblanks)
+The simulation tick (30 Hz, R3) and the presented frame coincide, so every frame is a tick frame and there is
+no render interpolation. The schedule is fixed so frame time is predictable. (The 60 fps stretch, ADR-023,
+would halve these slots and bring back the odd/even tick and render frames of ADR-002.)
 
-| Frame type | EE work | Budget |
-|---|---|---|
-| **Tick frame** (odd) | Simulation tick (objects, AI, physics, scripts, animation state) | ≤ 9.0 ms |
-| | Render prep (visibility, LOD select, DMA chain build, texture residency) | ≤ 5.0 ms |
-| | Audio/pad/SIF housekeeping | ≤ 1.0 ms |
-| | Reserve | 1.6 ms |
-| **Render frame** (even) | Render prep (interpolated transforms) | ≤ 5.0 ms |
-| | Decompression / streaming / sound bank uploads | ≤ 7.0 ms |
-| | Checkpoint snapshot (when due), profiler | ≤ 2.0 ms |
-| | Reserve | 2.6 ms |
-| **Every frame** | VU1 geometry (runs in parallel with the EE) | ≤ 14 ms |
-| | GS fill incl. texture uploads (parallel) | ≤ 14 ms |
+| EE work | Budget |
+|---|---|
+| Simulation tick (objects, AI, physics, scripts, animation state) | ≤ 12.0 ms |
+| Render prep (visibility, LOD select, EE clipping, DMA chain build, texture residency) | ≤ 8.0 ms |
+| Audio/pad/SIF housekeeping | ≤ 1.5 ms |
+| Decompression / streaming / sound bank uploads | ≤ 5.0 ms |
+| Checkpoint snapshot (when due), profiler | ≤ 2.0 ms |
+| Reserve | 4.8 ms |
 
-If a tick overruns its budget the frame is held (one dropped frame), the event is
-logged, and the dynamic LOD controller lowers draw distance / particle caps for the
-next 2 s. R2 counts these.
+| Every frame | Budget |
+|---|---|
+| VU1 geometry (runs in parallel with the EE) | ≤ 28 ms |
+| GS fill incl. texture uploads (parallel) | ≤ 28 ms |
+
+Render prep overlaps the GS drawing the previous frame (pipelined loop, ADR-021), so the EE total above is
+the serial EE time. If a tick overruns its budget the frame is held (one dropped frame), the event is
+logged, and the dynamic LOD controller lowers draw distance / particle caps for the next 2 s. R2 counts these.
+The budgets are deliberately not tightened to the 60 fps numbers: GS cost is unmeasured on hardware (ADR-022).
 
 ### 5.2 Geometry and fill (per frame)
 | Metric | Budget | Notes |

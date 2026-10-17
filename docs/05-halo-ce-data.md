@@ -46,9 +46,13 @@ uncompressed cache the game sees in memory. `tools/halo2ps2/mapinfo.py` does thi
   relative to that base; the converter subtracts the base to get file offsets.
 - Xbox tag space limit: **0x1700000 (23 MiB)**. Everything the game keeps
   resident for a map fits in that, except:
-- **Raw data** (model vertices/indices, bitmap pixels, sound samples) lives
-  outside tag space in the file and is referenced by file offset; the Xbox engine
-  streams it (sounds on demand, BSPs on switch).
+- **Model vertex and index buffers live inside the tag region on Xbox**: the
+  index header stores them as `0x80xxxxxx` pointers right after the path strings
+  (3.9–4.9 MiB of vertices per campaign map, see
+  [reports/tag-index.md](reports/tag-index.md)). PC stores a file offset
+  and size there instead. Bitmap pixels and sound samples are raw data outside
+  tag space, referenced by file offset and streamed by the Xbox engine (sounds on
+  demand, BSPs on switch).
 - Structure BSPs are at the end of the tag region and only one is loaded at a
   time into a separate region; `scenario` holds the list and the `switch_bsp`
   script command selects.
@@ -109,8 +113,11 @@ exceptions.
 
 ## 5. Host tools in this repo
 - `tools/halo2ps2/mapinfo.py` — header parse / decompress / summary (works today).
-- Planned modules: `tagindex.py`, `bitmaps.py`, `models.py`, `bsp.py`,
-  `sounds.py`, `scripts.py`, `pack.py` (writes `.hp2`), `report.py`.
+- `tools/halo2ps2/tagindex.py` (tag index, report), `inventory.py` (bitmap, sound
+  and script-node statistics), `bsp.py` (BSP blocks and counts), `bspconv.py` (BSP geometry → `BSPn` section, see [08-bsp-section.md](08-bsp-section.md)), `hp2.py` (pack
+  container, see [07-hp2-format.md](07-hp2-format.md)). Each documents the byte
+  layouts it verified in its module docstring.
+- Planned modules: `bitmaps.py`, `models.py`, `sounds.py`, `scripts.py`, `pack.py`.
 - Third-party helpers (not vendored): `extract-xiso` (installed), Invader
   (`invader-info`, `invader-extract` — GPLv3, use as external executables),
   Reclaimer/Refinery (Python, GPLv3; candidate parsing backend — decision pending

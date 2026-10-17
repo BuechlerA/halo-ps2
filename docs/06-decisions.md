@@ -10,6 +10,7 @@ different GPU model; the data carries the game. **Consequence**: AI and
 scripting semantics must be reverse-engineered behaviourally (risk #4).
 
 ## ADR-002 30 Hz simulation tick, 60 Hz presentation with interpolation
+**Presentation rate superseded by ADR-023** (30 fps for now; the interpolation design is kept for the 60 fps stretch).
 **Decision**: Keep Halo's fixed 30 Hz tick; render every vblank by
 interpolating render snapshots. **Why**: preserves gameplay timing exactly and
 halves per-frame sim cost; it is the only way 60 fps is plausible. **Consequence**:
@@ -50,6 +51,7 @@ benefits from existing Halo 1 Xbox tag definitions; the engine should not be
 licence-bound by them.
 
 ## ADR-009 PCSX2 for iteration, real hardware gates every milestone
+**Superseded in part by ADR-022**: the per-milestone console gate is deferred to Phase 6.
 **Decision**: as titled. **Why**: PCSX2 does not model DMA timing, cache or VU
 hazards faithfully.
 
@@ -84,6 +86,212 @@ branding and credits only; it costs disc space and IPU work. Closes OD-3.
 **Why**: a single copyleft licence for the whole project, compatible with the
 GPLv3 helpers in ADR-008, with an explicit patent grant. Closes OD-4.
 Supersedes the "engine keeps its own licence" clause of ADR-008.
+
+## ADR-015 PCSX2 interpreter stands in for hardware between milestone gates
+**Extended by ADR-022**: the interpreter is now also the milestone gate until Phase 6.
+**Decision**: day-to-day development checks frame pacing and correctness in PCSX2
+with all recompilers off (`scripts/profile-pcsx2.sh --interpreter`), run headless
+against a scratch copy of the user's config. The real-console check required by
+every milestone gate still happens, but only at gates M1 onwards, not per commit.
+**Why**: iteration speed. The interpreter is the closest PCSX2 gets to unmodelled
+instruction cost and exposes timing bugs the JIT hides, but it does not model
+real DMA/cache timing, so it cannot replace the gate. Phase 0's hardware visual
+check (triangle) is done; hardware TTY/pacing numbers are not and are folded
+into M1. **Consequence**: roadmap items checked off by interpreter runs say so.
+
+## ADR-016 `.hp2` ships LZ4 blocks until the custom codec wins
+**Decision**: pack format v1 stores sections raw or as standard LZ4 blocks
+(codec ids 0/1) with a per-section CRC-32 of the raw data and 2048-byte section
+alignment. The custom EE codec of ADR-012 gets a new codec id if it is adopted.
+**Why**: a standard codec lets any LZ4 tool inspect payloads and lets the Python
+writer and C reader check each other; nothing downstream depends on the codec.
+
+## ADR-017 Reverse-Z projection; triangles are never clipped on VU1
+**Decision**: the world transform is a single matrix with **reverse-Z** (`clip.z = near`,
+`clip.w = view depth`, post-divide depth `near / w`, larger = nearer, GS test GEQUAL, Z24 cleared to 0).
+VU1 (`bsp.vsm`) tests every vertex *after* the perspective divide (`|x'|, |y'| <= 7`, the guard band of the
+GS 12.4 coordinate range, and `0 <= z' <= 1`, i.e. `w >= near` and in front of the eye) and **collapses** triangles that fail to a zero-area triangle at (0,0). The EE
+finds the same triangles (exact 8-corner box test per batch, then a per-triangle test with a slightly
+tighter margin), clips them in homogeneous space (`render/clip.c`, attributes interpolated linearly in
+clip space, i.e. perspective-correct) and draws the result through PATH2, nearest batches first within a
+time budget (`clipbudget`, default 6 ms: the EE is idle ~10 ms per frame while Phase 1 has no simulation; at 2.5 ms
+near terrain visibly disappeared on a30; revisit when ticks need the EE).
+**Why**: CLIPW compares against |w|, so a test written as `x > w` never flags vertices behind the camera; the first
+version did exactly that and drew mirrored geometry (found on hardware: "a garbled mess of meshes and planes"; it
+looked plausible enough in PCSX2 to be missed until an independent software reference disagreed).
+Reverse-Z keeps 24-bit precision at Halo's draw distances. Real clipping inside VU1 is a large
+program that only a small fraction of triangles need; in narrow interiors that fraction is high (walls
+inches from the camera), so dropping them would punch holes. Collapsing instead of setting ADC: ADC on the
+third vertex of a triangle-list primitive did not keep the GS vertex queue in step in PCSX2 (killed
+triangles leaked into their neighbours as streaks).
+**Consequences**: the EE clipper costs up to ~8 ms in worst-case interiors (measured on PCSX2; not yet on
+hardware); beyond the budget the farthest clipped triangles disappear. A VU1 or VU0 clipper is the
+follow-up if the M1 hardware numbers need it.
+
+## ADR-018 `BSPS` version 2: cluster batches, portals, BSP tree
+**Decision**: visibility comes from the Xbox clusters, portals and collision-BSP tree. A surface's cluster
+set is the union of the leaf route and the subcluster route. Batches are built per (cluster set, material),
+at most 24 triangles each, with no geometry duplicated; each cluster lists its batches and the engine
+de-duplicates with a per-frame stamp. Surfaces in neither route (195 of 1.94 M) are dropped. Version 1 is
+rejected. Source layouts and the unverified list are in [08-bsp-section.md](08-bsp-section.md).
+**Why**: per-material batches alone cannot be culled by visibility; 24 triangles (72 vertices) is what fits
+the 16 KB VU1 data memory with double-buffered input and output.
+**Consequence**: real batches average about 22 triangles, so the 400-batch frame budget of
+[02-specs.md](02-specs.md) §5.2 only holds up to roughly 9 600 visible triangles; measured scenes use
+450–800 batches. The budget is revisited at M1 (strips or larger batches would change it).
+
+## ADR-019 `TEXS` / `LMn`: PS2-ready textures and luminance lightmaps
+**Decision**: `TEXS` holds palettised base-map textures (PSMT8, or PSMT4 when 16 colours stay under an RMS
+of 3.0) at half resolution (8–256 px), up to four mips, CLUT stored upload-ready (CSM1 order); a shader
+binding table maps BSP `shader_id` to texture, blend class and uv scale. `LMn` holds half-resolution
+luminance PSMT8 pages with a shared grey-ramp CLUT (alpha = index); the lightmap's colour goes into the BSP
+vertex colours (`vertex_chroma`, baked by `bspconv.py`). Details in [09-tex-section.md](09-tex-section.md).
+**Why**: base maps only (no detail, bump, specular) put BSP textures under 1.1 MiB per map; luminance +
+vertex chroma is ADR-004.
+**Consequences**: the mip chain is converted but **not yet used by the engine** (it needs per-draw LOD
+selection; textures are drawn at level 0, bilinear). The lightmap gain is a constant (`build-world.sh`
+defaults to 1.5; 1.0 already equals a 2x modulate), to be judged on the console in Phase 6; the CSM1 CLUT swap
+is confirmed on the console (self test, 2026-10-16). Shaders whose alpha the converter drops (some `senv` foliage) draw opaque.
+
+## ADR-020 Two-pass BSP lighting and the GS conventions the renderer relies on
+**Decision**: pass 1 draws base texture x vertex colour (TFX modulate, 0x80 = 1.0); pass 2 redraws the same
+batches with the lightmap page as an alpha-only texture and blend `Cd * As` (A = Cd, B = 0, C = As, D = 0,
+decal, Z test GEQUAL with Z writes masked). Fog is applied in pass 1 only. Fog uses the GS convention
+(`F = 255` is no fog) from `F16 = clamp(w * k + b, 0, 4080)` written to the XYZF2 w lane; the sky is a
+horizon-aware vertical gradient written by the clear packet. PSMT4 CLUTs are uploaded as 8x2 PSMCT32 images.
+**Why**: it is the cheapest correct implementation of ADR-004 on the GS; a second pass costs one more VU1
+transform of the visible batches.
+**Consequences**: fog darkens the lightmap pass's input, so thick fog is slightly wrong in lit areas;
+per-cluster fog and the sky models are Phase 2 (sky needs the `model` converter).
+
+## ADR-021 Pipelined frame loop, runtime config and headless verification
+**Decision**: the EE builds frame N+1 (visibility, material sort, texture residency, one VIF1 source chain
+whose REF tags carry the previous batch's MSCAL in their upper 64 bits) while the GS draws frame N;
+uploads run on the GIF channel between frames, geometry through VIF1/PATH1+PATH2, ordered by FLUSHA.
+Boot options come from an optional `host:halo.cfg` (`core/config.c`): pack paths, scripted camera path,
+fog/sky, frame count, `fbdump <frame>`. `fbdump` reads the framebuffer back (GS local->host) and prints it as
+hex over TTY; `scripts/fb2png.py` turns that into a PNG. `scripts/run-headless.sh` runs the ELF against a
+scratch dir and `scripts/profile-m1.sh` runs the M1 fly-throughs.
+**Why**: prep (about 5 ms) plus GS (up to 14 ms) does not fit one vblank unless they overlap; PCSX2 has no
+CLI screenshot, and a framebuffer dump is the only way to check rendering without a human at the console.
+**Consequences**: texture uploads for frame N+1 happen after frame N finished, so the cache only protects
+textures used in the last two frames. The Phase 0 triangle demo (`vu1_tri`) is removed; its job is covered
+by `selftest 1` (known PSMT4/PSMT8 patterns) and by the real renderer.
+
+## ADR-022 Real-console checks are deferred to the polish phases; the PCSX2 interpreter is the gate until then
+**Decision**: milestone gates M1–M5 are passed on the PCSX2 interpreter (`scripts/profile-pcsx2.sh --interpreter`,
+`scripts/profile-m1.sh --interpreter`, headless `halo.cfg` runs). Real-console verification is batched into
+Phase 6 (hardening), and may be done earlier at the owner's choice. Everything needed to do it stays in the
+repository ([10-m1-hardware-check.md](10-m1-hardware-check.md), `scripts/paths/*.cfg`, the self test, the
+overlay's GS/EE/drop log).
+**Why**: the M1 console runs (2026-10-16) showed PCSX2 predicts what the project needs day to day: the PSMT4/PSMT8
+CLUT path and the self-test patterns matched exactly, and a30's EE time was 4.60 / 5.02 ms on the console against
+3.7–4.9 ms modelled. Console sessions cost far more than they return per iteration (ps2link must be restarted by
+hand after every run, EE `printf` does not reach its TTY, results are read off the TV).
+**Known divergence, so nobody over-trusts the gate**: PCSX2 does not model GS fill or DMA contention. On b40 (BSP 11,
+the heaviest views) it reported 0 dropped frames while the console dropped 40 of 2154 (1.86 %, over the 1 % bar) with EE
+8.4/8.9 ms and GS ~7.9 ms. Until a console run exists, treat GS cost as **unmeasured**: keep EE budgets with margin
+(a PCSX2 pass means EE ≲ 10 ms on the heaviest views, not 16 ms), do not add GS-heavy features (more passes, bigger
+textures, dense alpha) without noting the risk, and keep the list below current.
+**Open console findings carried to Phase 6**: b40 BSP 11 drops (cause not isolated: GS peaks vs texture uploads; the
+overlay now logs the first dropped frames with EE/GS ms and upload KB); lightmap gain look; whether mips are needed;
+the clip budget (6 ms) versus frame time on the console; EE `printf` over ps2link.
+**Consequences**: roadmap gates read "on the PCSX2 interpreter" until Phase 6; risk #8 stays High and is retired only by the
+Phase 6 console pass; R8 in [02-specs.md](02-specs.md) changes accordingly.
+
+## ADR-023 The frame-rate target is 30 fps for now; 60 fps is a deferred stretch goal
+**Decision**: the current target is a **locked 30 fps**: one frame per two vblanks (29.97 Hz), simulation tick and
+presentation both at 30 Hz, no render interpolation. 60 fps (one frame per vblank, 30 Hz tick with interpolation, ADR-002)
+stays the stretch goal and is revisited after Phase 4, or earlier if the budgets show the room; the code keeps it one
+setting away (`fps 60` in `halo.cfg`, the interpolation design in [03-engine-architecture.md](03-engine-architecture.md) §3).
+Supersedes the 60 fps wording of ADR-002, R2 and the "never a 30 fps target" rule of the roadmap.
+**Why**: the Phase 1 renderer already holds 60 fps in PCSX2, but the console runs showed the GS side (unmeasured in PCSX2) is
+the first thing to run out (b40 BSP 11: 1.86 % dropped at 60), and everything still to come (objects, skinning, AI, particles,
+scripting) adds to both processors. Halo CE itself shipped at 30. Fixing the target at 30 buys every budget a factor two and
+removes the interpolation machinery from the critical path while the content systems are written.
+**Consequences**: frame budgets are 33.3 ms ([02-specs.md](02-specs.md) §5.1; sim and prep no longer share a 16.7 ms slot);
+a "dropped frame" is a flip interval above 1.5 frames (50 ms; the profiler's `drop_ms`); R2 counts those. Geometry and fill
+budgets are *not* raised (GS cost is still unmeasured on hardware, ADR-022): the extra time is margin. Measurements taken at
+60 fps (Phase 1 console runs) are kept in the docs as they were, labelled as 60 fps results. The risk register's "60 fps
+unreachable" entry becomes "30 fps unreachable in heavy encounters", and 60 fps is tracked as a stretch evaluation in Phase 6.
+
+## ADR-024 Object data formats: `MODL`, `OTEX`, `ANIM`, `SCEN`
+**Decision**: a map's objects are converted into one pack (`assets/hp2/<map>.obj.hp2`, `tools/halo2ps2/objpack.py`) holding four
+sections, each restricted to what the scenario places plus the player's first-person set (`scenconv.collect` feeds the model and
+animation converters):
+- `MODL` ([11-model-section.md](11-model-section.md)): one VIF packet per batch of at most 24 triangles and 24 skeleton nodes (strips
+  expanded to lists, two node influences per vertex, s16 positions relative to a per-batch centre, s8 normals), organised as
+  region x permutation x LOD (index 0 = super high). Rotations are stored in the engine's Hamilton convention (Halo stores the
+  conjugate). Vertices are in **bind-pose model space**.
+- `OTEX`: the TEXS layout (docs/09) keyed by the Xbox shader id of each model part; base maps only, textures capped (128 px on a10/b40)
+  to a 3 MiB budget; untextured shaders draw flat.
+- `ANIM` ([12-anim-section.md](12-anim-section.md)): per-graph keyed tracks, 15-bit smallest-three rotation keys (4-byte hinge keys),
+  s16/f32 translation keys chosen closed loop to within 0.18 degrees / 0.35 mm of the Xbox frames, about 45 % of the Xbox size.
+  `ANIM_LOOPS` is derived from the animation names (the tag has no loop flag). Graph state tables and root motion are not used yet.
+- `SCEN` ([13-scen-section.md](13-scen-section.md)): definitions, placements (with a BSP mask by point location), the player's
+  first-person data, per-cluster object lighting.
+**Why**: the engine then needs no tag parser; every reader is pure C, bounds-validating and fuzz-tested on the host.
+**Consequences**: a10's object pack is 4.1 MiB stored (MODL 5.0, OTEX 1.2, ANIM 1.0 MiB raw), 7.3 MiB resident of the 9 MiB mission-data
+budget: heavy but inside it. If a map exceeds ~5 MiB of MODL the levers are dropping the super-high LOD or unused permutations
+(converter keywords exist). The LOD cutoff unit (pixel diameter at 640 wide) and the soso alpha rule are unverified.
+
+## ADR-025 Object rendering: VU1 skinning program, bind-pose palette, one batch at a time
+**Decision**: `vu1/model.vsm` (appended to the BSP program in `world.vsm`) transforms each vertex by two node matrices
+`clip = c1 + (c0 - c1) * w0`, lights it with ambient + one directional term, and runs the same post-divide clip test, collapse
+and fog as `bsp.vsm`. The palette is built on the EE per object: for every node `skin = inverse(default pose world) * posed world *
+placement` (static objects skip the skeleton: skin = placement), composed with the camera clip matrix, plus the sun direction in
+the node's local frame (five quadwords per node, at most 24 nodes per batch). Per batch the chain carries the batch packet (a REF
+into the section, UNPACKed into the idle buffer while the previous batch runs), then FLUSHE, the palette, MSCAL; consecutive
+batches with an identical palette skip the palette upload. VIF BASE/OFFSET move to the model layout (136/220) for the pass and
+return to the BSP layout (16/220) at the next frame header.
+**Why**: the EE never touches a vertex; a per-batch palette keeps VU1 memory inside 1 KiB; the bind-pose matrix is what Halo's
+data requires (the first attempt used plain node matrices and produced spiky arms).
+**Consequences**: the object pass costs about 5 us of EE time per batch (about 1 ms for the normal a10 population, 5 ms for 1000
+batches); normals of skinned parts are not blended (node 0's frame lights the vertex).
+
+## ADR-026 Object lighting from per-cluster probes
+**Decision**: Halo lights objects from the BSP lightmap. We bake, per BSP cluster, an ambient colour (mean lightmap colour of its
+surfaces with a floor of 20/128) and one directional light (the sky's brightest light when the cluster sees the sky, else the
+lightmap gradient, else up) into `SCEN`; the engine looks the cluster up with `bsp_find_cluster` at the object's centre.
+**Why**: it reuses the lightmap's own scale (128 = 1.0) so objects and walls match and costs one table read per object.
+**Consequences**: no per-object dynamic lights or shadows yet; the ambient/sun split is an approximation, tunable at conversion time.
+
+## ADR-027 Dynamic LOD controller and object draw limits
+**Decision**: `render/lodctl.c` raises a quality level (0..4: draw distance x1.0..0.4, model LOD bias 0..2, particle cap x1..0.25) as
+soon as a frame is dropped or its cost exceeds the budget, holds the level for 2 s, and recovers one step at a time after sustained slack
+(90 frames under 75 % of the budget). The object pass also culls by distance (default 200 units), by frustum, and below 3 px, and caps
+batches per frame (default 900). The controller ignores the first frames (loading).
+**Why**: the Phase 2 gate needs a controlled way to give up detail instead of frames; the same hook later throttles particles.
+**Consequences**: the cost signal is the larger of EE build time and GS time as observed by the profiler (GS time is unmeasured in PCSX2, ADR-022).
+
+## ADR-028 30 fps pacing: kick right after the flip, burn vsyncs before presenting
+**Decision**: the first 30 fps loop waited the extra vblank after the flip and before the kick, which made any frame whose EE build exceeded
+one vblank (16.7 ms) slip a whole extra vblank although 33 ms were available. The loop now kicks immediately after the flip, builds the next
+frame, waits for the GS, burns the vsyncs that have not happened yet (`passed = floor(elapsed / 16.68 ms)`, burn `vblanks - 1 - passed`),
+then presents; a frame is dropped when its flip interval exceeds 2.5 frame times of vblanks (41.7 ms at 30 fps).
+`video_flip` is split into `video_wait_gpu` + `video_present` because `graph_wait_vsync` clears the GS FINISH flag.
+**Consequences**: the Phase 1 30 fps numbers (0 dropped) were measured with the earlier loop and stay valid (their EE times were under one vblank).
+
+## ADR-029 Sky: an EE-drawn model behind the world, `SKY0` section
+**Decision**: the scenario's first sky tag is converted by `skyconv.py` into a `SKY0` section (sky model tag id, fog colour and
+distances, ambient colours); the sky model itself goes through `modelconv` like any object. The engine draws it first, with the camera
+position added to its vertices (so it never moves relative to the viewer), Z test "always" and no Z write, then draws the world over it.
+The pass runs on the EE (`obj_render_sky`: decode the batch packets, project, clip with `clip_polygon`, pack into DIRECT chunks), not on VU1,
+because the model is a few hundred triangles and the VU1 object program's depth/guard-band conventions do not fit a camera-locked dome.
+The config key `sky3d 0` turns it off; `skyfog 1` takes the world's linear fog (colour, start, opaque distance / max density) from the sky tag
+instead of the `fog` key (default off: the sky's own fog values are tuned for Xbox draw distances and darken the PS2 view too much).
+**Why**: a30's ring and cloud sky was the most visible gap reported after the first console run; the model is data we already convert.
+**Consequences**: the sky costs about one extra textured-triangle pass of EE time (see docs/04-roadmap.md Phase 2 for numbers); sky model animation
+(a30 clouds drift) and the second a30 sky (switched by script) are not handled; a10's sky (space) draws the same way.
+
+## ADR-030 xemu is the Xbox reference emulator for parity checks
+**Decision**: the original Xbox build is run in xemu (Homebrew cask, `/Applications/xemu.app`) from `scripts/xemu-setup.sh` / `scripts/xemu-run.sh`,
+with a project-local config under `assets/xemu/` and the user-supplied MCPX ROM, flash BIOS and HDD image kept outside the repository
+(procedure in [14-xbox-reference.md](14-xbox-reference.md)).
+**Why**: parity questions (lighting, bump/specular, sky, object placement) were answered only from tag data and `refrender.py`; a running
+reference gives the picture the port is meant to match. xemu is the maintained Xbox emulator and runs natively on Apple silicon.
+**Consequences**: the boot files cannot be redistributed or downloaded by scripts, so a fresh checkout cannot boot the reference until the user
+supplies them; xemu timings say nothing about Xbox performance, so it is used for picture parity only. Booted to the Bungie logo with real files on 2026-10-17.
 
 ## Open decisions
 None.

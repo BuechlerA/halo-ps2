@@ -11,9 +11,9 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from halo2ps2 import tagindex  # noqa: E402
+from halo2ps2 import tagcache  # noqa: E402
 from halo2ps2 import hsnames  # noqa: E402
-from halo2ps2.tagindex import (BITMAP_FORMATS, BITMAP_TYPES, SOUND_COMPRESSIONS,  # noqa: E402
+from halo2ps2.tagcache import (BITMAP_FORMATS, BITMAP_TYPES, SOUND_COMPRESSIONS,  # noqa: E402
                                SOUND_ENCODINGS, SOUND_RATES)
 
 
@@ -21,7 +21,7 @@ def mib(n: int) -> str:
     return f"{n / 2**20:.2f}"
 
 
-def map_section(m: tagindex.CacheMap, fn_names: list[str]) -> list[str]:
+def map_section(m: tagcache.CacheMap, fn_names: list[str]) -> list[str]:
     out = [f"## {m.name}", ""]
     groups = Counter(t.group for t in m.tags)
     out += [f"{m.tag_count} tags; model raw data: "
@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
              "Script built-in names come from the executable's function table (`hsnames.py`).", ""]
     fn_names = hsnames.load_names(args.xbe)
     for p in args.maps:
-        lines += map_section(tagindex.load(p), fn_names)
+        lines += map_section(tagcache.load(p), fn_names)
     args.out.write_text("\n".join(lines) + "\n")
     print(f"wrote {args.out}")
     return 0
