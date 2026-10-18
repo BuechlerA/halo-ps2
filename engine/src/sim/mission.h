@@ -66,6 +66,7 @@ typedef struct {
 	uint32_t not_enterable[MISSION_BITS(OBJ_MAX)];        /* unit_set_enterable_by_player false */
 	int16_t  seat_vehicle[OBJ_MAX];    /* unit slot -> vehicle slot + 1 (0 = not seated) */
 	uint16_t seat_hash[OBJ_MAX];       /* FNV-1a 16 of the seat label */
+	int16_t  held[UNIT_MAX];           /* unit index -> object slot of the weapon in its hand + 1 (0 = none) */
 	int16_t  saved_graph[OBJ_MAX];     /* custom animation: the object's own graph + 2 while a foreign graph plays (0 = none) */
 } mission_hostobj;
 

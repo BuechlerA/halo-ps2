@@ -42,7 +42,7 @@ static int make_object(object_table_t *t, const object_world_t *w, int slot, uns
 	}
 	o->flags |= OBJ_F_VISIBLE;
 	o->pos[0] = pos[0]; o->pos[1] = pos[1]; o->pos[2] = pos[2];
-	mat4_from_ypr(&o->root, rot[0], rot[1], rot[2], pos);
+	mat4_from_euler_halo(&o->root, rot[0], rot[1], rot[2], pos);
 	mi = model_get(w->models, (uint32_t)model);
 	o->radius = d.radius > 0.0f ? d.radius : mi.radius;
 	o->region_count = mi.region_count > OBJ_MAX_REGIONS ? OBJ_MAX_REGIONS : mi.region_count;

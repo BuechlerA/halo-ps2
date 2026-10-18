@@ -551,7 +551,7 @@ change colour (picked by a seed from the object index and definition), so where 
 (`chgconv.GREY_ONLY`; the Xbox intro shows grey). The first-person arms pick with seed 1. (2) The object lighting probes (`scenconv.cluster_lights`) use the BSP's tone curve and chroma
 strength (`texconv.lightmap_tone_rgb`) with a gain of 1.7 x 1.8: the linear gain 1.0 they used left characters about 2.5 times darker than the walls they stand against.
 (3) `default.xbe` was analysed (docs/36-xbe-analysis.md, `tools/xbe/`).
-**Why**: the Xbox intro shows red / yellow / orange / purple crew jumpsuits, khaki-free skin tones and a captain as bright as the bulkheads; here they were black, pink and charcoal.
+**Why**: the Xbox intro shows red / yellow / orange / purple crew jumpsuits, skin tones and a captain as bright as the bulkheads; here they were black, pink and charcoal.
 The tag data answered colour change completely; the executable showed that Halo assembles its combiner programs at runtime and that its environment pass adds the lightmap to a vertex term instead
 of doubling it.
 **Consequences**: object packs must be rebuilt (`objpack.py` / `build-world.sh`; the `OTEX` and `SCEN` sections change, a `CCHG` section is new, a pack without it still loads with no tints);

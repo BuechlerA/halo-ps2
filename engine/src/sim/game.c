@@ -707,7 +707,7 @@ static int find_pickup(const game_t *g)
 	for (i = 0; g->objects && g->weap && i < g->objects->count; i++) {
 		const object_t *o = &g->objects->obj[i];
 		float d[3] = { o->pos[0] - g->player.pos[0], o->pos[1] - g->player.pos[1], o->pos[2] - g->player.pos[2] }, dist;
-		if (o->type != SCEN_WEAPON || OBJ_OFF(o)) continue;
+		if (o->type != SCEN_WEAPON || OBJ_OFF(o) || (o->flags & OBJ_F_HELD)) continue;
 		dist = len3(d);
 		if (dist < bestd && weap_find_weapon(g->weap, object_tag(g, o)) >= 0) { bestd = dist; best = (int)i; }
 	}

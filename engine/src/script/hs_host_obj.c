@@ -464,6 +464,58 @@ BI(objects_detach)
 	return 0;
 }
 
+/* Weapons in hands: an armed unit gets a weapon object (the weapon's own model) whose "right hand" marker (else its origin) sits on the unit's
+ * "right hand" marker in the unit's current pose, so a marine in a cinematic holds his rifle like the Xbox's. The object is hidden for a dead
+ * unit and destroyed when the weapon is gone; OBJ_F_HELD keeps the player from picking it up. */
+static int marker_by_names(const mission_t *M, const object_t *o, const char *a, const char *b)
+{
+	int mk = marker_index(M, o, a);
+	return mk >= 0 || !b ? mk : marker_index(M, o, b);
+}
+
+static void update_held_weapons(mission_t *M)
+{
+	mission_hostobj *h = &M->hobj;
+	unsigned ui;
+	if (!M->units || !M->game || !M->game->weap || !M->ow.scen) return;
+	for (ui = 0; ui < UNIT_MAX; ui++) {
+		const unit_t *u = &M->units->u[ui];
+		int slot = h->held[ui] - 1;
+		object_t *po, *co;
+		weap_weapon wd;
+		mat4 hand, grip, inv, out;
+		int pm, cm;
+		if (!u->active || u->weapon < 0 || u->obj < 0 || is_player(M, u->obj) || !(po = obj_of(M, u->obj)) || po->model < 0
+		    || !weap_get_weapon(M->game->weap, (uint32_t)u->weapon, &wd)) {
+			if (slot >= 0 && mission_object_live(M, slot)) { M->objects->obj[slot].flags |= OBJ_F_HIDDEN; objects_destroy(M->objects, (unsigned)slot); }
+			h->held[ui] = 0;
+			continue;
+		}
+		if (slot < 0 || !mission_object_live(M, slot) || !(M->objects->obj[slot].flags & OBJ_F_HELD)) {
+			int def = scen_find_def(M->ow.scen, wd.tag_id);
+			if (def < 0) { h->held[ui] = 0; continue; }
+			slot = objects_spawn_def(M->objects, &M->ow, (unsigned)def, po->pos, 0.0f);
+			if (slot < 0) { h->held[ui] = 0; continue; }
+			M->objects->obj[slot].flags |= OBJ_F_HELD;
+			h->held[ui] = (int16_t)(slot + 1);
+		}
+		co = &M->objects->obj[slot];
+		if (M->game->unit_state[u->obj].dead || (po->flags & OBJ_F_HIDDEN)) co->flags |= OBJ_F_HIDDEN; else co->flags &= ~OBJ_F_HIDDEN;
+		pm = marker_by_names(M, po, "right hand", NULL);
+		if (pm < 0 || !marker_world(M, po, pm, &hand)) continue;
+		cm = marker_by_names(M, co, "right hand", "primary trigger");
+		if (cm >= 0 && marker_world(M, co, cm, &grip)) {            /* the weapon's grip marker (in its own pose) lands on the hand */
+			mat4 gl;
+			co->root = (mat4){ { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } } };
+			marker_world(M, co, cm, &gl);
+			mat4_rigid_inverse(&inv, &gl);
+			mat4_mul(&out, &inv, &hand);
+		} else out = hand;
+		co->root = out;
+		co->pos[0] = out.m[3][0]; co->pos[1] = out.m[3][1]; co->pos[2] = out.m[3][2];
+	}
+}
+
 static void update_attachments(mission_t *M)
 {
 	mission_hostobj *h = &M->hobj;
@@ -483,6 +535,7 @@ static void update_attachments(mission_t *M)
 		}
 		i++;
 	}
+	update_held_weapons(M);
 }
 
 /* ---- visibility and distance --------------------------------------------------------------------------------------------- */

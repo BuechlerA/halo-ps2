@@ -19,6 +19,7 @@
 #define OBJ_F_INACTIVE 4u       /* lies in a BSP that is not loaded: kept, frozen, not drawn */
 #define OBJ_F_FREE 8u           /* unused slot (destroyed object), reused by the next spawn */
 #define OBJ_F_HIDDEN 16u        /* exists but is not drawn (scripts hide objects) */
+#define OBJ_F_HELD 64u          /* a weapon in a unit's hand (hs_host_obj.c): follows the hand marker, cannot be picked up */
 #define OBJ_F_POSED 32u         /* drawn at anim/frame but the frame is set by its owner (devices), not advanced by objects_tick */
 
 typedef struct {

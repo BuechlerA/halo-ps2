@@ -118,7 +118,7 @@ static int cam_point_pose(const mission_t *m, int64_t idx, cine_pose *p)
 	if (idx < 0 || !m->dev || (uint64_t)idx >= m->dev->camera_count) return 0;
 	c = devdef_get_camera(m->dev, (uint32_t)idx);
 	p->pos[0] = c.pos[0]; p->pos[1] = c.pos[1]; p->pos[2] = c.pos[2];
-	p->yaw = c.ori[0]; p->pitch = c.ori[1]; p->roll = c.ori[2];
+	cine_halo_euler_to_ypr(c.ori[0], c.ori[1], c.ori[2], &p->yaw, &p->pitch, &p->roll);       /* Halo's euler convention (ADR-063) */
 	p->fov = c.fov > 0.05f && c.fov < 3.0f ? c.fov : CINE_DEFAULT_FOV;
 	return 1;
 }

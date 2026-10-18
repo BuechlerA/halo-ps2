@@ -115,7 +115,9 @@ static void test_camera(void)
 	{
 		cine_pose p = cine_cam_pose(&X.cine.cam);
 		CHECK(NEAR(p.pos[0], c.pos[0], 1e-3f) && NEAR(p.pos[1], c.pos[1], 1e-3f) && NEAR(p.pos[2], c.pos[2], 1e-3f));
-		CHECK(NEAR(p.yaw, c.ori[0], 1e-3f) && NEAR(p.pitch, c.ori[1], 1e-3f));
+		float ey, ep, er;
+		cine_halo_euler_to_ypr(c.ori[0], c.ori[1], c.ori[2], &ey, &ep, &er);       /* camera points use Halo's euler convention */
+		CHECK(NEAR(p.yaw, ey, 1e-3f) && NEAR(p.pitch, ep, 1e-3f) && NEAR(p.roll, er, 1e-3f));
 	}
 	/* a cut: zero ticks arrives at once; an unknown point is a no-op */
 	a[0] = hv(5, 13); a[1] = sv(0);

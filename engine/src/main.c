@@ -369,6 +369,7 @@ int main(int argc, char *argv[])
 			s_objr.draw_objects = (int)cfg_int(&s_cfg, "objects", 1);
 			s_objr.draw_fp = (int)cfg_int(&s_cfg, "fp", 1);
 			s_objr.cchg = &s_world.cchg;
+			{ float sr[3]; if (cfg_floats(&s_cfg, "skyrot", sr, 3) == 3) { s_objr.sky_rot[0] = sr[0] * 0.01745329f; s_objr.sky_rot[1] = sr[1] * 0.01745329f; s_objr.sky_rot[2] = sr[2] * 0.01745329f; } }
 			s_objr.sky_model = -1;
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
 			s_objr.sky_model2 = -1;
@@ -614,6 +615,12 @@ int main(int argc, char *argv[])
 				if (cs && cs->cam.control && cs->cam.mode == CINE_CAM_POSE) {
 					cine_pose cp = cine_cam_pose(&cs->cam);
 					cine_pose_to_camera(&cp, &s_cam);
+					s_cam.pitch += (float)cfg_int(&s_cfg, "campitch", 0) * 0.01745329f;                  /* debug */
+					{ int cperm = (int)cfg_int(&s_cfg, "camperm", 0);                       /* debug: try other angle conventions for cutscene cameras */
+					  if (cperm) { float y = s_cam.yaw, pi = s_cam.pitch, ro = s_cam.roll;
+						if (cperm & 4) { float t = pi; pi = ro; ro = t; }
+						if (cperm & 1) pi = -pi; if (cperm & 2) ro = -ro; if (cperm & 8) y = -y;
+						s_cam.yaw = y; s_cam.pitch = pi; s_cam.roll = ro; } }
 					/* The intro asks for near 0.01 (and 0.0625 -> 0.01 in the bridge); the VU1 object program drops every object below about 0.04 (a
 					 * captain 0.27 away vanishes, found against the Xbox intro), so the script's value is raised to the engine's default. */
 					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip > CAMERA_NEAR_DEFAULT ? cs->cam.near_clip : CAMERA_NEAR_DEFAULT;
@@ -630,7 +637,14 @@ int main(int argc, char *argv[])
 			fpview_place(&s_fp, &s_objr.world, &s_cam);
 		}
 		if ((frame % 6) == 0) profiler_overlay(&s_prof, &s_text);   /* a few updates a second: float formatting is slow */
-		bsp_render_build(frame, &s_cam, &s_text);          /* overlaps the GS drawing frame-1 */
+		{
+			camera_t rcam = s_cam;
+			if (cfg_int(&s_cfg, "widescreen", 1)) {                 /* the Xbox renders 16:9 with the 4:3 vertical field of view kept: hfov grows (70 -> 86 degrees), the 512x448 buffer is anamorphic */
+				rcam.hfov = 2.0f * atanf(tanf(s_cam.hfov * 0.5f) * ((16.0f / 9.0f) / s_cam.aspect));
+				rcam.aspect = 16.0f / 9.0f;
+			}
+			bsp_render_build(frame, &rcam, &s_text);           /* overlaps the GS drawing frame-1 */
+		}
 		t1 = timer_cycles();
 		if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }      /* FINISH seen: burning vsyncs below clears the flag */
 		s_gpu_idle = 0;

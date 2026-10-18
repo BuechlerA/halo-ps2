@@ -133,6 +133,9 @@ void cine_track_world(const cine_track_pose *tp, const float origin[3], float ya
 /* Quaternion (x y z w, Hamilton, engine convention) helpers. */
 void cine_ypr_to_quat(float yaw, float pitch, float roll, float q[4]);
 void cine_quat_to_ypr(const float q[4], float *yaw, float *pitch, float *roll);
+/* A scenario / camera-point euler triple (Halo's euler_angles3d_to_matrix, see core/mat.h) as the yaw, pitch and bank of camera_t: forward is its first row,
+ * up its third. */
+void cine_halo_euler_to_ypr(float yaw, float pitch, float roll, float *oy, float *op, float *orr);
 
 /* ---- 4. screen state ------------------------------------------------------------------------------------------------- */
 typedef struct {

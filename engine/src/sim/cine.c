@@ -124,6 +124,18 @@ void cine_ypr_to_quat(float yaw, float pitch, float roll, float q[4])
 	quat_mul(t, qx, q);
 }
 
+void cine_halo_euler_to_ypr(float yaw, float pitch, float roll, float *oy, float *op, float *orr)
+{
+	float c1 = cosf(yaw), s1 = sinf(yaw), c2 = cosf(pitch), s2 = sinf(pitch), c3 = cosf(roll), s3 = sinf(roll);
+	float fx = c1 * c2, fy = s1 * c3 - s2 * s3 * c1, fz = s1 * s3 + s2 * c3 * c1;       /* forward */
+	float ux = -s2, uy = -c2 * s3, uz = c2 * c3;                                          /* up */
+	float y = atan2f(fy, fx), p = asinf(clampf(fz, -1.0f, 1.0f)), sy = sinf(y), cy = cosf(y), sp = sinf(p), cp = cosf(p);
+	float u0x = -sp * cy, u0y = -sp * sy, u0z = cp, r0x = sy, r0y = -cy;                  /* level up and right of that heading */
+	*oy = y;
+	*op = p;
+	*orr = atan2f(ux * r0x + uy * r0y, ux * u0x + uy * u0y + uz * u0z);                   /* camera_t banks right: up' = sin r right + cos r up */
+}
+
 void cine_quat_to_ypr(const float q[4], float *yaw, float *pitch, float *roll)
 {
 	float x = q[0], y = q[1], z = q[2], w = q[3];
