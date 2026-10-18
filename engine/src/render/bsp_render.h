@@ -20,7 +20,7 @@
 typedef struct {
 	int16_t  tex;               /* texture index, -1 = untextured (flat) */
 	uint8_t  flags;             /* MAT_* */
-	uint8_t  pad;
+	uint8_t  add;               /* 1: additive blend (colour + framebuffer); the other blends all draw as alpha blends */
 	float    uv_scale[2];       /* multiplies the material's baked uv (shader tiling) */
 } mat_binding_t;
 

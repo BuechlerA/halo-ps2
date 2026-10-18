@@ -21,6 +21,7 @@ typedef struct {
 	int                   draw_objects, draw_fp;
 	int                   hide_fp;             /* this frame: a cinematic runs or a script camera renders (set by main) */
 	int                   sky_model;     /* MODL index of the sky model, -1 = none */
+	int                   sky_model2;    /* the scenario's second sky (a cluster with sky index 1 draws it), -1 = none */
 	float                 sky_ms;        /* EE time of the sky pass */
 	/* statistics of the last pass, copied into render_stats by the caller */
 	float                 st_ms;         /* EE time of the pass */

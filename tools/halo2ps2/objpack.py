@@ -30,8 +30,8 @@ def build(map_path: Path) -> tuple[bytes, dict]:
         model_tags |= set(mod.referenced_models(map_path))
     for mod in (unitconv, weapconv, ansmconv, aiconv, devconv, cinconv):
         anim_tags |= set(mod.referenced_anims(map_path))
-    if sky and sky["model_tag"]:
-        model_tags.add(sky["model_tag"])               # the sky model is drawn by the engine's sky pass
+    if sky:
+        model_tags |= {t for t in (sky["model_tag"], sky["model_tag2"]) if t}      # the sky models are drawn by the engine's sky pass
     model_sections = modelconv.build_sections(map_path, sorted(model_tags))
     anim = animconv.build_section(map_path, sorted(anim_tags))
     sections = [("SCEN", scen), ("SKY0", skyconv.build_section(map_path))] + list(model_sections) + [("ANIM", anim)]

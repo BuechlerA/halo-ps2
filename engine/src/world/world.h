@@ -14,6 +14,7 @@ typedef struct { tex_section tex; int has; } texset_t;
 typedef struct {
 	int      valid;
 	uint32_t model_tag;              /* 0 = fog only */
+	uint32_t model_tag2;             /* second sky of the scenario's palette, 0 = none */
 	float    fog_rgb[3], fog_near, fog_far, fog_density, outdoor[3], indoor[3];
 } sky_info_t;
 

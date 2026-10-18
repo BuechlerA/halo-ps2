@@ -61,8 +61,68 @@ def _bitmap_ref(m: texconv.MapData, off: int) -> int | None:
     return tid if e is not None and e.group == "bitm" else None
 
 
+# Extra map layers of a chicago shader as pseudo shaders: a part of a sky dome that adds the stars over a nebula is drawn twice, the second
+# time with a pseudo shader id that resolves to the added map (additive). {pseudo id: (chicago shader id, map index)}.
+LAYER_BASE = 0xFE000000
+_LAYERS: dict[int, tuple[int, int]] = {}
+
+
+def layer_shader_id(shader_id: int, index: int) -> int:
+    for pid, key in _LAYERS.items():
+        if key == (shader_id, index):
+            return pid
+    pid = LAYER_BASE + len(_LAYERS) + 1
+    _LAYERS[pid] = (shader_id, index)
+    return pid
+
+
+def chicago_layers(m: texconv.MapData, shader_id: int) -> list[int]:
+    """Indices of the maps of a `schi` shader that add to the base map `chicago_base_map` picks: not the base, not a pure modulator
+    (colour function multiply / double multiply with no alpha of its own): the space sky's stars over its nebula."""
+    e = m.by_id.get(shader_id)
+    if e is None or e.group != "schi":
+        return []
+    block = m.tag_off(e)
+    count, addr = struct.unpack_from("<II", m.region, block + texconv.TRANSPARENT_MAPS)
+    if count < 2:
+        return []
+    first = addr - m.base
+    base = texconv.chicago_base_map(m, first, count)
+    out = []
+    for i in range(count):
+        if i == base:
+            continue
+        mo = first + i * texconv.SCHI_MAP[0]
+        cf, af = struct.unpack_from("<HH", m.region, mo + texconv.SCHI_COLOR_FN)
+        if i + 1 < count and cf in (texconv.CF_MULTIPLY, texconv.CF_DOUBLE_MULTIPLY) and af in (texconv.AF_CURRENT, texconv.AF_NEXT_MAP):
+            continue
+        if _bitmap_ref(m, mo + texconv.SCHI_MAP[3]) is not None:
+            out.append(i)
+    return out
+
+
+def resolve_layer(m: texconv.MapData, pseudo_id: int) -> texconv.ShaderInfo:
+    sid, index = _LAYERS[pseudo_id]
+    e = m.by_id[sid]
+    info = texconv.ShaderInfo(pseudo_id, "schi", f"{e.path}#map{index}")
+    block = m.tag_off(e)
+    count, addr = struct.unpack_from("<II", m.region, block + texconv.TRANSPARENT_MAPS)
+    mo = addr - m.base + index * texconv.SCHI_MAP[0]
+    info.bitmap_id = _bitmap_ref(m, mo + texconv.SCHI_MAP[3])
+    u, v = struct.unpack_from("<2f", m.region, mo + texconv.SCHI_MAP[1])[0], struct.unpack_from("<f", m.region, mo + texconv.SCHI_MAP[2])[0]
+    if 0.0 < u <= 4096.0 and 0.0 < v <= 4096.0:
+        info.uv_scale = (u, v)
+    info.blend = texconv.BLEND_ADD
+    info.flags |= texconv.BF_TWO_SIDED
+    if info.bitmap_id is None:
+        info.note, info.flags = "no layer map", info.flags | texconv.BF_UNTEXTURED
+    return info
+
+
 def resolve_object_shader(m: texconv.MapData, shader_id: int) -> texconv.ShaderInfo:
     """Base map, blend state and uv scale of a model part's shader. Never raises."""
+    if shader_id in _LAYERS:
+        return resolve_layer(m, shader_id)
     e = m.by_id.get(shader_id)
     if e is None or e.group != "soso":
         return texconv.resolve_shader(m, shader_id)

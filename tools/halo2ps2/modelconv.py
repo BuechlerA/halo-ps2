@@ -826,6 +826,17 @@ def part_flags(info: texconv.ShaderInfo | None) -> int:
     return PF_BLEND if info.blend >= texconv.BLEND_ALPHA else 0
 
 
+def add_sky_layers(m: texconv.MapData, md: ModelData) -> None:
+    """A sky dome whose chicago shader stacks maps (the a10 `sky_x10` dome: nebula + stars) is drawn once per additive map: every part
+    of such a shader is followed by a copy with a pseudo shader id (objtex.layer_shader_id) that resolves to that map, additive."""
+    for parts in md.geometries.values():
+        for sp in list(parts):
+            if sp.shader_id == NO_SHADER:
+                continue
+            for index in objtex.chicago_layers(m, sp.shader_id):
+                parts.append(SrcPart(objtex.layer_shader_id(sp.shader_id, index), sp.pos, sp.nrm, sp.uv, sp.node0, sp.node1, sp.weight0, sp.tris))
+
+
 def convert_map(path: Path | texconv.MapData, model_tags: list[int] | None = None,
                 tex_budget: int = objtex.DEFAULT_BUDGET, max_tex: int = texconv.MAX_TEX,
                 skip_lod0: bool = False, variants: dict[int, set[str]] | None = None) -> ConvertResult:
@@ -839,6 +850,9 @@ def convert_map(path: Path | texconv.MapData, model_tags: list[int] | None = Non
         wanted = sorted(set(model_tags) & set(entries))
         skipped = sorted(set(model_tags) - set(entries))
     models = [read_model(m, entries[t], skip_lod0, variants.get(t) if variants is not None else None) for t in wanted]
+    for md in models:
+        if md.path.startswith("sky\\"):
+            add_sky_layers(m, md)
     shader_ids = [sp.shader_id for md in models for parts in md.geometries.values() for sp in parts if sp.shader_id != NO_SHADER]
     otex = objtex.build_otex(m, shader_ids, tex_budget, max_tex)
     flags = {sid: part_flags(info) for sid, info in otex.shaders.items()}

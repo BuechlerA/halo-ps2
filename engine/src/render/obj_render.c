@@ -178,7 +178,7 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 				ad[n].data = GS_TEX1(1, 0, 1, 1, 0, 0, 0);  ad[n++].addr = GS_A_TEX1_1;
 				ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);    ad[n++].addr = GS_A_CLAMP_1;
 			}
-			ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);           ad[n++].addr = GS_A_ALPHA_1;
+			ad[n].data = mb.add ? GS_ALPHA(0, 2, 2, 1, 0x80) : GS_ALPHA(0, 1, 0, 1, 0); ad[n++].addr = GS_A_ALPHA_1;
 			ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 2); ad[n++].addr = GS_A_TEST_1;
 			ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, 0); ad[n++].addr = GS_A_ZBUF_1;
 			emit_part_state(rc->chain, ad, n, mb.uv_scale[0] / (float)(1u << part.uv_shift), mb.uv_scale[1] / (float)(1u << part.uv_shift),
@@ -295,6 +295,22 @@ static void sky_emit_polys(chain_t *c, const cvert *poly, const unsigned *counts
 	}
 }
 
+/* Bind-pose inverse of a node: the inverse of its world matrix in the model's default pose (chain of the nodes' own translation / rotation). */
+static void node_bind_inverse(const model_section *ms, const model_info *mi, int node, mat4 *out)
+{
+	int chain[16], n = 0, i;
+	mat4 w, l;
+	for (; node >= 0 && node < (int)mi->node_count && n < 16; node = model_get_node(ms, mi, (uint32_t)node).parent) chain[n++] = node;
+	memset(&w, 0, sizeof w);
+	w.m[0][0] = w.m[1][1] = w.m[2][2] = w.m[3][3] = 1.0f;
+	for (i = n - 1; i >= 0; i--) {                       /* root first: world = local * parent world */
+		model_node nd = model_get_node(ms, mi, (uint32_t)chain[i]);
+		mat4_from_trs(&l, nd.rotation, nd.translation, nd.scale > 0.0f ? nd.scale : 1.0f);
+		mat4_mul(&w, &l, &w);
+	}
+	mat4_rigid_inverse(out, &w);
+}
+
 void obj_render_sky(void *user, render_ctx_t *rc)
 {
 	obj_render_t *o = user;
@@ -304,9 +320,11 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 	clip_gs g;
 	unsigned r, p, bi, t, k, j;
 	u32 t0 = timer_cycles();
+	int sky = o->sky_model;
 	o->sky_ms = 0.0f;
-	if (o->sky_model < 0 || !ms || !rc->sky_visible) return;        /* no visible cluster sees the sky: nothing to draw */
-	mi = model_get(ms, (uint32_t)o->sky_model);
+	if (rc->sky_index == 1 && o->sky_model2 >= 0) sky = o->sky_model2;       /* palette entry 1: a10's exterior (the intro's space shots) */
+	if (sky < 0 || !ms || !rc->sky_visible) return;                 /* no visible cluster sees the sky: nothing to draw */
+	mi = model_get(ms, (uint32_t)sky);
 	model_select_permutations(ms, &mi, NULL, perm);
 	g.near_z = rc->cam->near_z; g.zmax = 16777215.0f;
 	g.sx = (float)VIDEO_WIDTH * 0.5f; g.sy = (float)VIDEO_HEIGHT * 0.5f; g.ox = 2048.0f; g.oy = 2048.0f;
@@ -326,6 +344,11 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 			u64 tex0 = 0, prim;
 			float su, sv;
 			int blend, atest;
+			mat4 nw;
+			/* A sky model has no animation: its nodes are posed with the identity, so the skin matrix world(pose) * inverse(world(default)) leaves
+			 * the bind-pose inverse. a10's sky node is yawed by 90 degrees by default, which turns the dome, planet and galaxy by -90: only then
+			 * the intro's planet stands left of the Autumn as on the Xbox. */
+			node_bind_inverse(ms, &mi, part.rigid_node, &nw);
 			if (o->textures && o->textures->binding && o->textures->binding(o->textures->user, part.shader_id, &mb) != 0) mb.tex = -1;
 			blend = (mb.flags & MAT_BLEND) != 0 || (part.flags & 2);
 			atest = (mb.flags & MAT_ALPHA_TEST) != 0 || (part.flags & 1);
@@ -338,7 +361,7 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 				ad[n].data = GS_TEX1(1, 0, 1, 1, 0, 0, 0);  ad[n++].addr = GS_A_TEX1_1;
 				ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);    ad[n++].addr = GS_A_CLAMP_1;
 			}
-			ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);           ad[n++].addr = GS_A_ALPHA_1;
+			ad[n].data = mb.add ? GS_ALPHA(0, 2, 2, 1, 0x80) : GS_ALPHA(0, 1, 0, 1, 0); ad[n++].addr = GS_A_ALPHA_1;
 			ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 1); ad[n++].addr = GS_A_TEST_1;     /* Z test always */
 			ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, 1); ad[n++].addr = GS_A_ZBUF_1;                  /* no Z write */
 			emit_gs_state(rc->chain, ad, n);               /* never emit_part_state here: it would overwrite the BSP clip matrix */
@@ -358,9 +381,11 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 					cvert tri[3], out[CLIP_MAX_VERTS];
 					unsigned cnt;
 					for (k = 0; k < 3; k++) {
-						float wp[3];
+						float wp[3], lp[3];
 						const int16_t *q = pos + 4 * (3 * t + k), *uvk = uv + 4 * (3 * t + k);
-						for (j = 0; j < 3; j++) wp[j] = rc->cam->pos[j] + hdr[j] + (float)q[j] * hdr[3];     /* sky follows the camera */
+						for (j = 0; j < 3; j++) lp[j] = hdr[j] + (float)q[j] * hdr[3];
+						mat4_transform_point(&nw, lp, wp);
+						for (j = 0; j < 3; j++) wp[j] += rc->cam->pos[j];                                    /* sky follows the camera */
 						clip_project(rc->clip, wp, &tri[k]);
 						memset(tri[k].a, 0, sizeof tri[k].a);
 						tri[k].a[0] = (float)uvk[0] * su; tri[k].a[1] = (float)uvk[1] * sv;

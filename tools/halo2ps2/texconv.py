@@ -748,10 +748,17 @@ def grey_ramp_clut() -> bytes:
     return out.tobytes()
 
 
-def vertex_chroma(page: Rgba | tuple[int, int, bytes], lm_uv: tuple[float, float]) -> tuple[int, int, int]:
+CHROMA_STRENGTH = 0.4      # how much of the lightmap colour reaches the vertices (1.0 = all of it)
+
+
+def vertex_chroma(page: Rgba | tuple[int, int, bytes], lm_uv: tuple[float, float],
+                  strength: float = CHROMA_STRENGTH) -> tuple[int, int, int]:
     """Chroma-only tint for a vertex: the page colour at ``lm_uv`` (bilinear, clamped) divided by its
-    luminance, scaled so 0x80 = 1.0 and clamped to 0..255. A neutral grey page gives (128, 128, 128);
-    pages (nearly) black at that point give neutral too. Luminance itself lives in the PSMT8 page."""
+    luminance, scaled so 0x80 = 1.0, pulled towards neutral by ``strength`` and clamped to 0..255. A neutral grey page
+    gives (128, 128, 128); pages (nearly) black at that point give neutral too. Luminance itself lives in the PSMT8 page.
+    The a10 lightmaps are amber on average (BSP 1: mean 120 / 90 / 51); at full strength every wall came out yellow-green where
+    the Xbox intro frames show neutral grey walls (2026-10-18 comparison, scripts/cmp-intro.sh); 0.4 keeps the red alarm
+    lights and the cold console light without the global cast."""
     w, h, px = page
     u, v = lm_uv
     fx = min(max(u * w - 0.5, 0.0), w - 1.0)
@@ -767,7 +774,7 @@ def vertex_chroma(page: Rgba | tuple[int, int, bytes], lm_uv: tuple[float, float
     y = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
     if y < 1.0:
         return 128, 128, 128
-    return tuple(max(0, min(255, int(c / y * 128 + 0.5))) for c in rgb)  # type: ignore[return-value]
+    return tuple(max(0, min(255, int((1.0 + strength * (c / y - 1.0)) * 128 + 0.5))) for c in rgb)  # type: ignore[return-value]
 
 
 # ---- BSP scanning ----------------------------------------------------------------------------
