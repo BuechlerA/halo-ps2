@@ -142,6 +142,14 @@ Each program clips against the guard band with `CLIPW` + ADC (the cheap PS2 tric
 from the sample code); true near-plane clipping is done only for the
 `model_skin` first-person program where polygons actually cross the near plane.
 
+VU1 data memory is laid out per program (documented at the top of each `.vsm`): the BSP
+program keeps its clip matrix at absolute addresses 0..3, the object program its per-part uv
+scale and GIF tag at 2..3. The frame constants are written once by `emit_frame_header`; an
+EE-side pass that runs between that header and the BSP batches (the sky pass, ADR-029) may
+only send GS registers through PATH2 and must not `UNPACK` anything, or the world is drawn
+with a corrupted matrix for the whole frame (ADR-057). The object pass runs after the BSP
+passes and rewrites its own addresses, which the next frame's header overwrites again.
+
 ### 5.3 Lighting model mapping
 | Halo | PS2 |
 |---|---|

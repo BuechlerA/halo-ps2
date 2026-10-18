@@ -642,8 +642,8 @@ int main(int argc, char *argv[])
 		if ((frame % 60) == 0) {
 			profiler_report(&s_prof);
 			if (s_path.count == 0 && cfg_int(&s_cfg, "printcam", 0))
-				printf("[cam] pos %.2f %.2f %.2f yaw %.1f pitch %.1f\n", s_cam.pos[0], s_cam.pos[1], s_cam.pos[2],
-				       s_cam.yaw * 57.29578f, s_cam.pitch * 57.29578f);
+				printf("[cam] pos %.2f %.2f %.2f yaw %.1f pitch %.1f roll %.1f fov %.1f near %.3f\n", s_cam.pos[0], s_cam.pos[1], s_cam.pos[2],
+				       s_cam.yaw * 57.29578f, s_cam.pitch * 57.29578f, s_cam.roll * 57.29578f, s_cam.hfov * 57.29578f, s_cam.near_z);
 		}
 	}
 	return 0;
