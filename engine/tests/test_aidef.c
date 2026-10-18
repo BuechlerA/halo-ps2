@@ -72,7 +72,7 @@ static void walk(const aidef_section *s)
 		if (got != (i < aidef_encounter_count(s))) abort();
 		if (got && aidef_find_encounter(s, e.name) < 0) abort();
 		acc += e.flags + (uint32_t)strlen(e.name) + e.team;
-		for (k = 0; k < e.squad_count + 1; k++) {
+		for (k = 0; k < (uint32_t)e.squad_count + 1u; k++) {
 			if (aidef_encounter_squad(s, i, k, &q) != (got && k < e.squad_count)) abort();
 			if (!got || k >= e.squad_count) continue;
 			if (aidef_find_squad(s, i, q.name) < 0) abort();
@@ -80,28 +80,28 @@ static void walk(const aidef_section *s)
 			if (q.initial_state >= AIDEF_STATES || q.return_state >= AIDEF_STATES || !isfinite(q.delay_time)) abort();
 			acc += q.flags + aidef_squad_spawn_count(&q, k) + (uint32_t)strlen(aidef_state_name(q.initial_state));
 			if (aidef_squad_variant(s, &q, &v)) acc += v.tag_id;
-			for (j = 0; j < q.start_count + 1; j++) {
+			for (j = 0; j < (uint32_t)q.start_count + 1u; j++) {
 				if (aidef_get_start(s, &q, j, &st) != (j < q.start_count)) abort();
 				if (!isfinite(st.pos[0]) || !isfinite(st.facing) || st.command_list < -1 || st.command_list >= (int)aidef_command_list_count(s)) abort();
 				acc += (uint32_t)st.cluster;
 			}
-			for (j = 0; j < q.move_count + 1; j++) {
+			for (j = 0; j < (uint32_t)q.move_count + 1u; j++) {
 				if (aidef_get_move(s, &q, j, &mv) != (j < q.move_count)) abort();
 				if (!isfinite(mv.weight) || !isfinite(mv.pos[2])) abort();
 				acc += (uint32_t)mv.surface;
 			}
 		}
-		for (k = 0; k < e.firing_count + 1; k++) {
+		for (k = 0; k < (uint32_t)e.firing_count + 1u; k++) {
 			if (aidef_get_firing(s, &e, k, &f) != (got && k < e.firing_count)) abort();
 			if (!isfinite(f.pos[1])) abort();
 			acc += (uint32_t)f.surface;
 		}
-		for (k = 0; k < e.platoon_count + 1; k++) {
+		for (k = 0; k < (uint32_t)e.platoon_count + 1u; k++) {
 			if (aidef_get_platoon(s, &e, k, &pl) != (got && k < e.platoon_count)) abort();
 			if (got && k < e.platoon_count && aidef_find_platoon(s, &e, pl.name) < 0) abort();
 			acc += (uint32_t)strlen(pl.name) + pl.w20;
 		}
-		for (k = 0; k < e.pstart_count + 1; k++) {
+		for (k = 0; k < (uint32_t)e.pstart_count + 1u; k++) {
 			if (aidef_get_pstart(s, &e, k, &ps) != (got && k < e.pstart_count)) abort();
 			if (!isfinite(ps.facing)) abort();
 			acc += ps.team;
@@ -113,12 +113,12 @@ static void walk(const aidef_section *s)
 		int got = aidef_get_command_list(s, i, &cl);
 		if (got != (i < aidef_command_list_count(s))) abort();
 		if (got && aidef_find_command_list(s, cl.name) < 0) abort();
-		for (k = 0; k < cl.command_count + 1; k++) {
+		for (k = 0; k < (uint32_t)cl.command_count + 1u; k++) {
 			if (aidef_get_command(s, &cl, k, &cm) != (got && k < cl.command_count)) abort();
 			if (cm.type >= AIDEF_ATOMS || !isfinite(cm.param1) || !isfinite(cm.param2)) abort();
 			acc += cm.type + (uint32_t)strlen(aidef_atom_name(cm.type)) + (uint32_t)cm.animation;
 		}
-		for (k = 0; k < cl.point_count + 1; k++) {
+		for (k = 0; k < (uint32_t)cl.point_count + 1u; k++) {
 			if (aidef_get_point(s, &cl, k, &pt) != (got && k < cl.point_count)) abort();
 			if (!isfinite(pt.pos[0])) abort();
 			acc += (uint32_t)pt.surface;
@@ -129,12 +129,12 @@ static void walk(const aidef_section *s)
 		if (got != (i < aidef_conversation_count(s))) abort();
 		if (got && aidef_find_conversation(s, cv.name) < 0) abort();
 		if (!isfinite(cv.trigger_distance)) abort();
-		for (k = 0; k < cv.participant_count + 1; k++) {
+		for (k = 0; k < (uint32_t)cv.participant_count + 1u; k++) {
 			if (aidef_get_participant(s, &cv, k, &pa) != (got && k < cv.participant_count)) abort();
 			if (pa.encounter_index < -1 || pa.encounter_index >= (int)aidef_encounter_count(s)) abort();
 			acc += pa.actor_type + (uint32_t)strlen(pa.encounter_name) + (uint32_t)pa.variants[5];
 		}
-		for (k = 0; k < cv.line_count + 1; k++) {
+		for (k = 0; k < (uint32_t)cv.line_count + 1u; k++) {
 			if (aidef_get_line(s, &cv, k, &ln) != (got && k < cv.line_count)) abort();
 			if (ln.participant < -1 || ln.participant >= (int)cv.participant_count || !isfinite(ln.delay)) abort();
 			acc += ln.sounds[0] + ln.sounds[5];

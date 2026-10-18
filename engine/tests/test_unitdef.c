@@ -38,7 +38,7 @@ static void walk(const unitdef_section *s)
 			float d = unitdef_difficulty(s, g, l);
 			if (!isfinite(d)) abort();
 		}
-	for (i = 0; i < s->biped_count + 2; i++) {
+	for (i = 0; i < (uint32_t)s->biped_count + 2u; i++) {
 		int got = unitdef_get_biped(s, i, &b);
 		if (got != (i < s->biped_count)) abort();
 		if (got && unitdef_find_biped(s, b.tag_id) != (int)i) abort();
@@ -47,13 +47,13 @@ static void walk(const unitdef_section *s)
 		acc += b.tag_id + b.model_tag + (uint32_t)strlen(b.name) + (uint32_t)strlen(b.hold_marker) + (uint32_t)strlen(b.foot_marker[1]) +
 		       (uint32_t)strlen(b.camera_marker) + (uint32_t)strlen(b.aux_marker) + b.pelvis_node + b.dialogue_variant[7] + b.dialogue_tag[7];
 	}
-	for (i = 0; i < s->vehicle_count + 2; i++) {
+	for (i = 0; i < (uint32_t)s->vehicle_count + 2u; i++) {
 		int got = unitdef_get_vehicle(s, i, &v);
 		uint32_t k;
 		if (got != (i < s->vehicle_count)) abort();
 		if (got && unitdef_find_vehicle(s, v.tag_id) != (int)i) abort();
 		if (v.type > UNITDEF_VEH_TURRET || !isfinite(v.max_forward)) abort();
-		for (k = 0; k < v.seat_count + 2; k++) {
+		for (k = 0; k < (uint32_t)v.seat_count + 2u; k++) {
 			int ok = unitdef_vehicle_seat(s, &v, k, &seat);
 			if (ok != (k < v.seat_count)) abort();
 			acc += seat.flags + (uint32_t)strlen(seat.label) + (uint32_t)strlen(seat.marker) + (uint32_t)strlen(seat.camera_marker);

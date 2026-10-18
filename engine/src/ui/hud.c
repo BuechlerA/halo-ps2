@@ -6,14 +6,17 @@
 static uint32_t scale_colour(uint32_t c, float k)
 {
 	unsigned r = (unsigned)((float)(c & 255u) * k), gg = (unsigned)((float)((c >> 8) & 255u) * k), b = (unsigned)((float)((c >> 16) & 255u) * k);
-	if (r > 255) r = 255; if (gg > 255) gg = 255; if (b > 255) b = 255;
+	if (r > 255) r = 255;
+	if (gg > 255) gg = 255;
+	if (b > 255) b = 255;
 	return r | gg << 8 | b << 16 | (c & 0xFF000000u);
 }
 
 static uint32_t lerp_colour(uint32_t a, uint32_t b, float t)
 {
 	unsigned i, out = 0;
-	if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+	if (t < 0.0f) t = 0.0f;
+	if (t > 1.0f) t = 1.0f;
 	for (i = 0; i < 4; i++) {
 		float x = (float)((a >> (8 * i)) & 255u), y = (float)((b >> (8 * i)) & 255u);
 		out |= (unsigned)(x + (y - x) * t) << (8 * i);
@@ -58,7 +61,8 @@ static void draw_meter(hud_frame_t *f, const huddef_section *s, const huddef_met
 	huddef_sprite sp;
 	uint32_t col;
 	if (m->sprite == HUDDEF_NONE) return;
-	if (frac < 0.0f) frac = 0.0f; if (frac > 1.0f) frac = 1.0f;
+	if (frac < 0.0f) frac = 0.0f;
+	if (frac > 1.0f) frac = 1.0f;
 	sp = huddef_get_sprite(s, m->sprite);
 	if (frac <= 0.0f && m->colour_empty) { add_quad(f, &sp, (float)m->x, (float)m->y, (float)m->w, (float)m->h, 1.0f, m->colour_empty, HUDDEF_BLEND_ALPHA); f->meters++; return; }
 	col = lerp_colour(m->colour_min, m->colour_max, frac);

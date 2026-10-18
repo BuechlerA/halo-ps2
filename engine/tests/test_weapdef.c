@@ -91,7 +91,7 @@ static int make_ready(weap_state *st, const weap_weapon *w, int hold_triggers)
 	for (i = 1; i <= n; i++) {
 		weap_events ev = step(st, w, &in, NULL);
 		for (t = 0; t < WEAP_MAX_TRIGGERS; t++) CHECKF(i == n || !ev.shot[t], "%s shot while readying", w->name);
-		CHECKF((ev.flags & WEAP_EV_READY) != 0 == (i == n), "%s READY at %u of %u", w->name, i, n);
+		CHECKF(((ev.flags & WEAP_EV_READY) != 0) == (i == n), "%s READY at %u of %u", w->name, i, n);
 	}
 	CHECK(st->mode == WEAP_MODE_IDLE || st->mode == WEAP_MODE_RELOADING || st->mode == WEAP_MODE_OVERHEATED);
 	return 0;
@@ -915,7 +915,7 @@ static int check_real_weapon(const weap_section *s, const weap_weapon *w, int ta
 
 	if (table) {
 		const weap_trigger *tr = nfire ? &w->trigger[list[0]] : (w->trigger_count ? &w->trigger[0] : NULL);
-		char rate[24] = "-", mag[24] = "-", rel[16] = "-", spd[16] = "-", dmg[40] = "-";
+		char rate[64] = "-", mag[24] = "-", rel[16] = "-", spd[16] = "-", dmg[64] = "-";
 		weap_projectile p;
 		weap_damage d;
 		int pi;
