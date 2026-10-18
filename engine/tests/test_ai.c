@@ -576,7 +576,9 @@ static void test_follow_list(void)
 		if (!pick_pair(bsp, &ea, &eb)) continue;
 		for (l = 0; l < nl && !done; l++) {
 			aidef_command_list_def cl;
+			aidef_command_def c[3];
 			unsigned k, n_go = 0, goals = 0;
+			(void)c;
 			aidef_point_def pts[3];
 			float spot[3], dmin;
 			int actor;
@@ -593,7 +595,7 @@ static void test_follow_list(void)
 					aidef_get_command(&F.ai, &cl, k, &cc);
 					if ((cc.type != AIDEF_ATOM_GO_TO && cc.type != AIDEF_ATOM_GO_TO_AND_FACE) || cc.point1 < 0 || !aidef_get_point(&F.ai, &cl, (unsigned)cc.point1, &pp)) continue;
 					if (path_locate(&g_pbsp[bsp], pp.pos) < 0 || (all_go && !path_reachable(&g_pbsp[bsp], g_scratch, &q0, pts[0].pos, pp.pos))) { bad = 1; break; }
-					if (n_go < 2) { pts[n_go] = pp; n_go++; }
+					if (n_go < 2) { c[n_go] = cc; pts[n_go] = pp; n_go++; }
 					all_go++;
 				}
 				if (bad || n_go < 2 || dist2(pts[0].pos, pts[1].pos) < 3.0f) continue;
