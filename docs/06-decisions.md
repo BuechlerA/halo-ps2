@@ -469,5 +469,16 @@ of the same name, cached per (model, graph); the first-person weapon attaches to
 other models have the same exposure. **Consequences**: packs must be rebuilt (`anim_open` rejects version 1); about 60 KB more per map; one strcmp pass per
 new (model, graph) pair. Details: docs/12-anim-section.md section 8.
 
+## ADR-059 Render options apply to every config, not only to configs with an object pack
+**Decision**: `main.c` calls `apply_options()` once, right after the first `load_bsp`, for every config; before, the only call sat inside the
+`if (s_have_objects)` block, so the render keys (`textures`, `lightmaps`, `debug`, `onlybatch`, `clipbudget`, `fog`, `sky`, `horizon`, `skyfog`)
+were silently ignored whenever the config had no `obj` line. The call no longer needs to follow `bsp_render_set_sky_pass`: `apply_options` reads
+only the config and `s_world.sky`, which `world_load_objects` fills before the first BSP load, and `bsp_render_set_world` does not read the options.
+**Why**: the M1 fly-throughs (`scripts/paths/a30.cfg`, `b40.cfg`) set fog and sky colours that had never applied, and world-only debugging configs
+could not use `debug` or `clipbudget`. **Consequences**: a30 and b40 now draw with their configured fog and sky gradient (the sky colour visibly changes;
+fog only tints geometry beyond 80/100 units). On the PCSX2 recompiler (2026-10-18) a30, b40 and a10 still drop 0 frames, and EE prep, VIF1/GS ms,
+triangles and level arena are the same as the pre-fix ELF to within 0.01 ms: the VU programs compute the per-vertex fog value either way, and PCSX2 does not
+model GS fill, so any fog cost on the GS stays unmeasured until Phase 6. A world-only a30 config now honours `debug 32` (clip stats 0) and `clipbudget`.
+
 ## Open decisions
 None.

@@ -16,6 +16,9 @@ average with peaks of 9.1 ms (b40 BSP 11 is the heaviest; the console measured 8
 close for EE), VIF1 and GS 0.4–1.8 ms in the model (it does not model GS fill: the console showed ~7.9 ms and
 drops on b40, ADR-022), visible triangles 1.5–7.5 k, level arena 3.0–4.2 MB, texture cache at most 47 % full. These numbers only prove the pipeline, the EE-side cost and the
 absence of stalls; they are not hardware numbers.
+Until ADR-059 (2026-10-18) the fog/sky/horizon lines of these configs were ignored (render keys applied only with an `obj` pack); with them applied
+the recompiler run of the same tree is unchanged: 0 dropped, EE prep 7.2/7.9/7.3 ms average over the last three windows and peaks 9.6/9.1/9.1 ms (a30/b40/a10),
+VIF1/GS 0.2–1.3 ms in the model, level arena 3.3–4.4 MB.
 
 ## Hardware results so far (2026-10-16, console at 192.168.0.10)
 - **Self test (`selftest 2`)**: matches on hardware: PSMT4 with the 8x2 CLUT, PSMT8 with the CSM1 swap and the
@@ -72,7 +75,9 @@ Left stick move, right stick look, R1/L1 up/down, R2 fast, Start toggles the ove
 with `pathkey` lines in the config) the camera follows the scripted path.
 
 ## `halo.cfg`
-One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (optional).
+One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (optional). The render keys (`fog`, `sky`, `horizon`,
+`textures`, `lightmaps`, `debug`, `onlybatch`, `clipbudget`, `skyfog`) apply with or without an `obj` pack (ADR-059; before it they were
+ignored unless the config had one).
 
 | Key | Meaning | Default |
 |---|---|---|
@@ -89,6 +94,7 @@ One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (op
 | `sky r g b`, `horizon r g b` | gradient behind the world (top, horizon) | dark blue |
 | `textures 0/1`, `lightmaps 0/1` | disable a pass for debugging | 1, 1 |
 | `clipbudget ms` | EE time for clipping near triangles (ADR-017) | 6 |
+| `onlybatch lo [hi]` | draw only BSP batches lo..hi | all |
 | `fbdump <frame>` | print that frame's framebuffer on the TTY (repeatable) | none |
 | `obj <path>` | object pack (SCEN, MODL, OTEX, ANIM) of the map; objects of the chosen BSP are placed | none |
 | `objects 0/1`, `fp 0/1` | draw the placed objects / the first-person arms and weapon | 1, 1 |

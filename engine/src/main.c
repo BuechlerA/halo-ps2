@@ -391,10 +391,10 @@ int main(int argc, char *argv[])
 		}
 		if (load_bsp(first_bsp)) return 1;
 	}
+	apply_options();   /* every config, with or without an object pack (ADR-059); `skyfog` reads s_world.sky, loaded with the obj pack above */
 	if (s_have_objects) {
 		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
 		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
-		apply_options();                                     /* sky-derived fog needs the sky data */
 		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
 	printf("[mem] level arena: %u KB used of %u KB\n", (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024));
