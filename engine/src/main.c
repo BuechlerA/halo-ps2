@@ -425,8 +425,8 @@ int main(int argc, char *argv[])
 			s_game.difficulty = (int)cfg_int(&s_cfg, "difficulty", 1);
 			s_game_on = 1;
 			checkpoint_save(&s_ckpt, &s_game, &s_fp, NULL);          /* the level-start checkpoint (fx are saved from the first Start press) */
-			printf("[game] fp: arms model %d graph %d anim %u, weapon model %d graph %d anim %u offset %u hand marker %d node %d\n", s_fp.arms_model, s_fp.arms_graph, s_fp.arms_anim,
-			       s_fp.weapon_model, s_fp.weapon_graph, s_fp.weapon_anim, s_fp.weapon_node_offset, s_fp.hand_marker, s_fp.hand_node);
+			printf("[game] fp: arms model %d graph %d anim %u, weapon model %d graph %d anim %u hand marker %d node %d\n", s_fp.arms_model, s_fp.arms_graph, s_fp.arms_anim,
+			       s_fp.weapon_model, s_fp.weapon_graph, s_fp.weapon_anim, s_fp.hand_marker, s_fp.hand_node);
 			{
 				int sl, k;
 				for (sl = 0; sl < GAME_SLOTS; sl++) {
@@ -566,6 +566,17 @@ int main(int argc, char *argv[])
 			}
 			sim_done:
 			game_camera(&s_game, &s_cam);
+			s_cam.near_z = CAMERA_NEAR_DEFAULT;
+			s_objr.hide_fp = 0;
+			if (mapp_active()) {                                  /* a script owns the camera (camera_control / camera_set): render its pose */
+				const cine_state *cs = mapp_mission()->cine;
+				if (cs && (cs->screen.cinematic || (cs->cam.control && cs->cam.mode != CINE_CAM_FIRST_PERSON))) s_objr.hide_fp = 1;
+				if (cs && cs->cam.control && cs->cam.mode == CINE_CAM_POSE) {
+					cine_pose cp = cine_cam_pose(&cs->cam);
+					cine_pose_to_camera(&cp, &s_cam);
+					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip;
+				}
+			}
 		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
 		else flycam_update(&s_cam, &in, (float)s_vblanks * VBLANK_S);
 

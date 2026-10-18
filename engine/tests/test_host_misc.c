@@ -175,9 +175,11 @@ static void test_camera(void)
 	CHECK(!X.cine.screen.skippable);
 	CALL1("cinematic_show_letterbox", HS_VOID, bv(0));
 	step(CINE_LETTERBOX_TICKS + 2);
-	CHECK(NEAR(X.cine.screen.letterbox, 0.0f, 1e-4f));
+	CHECK(NEAR(X.cine.screen.letterbox, 1.0f, 1e-4f));          /* cinematic mode keeps the bars by itself */
 	call("cinematic_stop", NULL, 0, HS_VOID);
 	CHECK(X.m.cinematic == 0 && !X.cine.screen.cinematic);
+	step(CINE_LETTERBOX_TICKS + 2);
+	CHECK(NEAR(X.cine.screen.letterbox, 0.0f, 1e-4f));
 
 	/* fades: colour and time are the arguments */
 	a[0] = rv(1.0f); a[1] = rv(0.0f); a[2] = rv(0.5f); a[3] = sv(30);

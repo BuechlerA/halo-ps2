@@ -273,7 +273,7 @@ int main(int argc, char **argv)
 	for (uint32_t i = 0; i < 14; i++) {
 		model_batch b = model_get_batch(&s, i);
 		CHECK(b.triangles == btris[i] && b.part == bpart[i] && b.palette_count == bpal[i]);
-		CHECK(b.vif_offset == vif_at && b.vif_offset % 16 == 0 && b.vif_qwords * 16 >= 4 + 32 + 3 * b.triangles * 20);
+		CHECK(b.vif_offset == vif_at && b.vif_offset % 16 == 0 && b.vif_qwords * 16u >= 4u + 32u + 3u * b.triangles * 20u);
 		vif_at += b.vif_qwords * 16;
 		for (uint32_t q = b.palette_count; q < MODEL_MAX_PALETTE; q++) CHECK(b.palette[q] == 0);
 		for (uint32_t q = 0; q < b.palette_count; q++)

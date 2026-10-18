@@ -133,7 +133,34 @@ void objects_tick(object_table_t *t, const object_world_t *w)
 	}
 }
 
-unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsigned anim, float frame, unsigned node_offset,
+/* model node -> graph node, by name; cached for the last pairs (first person, custom animations, units) */
+#define REMAP_CACHE 32
+typedef struct { int16_t model, graph; uint8_t used, identity; int8_t map[SKEL_MAX_NODES]; } node_remap;
+static node_remap s_remap[REMAP_CACHE];
+static unsigned   s_remap_next;
+
+static const node_remap *remap_for(const object_world_t *w, const model_info *mi, int model, int graph, unsigned n)
+{
+	unsigned k, matched = 0, named = 0;
+	node_remap *r;
+	anim_graph g;
+	for (k = 0; k < REMAP_CACHE; k++) if (s_remap[k].used && s_remap[k].model == model && s_remap[k].graph == graph) return &s_remap[k];
+	r = &s_remap[s_remap_next++ % REMAP_CACHE];
+	memset(r, 0, sizeof *r);
+	r->model = (int16_t)model; r->graph = (int16_t)graph; r->used = 1;
+	g = anim_get_graph(w->anims, (uint32_t)graph);
+	for (k = 0; k < g.node_count; k++) if (anim_node_name(w->anims, &g, k)[0]) named++;
+	for (k = 0; k < n; k++) {
+		model_node nd = model_get_node(w->models, mi, k);
+		int j = named ? anim_find_node(w->anims, &g, nd.name) : (k < g.node_count ? (int)k : -1);   /* unnamed graph: by index */
+		r->map[k] = (int8_t)j;
+		if (j == (int)k) matched++;
+	}
+	r->identity = (matched == n);
+	return r;
+}
+
+unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsigned anim, float frame,
                             const mat4 *root, object_nodes_t *out)
 {
 	model_info mi;
@@ -154,9 +181,13 @@ unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsig
 		anim_graph g = anim_get_graph(w->anims, (uint32_t)graph);
 		if (anim < g.anim_count) {
 			static anim_pose pose;                          /* ~2 KB; the tick/render path is single threaded */
+			const node_remap *rm = remap_for(w, &mi, model, graph, n);
 			anim_sample(w->anims, &g, anim, frame, &pose);
-			for (i = 0; i < n && node_offset + i < g.node_count; i++) {
-				const anim_xform *x = &pose.node[node_offset + i];
+			for (i = 0; i < n; i++) {
+				int j = rm->identity ? (int)i : rm->map[i];
+				const anim_xform *x;
+				if (j < 0 || (unsigned)j >= g.node_count) continue;
+				x = &pose.node[j];
 				memcpy(local[i].rot, x->rot, sizeof local[i].rot);
 				memcpy(local[i].trans, x->trans, sizeof local[i].trans);
 				local[i].scale = x->scale;
@@ -189,7 +220,7 @@ unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsig
 
 unsigned objects_pose(const object_t *o, const object_world_t *w, object_nodes_t *out)
 {
-	return objects_pose_model(w, o->model, o->graph, o->anim, o->frame, 0, &o->root, out);
+	return objects_pose_model(w, o->model, o->graph, o->anim, o->frame, &o->root, out);
 }
 
 unsigned objects_pose_static(const object_t *o, const object_world_t *w, object_nodes_t *out)

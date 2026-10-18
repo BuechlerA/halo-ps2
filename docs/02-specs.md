@@ -60,7 +60,7 @@ Campaign total **≈ 1.49 GiB** compressed. Measured with
 
 Of that tag data, 2.3–4.9 MiB per map is model vertex data (converted to VU1
 strips on PS2) and 5.9–11.0 MiB is tag structs
-([reports/tag-inventory.md](reports/tag-inventory.md)). Everything else in a
+([reports/tag-index.md](reports/tag-index.md)). Everything else in a
 cache file is raw data streamed by the Xbox engine: bitmap pixels, sound samples
 and the structure BSPs. Our resident budget (9 MB, below) covers both the
 structs and the converted models, i.e. ~55 % of the worst-case Xbox figure, so

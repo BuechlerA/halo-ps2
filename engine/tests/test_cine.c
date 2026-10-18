@@ -385,6 +385,9 @@ static int check_screen(void)
 	CHECK(s.screen.letterbox == 1.0f);
 	cine_letterbox(&s, 0);
 	for (i = 1; i <= CINE_LETTERBOX_TICKS; i++) cine_tick(&s);
+	CHECK(s.screen.letterbox == 1.0f);                               /* cinematic mode keeps the bars by itself */
+	cine_stop(&s);
+	for (i = 1; i <= CINE_LETTERBOX_TICKS; i++) cine_tick(&s);
 	CHECK(s.screen.letterbox == 0.0f);
 	cine_letterbox(&s, 1);
 	for (i = 1; i <= 5; i++) cine_tick(&s);

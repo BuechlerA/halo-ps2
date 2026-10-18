@@ -19,6 +19,7 @@ typedef struct {
 	float                 max_distance;  /* draw distance in world units at quality level 0 */
 	unsigned              max_batches;   /* per-frame cap */
 	int                   draw_objects, draw_fp;
+	int                   hide_fp;             /* this frame: a cinematic runs or a script camera renders (set by main) */
 	int                   sky_model;     /* MODL index of the sky model, -1 = none */
 	float                 sky_ms;        /* EE time of the sky pass */
 	/* statistics of the last pass, copied into render_stats by the caller */

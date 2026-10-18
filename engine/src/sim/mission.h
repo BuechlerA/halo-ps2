@@ -128,6 +128,9 @@ void mission_init(mission_t *m);
 /* Spawns the hidden player body object (needs a biped definition in SCEN: the player's) and keeps it at the player's position. */
 void mission_attach_player(mission_t *m);
 void mission_sync_player(mission_t *m);        /* call every tick before scripts run */
+/* Device objects show their device's position: the position overlay animation of the device graph at the frame
+ * devices_anim_frame gives (docs/27). Called by mission_tick after devices_tick. */
+void mission_sync_devices(mission_t *m);
 
 /* ---- object lists ---- */
 mission_list *mission_list_new(mission_t *m, uint32_t *handle_out);   /* a cleared list from the ring */

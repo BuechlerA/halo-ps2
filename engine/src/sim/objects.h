@@ -19,6 +19,7 @@
 #define OBJ_F_INACTIVE 4u       /* lies in a BSP that is not loaded: kept, frozen, not drawn */
 #define OBJ_F_FREE 8u           /* unused slot (destroyed object), reused by the next spawn */
 #define OBJ_F_HIDDEN 16u        /* exists but is not drawn (scripts hide objects) */
+#define OBJ_F_POSED 32u         /* drawn at anim/frame but the frame is set by its owner (devices), not advanced by objects_tick */
 
 typedef struct {
 	int16_t  def;                         /* scen definition */
@@ -72,9 +73,9 @@ void objects_tick(object_table_t *t, const object_world_t *w);
 typedef struct { mat4 world[SKEL_MAX_NODES]; mat4 skin[SKEL_MAX_NODES]; unsigned count; } object_nodes_t;
 unsigned objects_pose(const object_t *o, const object_world_t *w, object_nodes_t *out);
 /* Same for an arbitrary model/animation with an explicit root (first-person arms, weapons). */
-/* `node_offset`: the model's node i is driven by graph node node_offset + i (first-person weapons share the arms'
- * 42-node graph: arms 0..36, weapon 37..41). */
-unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsigned anim, float frame, unsigned node_offset,
+/* Model node i is driven by the graph node of the same NAME (ANIM v2 names); a model whose node order equals the
+ * graph's maps 1:1, a node the graph does not name keeps its bind pose. The map is cached per (model, graph). */
+unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsigned anim, float frame,
                             const mat4 *root, object_nodes_t *out);
 /* Fast path for objects that are not animated: every skinning matrix is the placement matrix (bind pose x root);
  * out->world is NOT filled. Returns the node count. */

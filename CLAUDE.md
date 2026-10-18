@@ -17,6 +17,8 @@ order (01 → 06) before changing architecture; `docs/06-decisions.md` is the AD
 - Phase 4 mission: `build-world.sh` also writes `.script .ai .path .dev .cin .strm .hp2` (strm is ~120 MB per map); `scripts/paths/a10mission.cfg` is the Gate M4 run (`mission 1`, `bot 1`: the in-engine
   mission bot, ADR-054; `exitonend 1` stops at game_won/lost; `SPEED=n scripts/run-headless.sh ...` speeds PCSX2 up for development only, timings then mean nothing; `threaddump 1` lists what scripts wait on).
   Reports must state the bot's assists (teleports) and what it does not cover.
+- Xbox reference: `scripts/xemu-setup.sh` then `scripts/xemu-run.sh` boot the ISO in xemu for parity checks (`docs/35-xbox-reference.md`, ADR-055); the
+  MCPX/BIOS/HDD files are user-supplied (`~/Developer/xbox-bios/`) and never committed.
 - Game data lives only in `assets/` and `*.iso` (both gitignored). Never commit it,
   never copy tag data into docs or tests.
 
