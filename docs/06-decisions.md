@@ -523,5 +523,17 @@ the tracker top right and everything flush with the screen edges; a gameplay fra
 in their bottom-left corner. **Consequences**: HUD packs must be rebuilt (`hudconv.py` per map, 0.3 s each; the reader rejects version 1); the velocity-sensitivity rule
 (still enemies hidden) and blip fading are not modelled; `motion scale` is exported but the radar radius comes from the centre offset. Details: docs/20-hud-section.md.
 
+## ADR-061 Falling out of the world kills the player; the bot holds floorless hops and is rescued; the world is not drawn around a void camera
+**Decision**: (1) `main.c` kills an airborne player who is more than 30 wu below the loaded BSP's lowest vertex (`FALL_KILL_MARGIN`); the existing death path reverts to the last checkpoint after 3 s.
+(2) While the player is airborne with no floor within 80 wu below, a camera that lies in no BSP cluster draws no world (`bsp_render_set_void_view`, `vis_t.skip_outside`); the free camera (no game) still draws every cluster in view.
+(3) The mission bot's assisted hop onto a volume with no floor under it (volumes of the next BSP lie in its space, beyond the loaded BSP's collision) holds the player there for 20 ticks so the scripts can poll the volume,
+then puts the player back on the last standing position (`rescues`, counted as assists); a volume that three hops in a row do not satisfy is set aside for 60 s; three awaited volumes in a row that are off the navigation mesh
+make the bot hop onto the current one; the ignore list holds 16 volumes and the shun list 12 hostiles (4 slots were overwritten before they expired). **Why**: the a10 mission run (2026-10-18) spent about 100 s of
+its 750 s with the player falling forever after a hop onto such a volume (BSP 0's floor ends at x = -33.1, volume 91 lies at x = -29.4): the renderer found no cluster and drew every cluster in view (up to 55k triangles,
+2441 batches, EE 35-50 ms), 1635 of 20749 frames (7.88 %) were late, and the scripts only advanced because the falling player happened to cross the next volumes. **Consequences**: the same run now
+wins at 773 s with 60 assists (24 of them rescues), no fall, no void frame, 712 of 24256 frames late (2.94 %); a human who clips out of the map dies instead of falling for ever. The remaining late frames are real scene load, not
+the bot: the BSP 6 finale (EE 29-52 ms, 173 consecutive frames) and the crowd scenes of BSP 0 / 8 (EE 16.5 ms but the GS finishes late: 21k object triangles, 964 batches). Diagnostics added: `[bot]` lines for every assist
+and rescue (target, floor below, awaited volumes), `prof2 1` (EE prep split into sim / object animation / render build per 60 frames), unit body integrations and airborne units in the mission status line.
+
 ## Open decisions
 None.

@@ -848,6 +848,9 @@ static int no_sweep(void *u, const float a[3], const float b[3], float r, phys_h
 static const phys_world k_empty_world = { NULL, no_ray, no_sweep, NULL };
 
 /* the physics step of a living or dying body: turn towards the aim, then player_tick with the throttle as a stick */
+static unsigned s_sweeps;                                           /* player_tick calls since the last units_take_sweeps (diagnostics) */
+unsigned units_take_sweeps(void) { unsigned n = s_sweeps; s_sweeps = 0; return n; }
+
 static void step_body(unit_t *u, const game_t *g, int turn, float throttle_scale, int mul, float *turn_left)
 {
 	player_cmd_t cmd;
@@ -875,6 +878,7 @@ static void step_body(unit_t *u, const game_t *g, int turn, float throttle_scale
 	if (mul == 0) return;                                                 /* distance LOD: the other tick of the pair */
 	u->settle = 0;
 	u->body.landed_speed = 0.0f;
+	s_sweeps++;
 	player_tick(&u->body, &u->pp, (g->has_phys && g->phys.sweep) ? &g->phys : &k_empty_world, &cmd, DT * (float)mul);
 }
 

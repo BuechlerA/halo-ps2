@@ -198,8 +198,15 @@ void mapp_tick(const game_input_t *in)
 
 void mapp_log_status(void)
 {
-	unsigned i, alive = 0;
-	for (i = 0; i < s_units.count; i++) if (s_units.u[i].active && units_alive(&s_units, s_env.game, (int)i)) alive++;
+	unsigned i, alive = 0, airborne = 0;
+	float low = 1e30f;
+	for (i = 0; i < s_units.count; i++) {
+		if (!s_units.u[i].active || !units_alive(&s_units, s_env.game, (int)i)) continue;
+		alive++;
+		if (!s_units.u[i].body.on_ground) { airborne++; if (s_units.u[i].body.pos[2] < low) low = s_units.u[i].body.pos[2]; }
+	}
+	{ unsigned sw = units_take_sweeps(); printf("[mission] unit body integrations %.1f per tick over the last status interval (%u live units)\n", (double)sw / 300.0, alive); }
+	if (airborne) printf("[mission] %u of %u live units are airborne, lowest z %.1f\n", airborne, alive, (double)low);
 	if (s_bot.has_goal) printf("[bot] goal kind %d id %u at %.1f %.1f %.1f (%.1f away), route status %d start %d goal %d, %d waypoints, stuck %u unreach %u\n", s_bot.goal_kind, (unsigned)s_bot.goal_id, s_bot.goal[0], s_bot.goal[1], s_bot.goal[2], (double)sqrtf((s_bot.goal[0] - s_env.game->player.pos[0]) * (s_bot.goal[0] - s_env.game->player.pos[0]) + (s_bot.goal[1] - s_env.game->player.pos[1]) * (s_bot.goal[1] - s_env.game->player.pos[1])), s_bot.route_status, s_bot.route_start, s_bot.route_goal, s_bot.wp_n, (unsigned)s_bot.stuck_ticks, (unsigned)s_bot.unreach_ticks);
 	if (s_bot.target_unit >= 0) { const unit_t *tu = &s_units.u[s_bot.target_unit]; const game_unit_t *gu = &s_env.game->unit_state[tu->obj]; printf("[bot] engaging unit %d obj %d team %d biped %d at %.1f %.1f %.1f hp %.1f/%.1f dead %d\n", s_bot.target_unit, (int)tu->obj, (int)tu->team, (int)tu->biped, tu->body.pos[0], tu->body.pos[1], tu->body.pos[2], gu->vitals.health, gu->vitals.shield, gu->dead); }
 	if (s_m.clock && s_m.zone_n) {
@@ -209,9 +216,9 @@ void mapp_log_status(void)
 		printf("\n");
 		s_m.zone_n = 0;
 	}
-	printf("[mission] t=%us bsp %d pos %.1f %.1f %.1f hp %.0f/%.0f units %u alive %u threads %u won %d lost %d cin %d bot: goal %d assists %u replans %u enemies %u\n", s_m.tick / 30, s_m.cur_bsp,
+	printf("[mission] t=%us bsp %d pos %.1f %.1f %.1f hp %.0f/%.0f units %u alive %u threads %u won %d lost %d cin %d bot: goal %d assists %u (rescues %u) replans %u enemies %u\n", s_m.tick / 30, s_m.cur_bsp,
 	       s_env.game->player.pos[0], s_env.game->player.pos[1], s_env.game->player.pos[2], s_env.game->vitals.health, s_env.game->vitals.shield, s_units.count, alive,
-	       (unsigned)hs_thread_count(&s_hs), s_m.won, s_m.lost, (int)s_m.cinematic, s_bot.goal_kind, s_bot.assists, s_bot.replans, s_bot.enemies_seen);
+	       (unsigned)hs_thread_count(&s_hs), s_m.won, s_m.lost, (int)s_m.cinematic, s_bot.goal_kind, s_bot.assists, s_bot.rescues, s_bot.replans, s_bot.enemies_seen);
 }
 
 void mapp_checkpoint_save(void) { if (s_active) msave_save(&s_ck, &s_m, s_env.fx && s_env.fx->def ? s_env.fx : NULL); }

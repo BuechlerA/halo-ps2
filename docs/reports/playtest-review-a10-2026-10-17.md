@@ -125,3 +125,19 @@ New findings from the fixed intro (compare `frames/intro2`, `frames/cryo` with t
 * **F12. Text and pacing.** The objective text is drawn twice at mission start (help and objective kinds hold the same string). The player starts the cryo bay holding a rifle; whether the Xbox start is unarmed is to be checked against the reference. The four-minute intro run drops 6.8 % of frames (BSP switches and the 50-unit hangar scene), so Gate M4's timing is still open.
 
 Reference capture recipe (macOS): bind the keyboard in the xemu config, send key codes with System Events (Return = Start, arrows = D-pad; character keystrokes do not reach SDL), find the window id with `CGWindowListCopyWindowInfo` and capture it with `screencapture -l <id>` even while another window covers it. A save state at the cryo bay would remove the menu crawl next time.
+
+## 5. Gate M4 run, 2026-10-18: the bot leaving the world and the frame budget (ADR-061)
+
+`a10mission` under the bot on the recompiler: 20749 frames, 1635 late (7.88 %), 31 assists, `game_won` at 691 s. The log showed the player at z = -38.7, -16, -15 for about 100 s and frame dumps of a flat blue void.
+
+| Question | Finding |
+|---|---|
+| Why does the player leave the world | the bot's "goal unreachable" hop teleports onto the awaited volume's centre; the volumes of the next BSP lie in its space, beyond BSP 0's floor (probe of `COL0`: floor to x = -33.1, `COL1` has floor at x = -29.4). Nothing held the player, so it fell for ever |
+| Why did the mission still win | the script chain 91 -> 25 -> 28 -> 30 -> 122 -> `switch_bsp 1` advanced because the falling player crossed the volumes. With a plain "rescue" the chain stalled: scripts poll their volumes, so the bot must stay inside for a few ticks |
+| Why the frame budget blew out | a camera in no BSP cluster draws every cluster in the frustum: 25-55k triangles, 1000-2400 batches, EE 35-50 ms. About 1450 of the 1635 late frames fell in the 14400-19800 frame windows where the player was out of the world |
+| Why the bot stalled once rescued | the ignore list had 4 slots and was overwritten by the dozen awaited volumes before it expired; off-mesh volumes were only ever ignored, never visited |
+| In-world cost, BSP 1 cutscenes | sim 8-11 ms (`units` 5 ms; 28-38 of 45 live units report `on_ground` 0 at floor height, cause not investigated) + build 12-18 ms (EE clip budget 6 ms, object pass 3-9 ms) |
+
+After the fixes (same config): 24256 frames, 712 late (2.94 %), `game_won` at 773 s, 60 assists of which 24 rescues, no fall, `a10game` 2 of 1081 late. Still open: the BSP 6 finale cutscene (frames 21975-22147, 173 late frames in a row, EE 29-52 ms:
+sim 11-17 ms plus build 15-28 ms with the object pass at its 900-batch cap) and the crowd scenes of BSP 0 / 8 (EE 16.5 ms, GS late: 21k object triangles, 964 batches, `lod=4`). The bot still takes 60 assists, so Gate M4's timing claim stays "script, AI and device
+control under a bot, not a human run".

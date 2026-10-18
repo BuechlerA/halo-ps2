@@ -129,6 +129,8 @@ int  units_apply_variant(units_t *s, game_t *g, int unit, const aidef_variant_de
  * game_fire_projectile, update animation (object anim/frame), handle death (death animation, weapon drop), flinch on damage.
  * Call it BEFORE game_tick (the hit events of the previous game tick give the direction of a hit) and keep objects_tick after it. */
 void units_tick(units_t *s, game_t *g);
+/* Body integrations (capsule sweeps) run by units_tick since the last call; resets the count. For the mission log. */
+unsigned units_take_sweeps(void);
 void units_set_control(units_t *s, int unit, const unit_control_t *c);
 /* Kills / damages through the game's vitals so the usual events fire; returns damage dealt. */
 float units_damage(units_t *s, game_t *g, int unit, float amount);

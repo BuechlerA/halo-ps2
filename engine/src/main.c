@@ -134,6 +134,8 @@ static void apply_options(void)
 	bsp_render_set_options(&o);
 }
 
+#define FALL_KILL_MARGIN 30.0f      /* wu below the BSP's lowest vertex at which an airborne player counts as out of the world */
+
 static void setup_camera(void)
 {
 	float f[5];
@@ -480,7 +482,7 @@ int main(int argc, char *argv[])
 
 	limit = (u32)cfg_int(&s_cfg, "frames", 0);
 	for (;;) {
-		u32 t0 = timer_cycles(), t1, t2;
+		u32 t0 = timer_cycles(), t1, t2, tsim, tobj;
 		fly_input in;
 		unsigned down = pad_poll(&in);
 
@@ -497,6 +499,11 @@ int main(int argc, char *argv[])
 				if ((gin.pressed & IN_REVERT) || s_game.dead_ticks > 90) {
 					if (s_game.dead_ticks > 90) printf("[game] dead for 3 s at %.1f %.1f %.1f (bsp %d, hp %.0f/%.0f): reverting\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_game.vitals.health, (double)s_game.vitals.shield);
 					if (do_revert()) { gin.held = gin.pressed = 0; } else s_game.dead_ticks = 0;
+				}
+				if (!vitals_dead(&s_game.vitals) && !s_game.player.on_ground && s_game.player.pos[2] < s_world.bsp.bounds[2] - FALL_KILL_MARGIN) {
+					/* out of the world (ADR-061): the loaded BSP has no floor down here, and with no cluster around the camera the renderer draws everything in view */
+					printf("[game] fell out of the world at %.1f %.1f %.1f (bsp %d, floor of the map %.1f): killed\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_world.bsp.bounds[2]);
+					vitals_damage(&s_game.vitals, 1.0e6f, 1.0f, 1.0f, 1.0f);
 				}
 				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
 				if (mapp_active()) { mapp_tick(&gin); serve_mission(); } else game_tick(&s_game, &gin);
@@ -580,6 +587,7 @@ int main(int argc, char *argv[])
 		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
 		else flycam_update(&s_cam, &in, (float)s_vblanks * VBLANK_S);
 
+		tsim = timer_cycles();
 		if (s_have_objects) {
 			if ((s_vblanks == 2 || (frame & 1) == 0) && !s_paused) {         /* the 30 Hz tick: every frame at 30 fps, every other at 60 */
 				objects_tick(&s_objects, &s_objr.world);
@@ -587,9 +595,27 @@ int main(int argc, char *argv[])
 			}
 			fpview_place(&s_fp, &s_objr.world, &s_cam);
 		}
+		tobj = timer_cycles();
 		if ((frame % 6) == 0) profiler_overlay(&s_prof, &s_text);   /* a few updates a second: float formatting is slow */
+		{                                                  /* the player is in the air with no floor under them: out of the world, draw no world around that camera (ADR-061) */
+			int in_void = 0;
+			if (s_game_on && !s_game.player.on_ground && s_game.has_phys) {
+				phys_hit ph;
+				float dn[3] = { s_game.player.pos[0], s_game.player.pos[1], s_game.player.pos[2] - 80.0f };
+				in_void = !s_game.phys.ray(s_game.phys.user, s_game.player.pos, dn, &ph);
+			}
+			bsp_render_set_void_view(in_void);
+		}
 		bsp_render_build(frame, &s_cam, &s_text);          /* overlaps the GS drawing frame-1 */
 		t1 = timer_cycles();
+		{                                                  /* `prof2 1`: where the EE prep time goes (sim tick / object animation / render build), averaged per 60 frames */
+			static float acc[3]; static unsigned n; static int on = -1;
+			if (on < 0) on = (int)cfg_int(&s_cfg, "prof2", 0);
+			if (on) {
+				acc[0] += timer_ms(t0, tsim); acc[1] += timer_ms(tsim, tobj); acc[2] += timer_ms(tobj, t1);
+				if (++n == 60) { printf("[prof2] frame %u sim %.2f objects %.2f build %.2f ms\n", (unsigned)frame, acc[0] / 60.0f, acc[1] / 60.0f, acc[2] / 60.0f); acc[0] = acc[1] = acc[2] = 0.0f; n = 0; }
+			}
+		}
 		if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }      /* FINISH seen: burning vsyncs below clears the flag */
 		s_gpu_idle = 0;
 		{
