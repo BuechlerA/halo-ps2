@@ -125,3 +125,32 @@ New findings from the fixed intro (compare `frames/intro2`, `frames/cryo` with t
 * **F12. Text and pacing.** The objective text is drawn twice at mission start (help and objective kinds hold the same string). The player starts the cryo bay holding a rifle; whether the Xbox start is unarmed is to be checked against the reference. The four-minute intro run drops 6.8 % of frames (BSP switches and the 50-unit hangar scene), so Gate M4's timing is still open.
 
 Reference capture recipe (macOS): bind the keyboard in the xemu config, send key codes with System Events (Return = Start, arrows = D-pad; character keystrokes do not reach SDL), find the window id with `CGWindowListCopyWindowInfo` and capture it with `screencapture -l <id>` even while another window covers it. A save state at the cryo bay would remove the menu crawl next time.
+
+## 5. Gate M4 run, 2026-10-18: the bot leaving the world and the frame budget (ADR-062)
+
+`a10mission` under the bot on the recompiler: 20749 frames, 1635 late (7.88 %), 31 assists, `game_won` at 691 s. The log showed the player at z = -38.7, -16, -15 for about 100 s and frame dumps of a flat blue void.
+
+| Question | Finding |
+|---|---|
+| Why does the player leave the world | the bot's "goal unreachable" hop teleports onto the awaited volume's centre; the volumes of the next BSP lie in its space, beyond BSP 0's floor (probe of `COL0`: floor to x = -33.1, `COL1` has floor at x = -29.4). Nothing held the player, so it fell for ever |
+| Why did the mission still win | the script chain 91 -> 25 -> 28 -> 30 -> 122 -> `switch_bsp 1` advanced because the falling player crossed the volumes. With a plain "rescue" the chain stalled: scripts poll their volumes, so the bot must stay inside for a few ticks |
+| Why the frame budget blew out | a camera in no BSP cluster draws every cluster in the frustum: 25-55k triangles, 1000-2400 batches, EE 35-50 ms. About 1450 of the 1635 late frames fell in the 14400-19800 frame windows where the player was out of the world |
+| Why the bot stalled once rescued | the ignore list had 4 slots and was overwritten by the dozen awaited volumes before it expired; off-mesh volumes were only ever ignored, never visited |
+| In-world cost, BSP 1 cutscenes | sim 8-11 ms (`units` 5 ms; 28-38 of 45 live units report `on_ground` 0 at floor height, cause not investigated) + build 12-18 ms (EE clip budget 6 ms, object pass 3-9 ms) |
+
+After the fixes (same config): 24256 frames, 712 late (2.94 %), `game_won` at 773 s, 60 assists of which 24 rescues, no fall, `a10game` 2 of 1081 late. Still open: the BSP 6 finale cutscene (frames 21975-22147, 173 late frames in a row, EE 29-52 ms:
+sim 11-17 ms plus build 15-28 ms with the object pass at its 900-batch cap) and the crowd scenes of BSP 0 / 8 (EE 16.5 ms, GS late: 21k object triangles, 964 batches, `lod=4`). The bot still takes 60 assists, so Gate M4's timing claim stays "script, AI and device
+control under a bot, not a human run".
+
+### 5.1 The remaining late frames, measured (ADR-063)
+
+| Question | Finding |
+|---|---|
+| Why the crowd scenes of BSP 0 / 8 were late | not the GS: EE 16.6 ms, GPU wait 0.0, vsync burn 16.8, present 16.7. The burn loop pumped the stream after deciding which vsync to wait for; a frame whose EE work ended within a pump of the vblank missed it and landed 3 vblanks out. Fixed in `main.c`; about 470 of the 703 late frames were this |
+| Why the BSP 6 finale is EE-bound | sim 11-17 ms: `units` 5 ms (18 body integrations per tick), `ai` 1.5, `post` 1.2, `dev` 1.2, `stream` 1.4, `game` 1.1; build 15-28 ms: world 15k tris plus objects 20k tris at the 900-batch cap, every visible object posed before the cap dropped it |
+| What carried units cost | 29-38 of 42 units in the cryo bay and the dropship scenes reported `on_ground` 0: `unit_suspended` and `objects_attach` re-teleported them every tick (`units_teleport` clears `on_ground`), so each swept its capsule for nothing. `units_pin` fixes it (BSP 0 cryo `units` 0.5 -> 0.01 ms, BSP 6 `units` 3.4 -> 2.4 ms) |
+| Devices | `mission_sync_devices` decoded every device record each tick: 1.17 -> 0.50 ms per tick |
+| Result (same config, normal speed, recompiler) | 90 of 24256 late (0.37 %, was 703 = 2.90 %); `game_won` at tick 23210, 60 assists (24 rescues), identical to the run before; `a10game` 0 of 1081 |
+| Still late | finale 60 frames (EE 34-41 ms), BSP 6 load 14, one stall per BSP switch; `cinelod 1` / `unitlod 20` would cut the finale further but send the bot down a different route (73-89 assists), so they stay off |
+
+Not covered: the bot's assists are unchanged (60); a human run was not measured; real-console GS cost is still unmeasured (ADR-022).

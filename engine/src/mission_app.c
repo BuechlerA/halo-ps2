@@ -148,6 +148,8 @@ int mapp_init(const mapp_env *env)
 	if (hs_init(&s_hs, &gd->script, &s_m) != HS_OK) { printf("[mission] hs_init failed\n"); return -1; }
 	s_use_bot = (int)cfg_int(env->cfg, "bot", 0);
 	s_m.log = (int)cfg_int(env->cfg, "missionlog", 0);
+	s_units.lod_distance = (float)cfg_int(env->cfg, "unitlod", 0);    /* ADR-063 option, off by default (it changes the simulation): bodies farther than this (wu) from the player integrate every other tick */
+	s_units.lod_cine = (uint8_t)cfg_int(env->cfg, "cinelod", 0);    /* ADR-063 option, off by default: bodies integrate every other tick during a cinematic */
 	if (s_m.log) { s_m.clock = clock_now; s_m.clock_ms = clock_ms; }
 	if (s_use_bot) bot_init(&s_bot);
 	ai_place_all_initial(&s_ai);
@@ -198,8 +200,30 @@ void mapp_tick(const game_input_t *in)
 
 void mapp_log_status(void)
 {
-	unsigned i, alive = 0;
-	for (i = 0; i < s_units.count; i++) if (s_units.u[i].active && units_alive(&s_units, s_env.game, (int)i)) alive++;
+	unsigned i, alive = 0, airborne = 0;
+	float low = 1e30f;
+	for (i = 0; i < s_units.count; i++) {
+		if (!s_units.u[i].active || !units_alive(&s_units, s_env.game, (int)i)) continue;
+		alive++;
+		if (!s_units.u[i].body.on_ground) { airborne++; if (s_units.u[i].body.pos[2] < low) low = s_units.u[i].body.pos[2]; }
+	}
+	{ unsigned sw = units_take_sweeps(); printf("[mission] unit body integrations %.1f per tick over the last status interval (%u live units)\n", (double)sw / 300.0, alive); }
+	if (airborne) printf("[mission] %u of %u live units are airborne, lowest z %.1f\n", airborne, alive, (double)low);
+	if (airborne && cfg_int(s_env.cfg, "airlog", 0)) {                   /* which units never settle, and why */
+		unsigned shown = 0;
+		for (i = s_units.count; i-- > 0 && shown < 10;) {
+			const unit_t *u = &s_units.u[i];
+			phys_hit ph;
+			float dn[3];
+			int fl;
+			if (!u->active || !units_alive(&s_units, s_env.game, (int)i) || u->body.on_ground) continue;
+			dn[0] = u->body.pos[0]; dn[1] = u->body.pos[1]; dn[2] = u->body.pos[2] - 40.0f;
+			fl = s_env.game->has_phys && s_env.game->phys.ray ? s_env.game->phys.ray(s_env.game->phys.user, u->body.pos, dn, &ph) : -1;
+			printf("[air] unit %u obj %d biped %d team %d flags %x action %d air %u settle %u pos %.2f %.2f %.2f vel %.3f %.3f %.3f ray %d\n", i, (int)u->obj, (int)u->biped, (int)u->team, (unsigned)u->flags, (int)u->action,
+			       (unsigned)u->air, (unsigned)u->settle, (double)u->body.pos[0], (double)u->body.pos[1], (double)u->body.pos[2], (double)u->body.vel[0], (double)u->body.vel[1], (double)u->body.vel[2], fl);
+			shown++;
+		}
+	}
 	if (s_bot.has_goal) printf("[bot] goal kind %d id %u at %.1f %.1f %.1f (%.1f away), route status %d start %d goal %d, %d waypoints, stuck %u unreach %u\n", s_bot.goal_kind, (unsigned)s_bot.goal_id, s_bot.goal[0], s_bot.goal[1], s_bot.goal[2], (double)sqrtf((s_bot.goal[0] - s_env.game->player.pos[0]) * (s_bot.goal[0] - s_env.game->player.pos[0]) + (s_bot.goal[1] - s_env.game->player.pos[1]) * (s_bot.goal[1] - s_env.game->player.pos[1])), s_bot.route_status, s_bot.route_start, s_bot.route_goal, s_bot.wp_n, (unsigned)s_bot.stuck_ticks, (unsigned)s_bot.unreach_ticks);
 	if (s_bot.target_unit >= 0) { const unit_t *tu = &s_units.u[s_bot.target_unit]; const game_unit_t *gu = &s_env.game->unit_state[tu->obj]; printf("[bot] engaging unit %d obj %d team %d biped %d at %.1f %.1f %.1f hp %.1f/%.1f dead %d\n", s_bot.target_unit, (int)tu->obj, (int)tu->team, (int)tu->biped, tu->body.pos[0], tu->body.pos[1], tu->body.pos[2], gu->vitals.health, gu->vitals.shield, gu->dead); }
 	if (s_m.clock && s_m.zone_n) {
@@ -209,9 +233,9 @@ void mapp_log_status(void)
 		printf("\n");
 		s_m.zone_n = 0;
 	}
-	printf("[mission] t=%us bsp %d pos %.1f %.1f %.1f hp %.0f/%.0f units %u alive %u threads %u won %d lost %d cin %d bot: goal %d assists %u replans %u enemies %u\n", s_m.tick / 30, s_m.cur_bsp,
+	printf("[mission] t=%us bsp %d pos %.1f %.1f %.1f hp %.0f/%.0f units %u alive %u threads %u won %d lost %d cin %d bot: goal %d assists %u (rescues %u) replans %u enemies %u\n", s_m.tick / 30, s_m.cur_bsp,
 	       s_env.game->player.pos[0], s_env.game->player.pos[1], s_env.game->player.pos[2], s_env.game->vitals.health, s_env.game->vitals.shield, s_units.count, alive,
-	       (unsigned)hs_thread_count(&s_hs), s_m.won, s_m.lost, (int)s_m.cinematic, s_bot.goal_kind, s_bot.assists, s_bot.replans, s_bot.enemies_seen);
+	       (unsigned)hs_thread_count(&s_hs), s_m.won, s_m.lost, (int)s_m.cinematic, s_bot.goal_kind, s_bot.assists, s_bot.rescues, s_bot.replans, s_bot.enemies_seen);
 }
 
 void mapp_checkpoint_save(void) { if (s_active) msave_save(&s_ck, &s_m, s_env.fx && s_env.fx->def ? s_env.fx : NULL); }

@@ -152,6 +152,8 @@ void bsp_render_options(render_options_t *o)
 }
 
 void bsp_render_set_options(const render_options_t *o) { s_opt = *o; }
+static int s_void_view;
+void bsp_render_set_void_view(int on) { s_void_view = on; }
 
 int bsp_render_init(const video_t *v)
 {
@@ -557,6 +559,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		s_horizon_y = hy < 0.0f ? 0 : hy > (float)VIDEO_HEIGHT ? VIDEO_HEIGHT : (int)hy;
 	}
 	s_vis.force_all = (s_opt.debug & 64) != 0;
+	s_vis.skip_outside = s_void_view;
 	vis_run(&s_vis, s_bsp, cam, &fr, clip);
 	if (s_opt.only_batch >= 0) {
 		u32 k, keep = 0, n = s_vis.batch_count;

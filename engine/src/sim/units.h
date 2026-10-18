@@ -109,6 +109,8 @@ typedef struct {
 	unsigned count;                          /* high-water mark of u[] */
 	uint32_t spawned, died;                  /* statistics */
 	float    lod_distance;                   /* wu from the player beyond which a unit's body is integrated every other tick (0 = never; set by the host) */
+	uint8_t  lod_cine;                       /* host: allow lod_all during cinematics (the mission sets lod_all from the cinematic flag) */
+	uint8_t  lod_all;                        /* every unit's body is integrated every other tick (a cinematic: the mission sets it from the cinematic flag) */
 	unsigned ev_count;                       /* events of the last units_tick (dropped beyond UNIT_EVENTS) */
 	unit_event_t ev[UNIT_EVENTS];
 } units_t;
@@ -129,6 +131,8 @@ int  units_apply_variant(units_t *s, game_t *g, int unit, const aidef_variant_de
  * game_fire_projectile, update animation (object anim/frame), handle death (death animation, weapon drop), flinch on damage.
  * Call it BEFORE game_tick (the hit events of the previous game tick give the direction of a hit) and keep objects_tick after it. */
 void units_tick(units_t *s, game_t *g);
+/* Body integrations (capsule sweeps) run by units_tick since the last call; resets the count. For the mission log. */
+unsigned units_take_sweeps(void);
 void units_set_control(units_t *s, int unit, const unit_control_t *c);
 /* Kills / damages through the game's vitals so the usual events fire; returns damage dealt. */
 float units_damage(units_t *s, game_t *g, int unit, float amount);
@@ -136,6 +140,9 @@ void  units_kill(units_t *s, game_t *g, int unit, int silent);
 int   units_alive(const units_t *s, const game_t *g, int unit);
 /* Teleports a unit (and its object) without physics. */
 void units_teleport(units_t *s, game_t *g, int unit, const float pos[3], float yaw);
+/* Holds a unit at `pos` every tick (a script's unit_suspended, an object carried by an attachment): like units_teleport but it keeps the unit on the ground and its settle count, so the body
+ * is not swept every tick; call it every tick. */
+void units_pin(units_t *s, game_t *g, int unit, const float pos[3], float yaw);
 /* Gives a weapon (tag id) to a unit; resets the weapon state. */
 void units_give_weapon(units_t *s, game_t *g, int unit, uint32_t weapon_tag);
 /* Eye / aim origin of a unit and its current aim direction. */
