@@ -87,7 +87,7 @@ Known limitations carried out of Phase 1 (none blocks the gate, each is a measur
   overall look, pad behaviour (Phase 6).
 
 **Gate M1**: noclip fly-through of **a30 and b40** at 30 fps (earlier measured at 60) with < 1 % dropped frames; memory report under
-budget. **Met on the PCSX2 interpreter** (0 dropped on a30, b40 and a10 in recompiler and interpreter modes at 30 fps and at 60 fps, final tree 2026-10-16; EE build ≤ 9.2 ms; level arena ≤ 4.2 MB); console verification in Phase 6.
+budget. **Met on the PCSX2 interpreter** (0 dropped on a30, b40 and a10 in recompiler and interpreter modes at 30 fps and at 60 fps, final tree 2026-10-16; EE build ≤ 9.2 ms; level arena ≤ 4.2 MB); console verification in Phase 6. Re-measured 2026-10-18 on the recompiler with the configs' fog and sky keys applied for the first time (ADR-059): still 0 dropped on all three, EE prep peak ≤ 9.7 ms, level arena ≤ 4.4 MB; the pre-fix ELF of the same tree gives the same numbers, so the rise since 2026-10-16 comes from later engine changes, not from fog.
 
 ## Phase 2 — Objects, animation, first person (≈ 4 pm) — done (PCSX2 gate)
 - [x] Converter: `model` → VU1 batches (≤24 tris, ≤24 palette nodes, 2 influences, LOD chain) (`modelconv.py`, docs/11); `OTEX` textures
