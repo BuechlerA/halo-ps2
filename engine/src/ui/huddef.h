@@ -27,12 +27,16 @@ typedef enum { HUDDEF_OK = 0, HUDDEF_ERR_TRUNCATED, HUDDEF_ERR_MAGIC, HUDDEF_ERR
 
 /* hud kind */
 enum { HUDDEF_UNIT = 0, HUDDEF_WEAPON, HUDDEF_GRENADE };
-/* anchors: the point of the virtual screen an element's matching corner (centre for HUDDEF_A_C) is placed at */
+/* anchors: the corner of the title-safe frame (48 / 36 px in from the screen edges) or the screen centre an element's matching
+ * corner (centre for HUDDEF_A_C) is placed at; positions arrive resolved, the converter did the maths (docs/20) */
 enum { HUDDEF_A_TL = 0, HUDDEF_A_TR, HUDDEF_A_BL, HUDDEF_A_BR, HUDDEF_A_C };
+#define HUDDEF_SAFE_X 48
+#define HUDDEF_SAFE_Y 36
 /* element roles */
 enum {
 	HUDDEF_R_NONE = 0, HUDDEF_R_HUD_BG, HUDDEF_R_SHIELD_BG, HUDDEF_R_HEALTH_BG, HUDDEF_R_MOTION_BG, HUDDEF_R_MOTION_FG,
-	HUDDEF_R_MOTION_CENTER, HUDDEF_R_AUX_BG, HUDDEF_R_STATIC, HUDDEF_R_OVERLAY, HUDDEF_R_CROSSHAIR,
+	HUDDEF_R_MOTION_CENTER,          /* no sprite: x, y = the radar centre on screen; off_x = the radar radius in pixels (docs/20) */
+	HUDDEF_R_AUX_BG, HUDDEF_R_STATIC, HUDDEF_R_OVERLAY, HUDDEF_R_CROSSHAIR,
 	HUDDEF_R_GRENADE_BG, HUDDEF_R_GRENADE_COUNT_BG, HUDDEF_R_GRENADE_OVERLAY
 };
 enum { HUDDEF_M_SHIELD = 1, HUDDEF_M_HEALTH, HUDDEF_M_AUX, HUDDEF_M_WEAPON };
@@ -173,6 +177,7 @@ typedef struct {
 	uint16_t digit_first, digit_count;             /* sprites 0..9 digits, 10 '.', 11 ':', 12 '-', 13 'm' */
 	int8_t   bitmap_digit_width, screen_digit_width, digit_x_offset, digit_y_offset, decimal_width, colon_width;
 	uint16_t icon_count;
+	uint16_t blip_sprite;                          /* motion sensor blip (ui\hud\bitmaps\hud_sensor_blip) or HUDDEF_NONE */
 } huddef_globals;
 
 typedef struct { uint32_t owner, kind, hud_tag, order; } huddef_link;

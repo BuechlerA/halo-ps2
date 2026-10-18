@@ -286,6 +286,21 @@ int main(int argc, char **argv)
 		CHECK(hf.n > 8 && hf.meters >= 1);
 		for (i = 0; i < hf.n; i++) CHECK(hf.q[i].x1 > hf.q[i].x0 && hf.q[i].y1 > hf.q[i].y0 && hf.q[i].x1 > -64.0f && hf.q[i].x0 < 704.0f && hf.q[i].y1 > -64.0f && hf.q[i].y0 < 544.0f);
 		CHECK(hf.digits >= 2);                    /* ammo counters */
+		{                                         /* motion tracker: one blip per living unit within the tracker range, crewmen friendly (yellow) */
+			unsigned k, expect = 0, friendly = 0;
+			for (k = 0; k < g_objects.count; k++) {
+				const object_t *o = &g_objects.obj[k];
+				const game_unit_t *u = &g_game.unit_state[k];
+				float dx = o->pos[0] - g_game.player.pos[0], dy = o->pos[1] - g_game.player.pos[1];
+				if ((o->type == SCEN_BIPED || o->type == SCEN_VEHICLE) && !(o->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN)) &&
+				    (int)k != g_game.player_obj && !u->dead && !(u->has_vitals && vitals_dead(&u->vitals)) && sqrtf(dx * dx + dy * dy) <= 20.0f)
+					expect++;
+			}
+			for (i = 0; i < hf.n; i++) if (hf.q[i].rgba == HUD_BLIP_FRIENDLY) friendly++;
+			printf("  tracker: %u blips (%u units in range, %u friendly)\n", hf.blips, expect, friendly);
+			CHECK(hf.blips == expect && expect >= 1 && friendly >= 1);
+			for (i = 0; i < hf.n; i++) CHECK(hf.q[i].x0 >= 0.0f && hf.q[i].y0 >= 0.0f && hf.q[i].x1 <= 640.0f && hf.q[i].y1 <= 480.0f);   /* everything inside the screen */
+		}
 		if (g_has_fonts) {
 			hud_state_t hs;
 			static hud_frame_t hf2;

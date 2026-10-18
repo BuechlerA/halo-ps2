@@ -123,7 +123,7 @@ Built as eight data workstreams plus the engine integration ([14-phase3-plan.md]
       HUD feedback sounds ([21](21-snd-section.md), ADR-030/038)
 - [x] Checkpoint snapshot and revert in RAM (about 300 KB, `sim/save.c`, ADR-042)
 - Known limitations (carried on): bodies do not block the player and nothing shoots back (AI is Phase 4); vehicles are not driven; `sound_looping` and `sound_environment` reverb are not played; 85-90 % of the reachable
-  sounds do not fit the SPU2 budget (footsteps and scripted impacts dropped); HUD motion tracker has no blips, anchors other than top-left, meter fill and flash rules are unverified, the sniper scope is not converted;
+  sounds do not fit the SPU2 budget (footsteps and scripted impacts dropped); HUD meter fill and flash rules are unverified, the sniper scope is not converted (anchors and the motion tracker blips were fixed against an Xbox frame, ADR-060);
   particle systems, lights and object parts of effects are not created, decals are screen-facing sprites, smoke puffs show their sprite edges; aim-assist angles and area-damage falloff are modelled; item collections untested;
   the player start position is a `halo.cfg` key (scenario spawn points arrive with the scripts in Phase 4).
 

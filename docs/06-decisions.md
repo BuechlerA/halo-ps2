@@ -514,5 +514,14 @@ fog only tints geometry beyond 80/100 units). On the PCSX2 recompiler (2026-10-1
 triangles and level arena are the same as the pre-fix ELF to within 0.01 ms: the VU programs compute the per-vertex fog value either way, and PCSX2 does not
 model GS fill, so any fog cost on the GS stays unmeasured until Phase 6. A world-only a30 config now honours `debug 32` (clip stats 0) and `clipbudget`.
 
+## ADR-060 HUD anchors on the title-safe frame, the motion sensor bottom left, tracker blips (`HUD0` version 2)
+**Decision**: `hudconv.py` resolves every HUD anchor to the corners of the 7.5 % title-safe frame of the 640x480 virtual screen (48 / 36 px in) or the screen centre,
+offsets x right / y down at every anchor; the unit HUD's motion sensor (background, foreground, centre) is laid out from the bottom-left anchor whatever the HUD's anchor,
+its centre offset counted inward from that corner; `hud_globals` carries the `hud_sensor_blip` sprite (found by tag path) and `ui/hud.c` draws one blip per living unit
+within the motion range, friendly (teams 1 / 2) yellow and hostile (3 / 4 / 5) red, from the unit tag's default team or the actor's team. **Why**: the a10 playtest (F6) found
+the tracker top right and everything flush with the screen edges; a gameplay frame of the Xbox build (xemu) pinned the rule down to 2 px, and the sensor images carry the radar
+in their bottom-left corner. **Consequences**: HUD packs must be rebuilt (`hudconv.py` per map, 0.3 s each; the reader rejects version 1); the velocity-sensitivity rule
+(still enemies hidden) and blip fading are not modelled; `motion scale` is exported but the radar radius comes from the centre offset. Details: docs/20-hud-section.md.
+
 ## Open decisions
 None.

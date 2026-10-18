@@ -27,7 +27,8 @@
 #define MAX_ELEMS 4096u
 #define MAX_SPRITES 65534u
 #define MAX_TABLE (1u << 20)
-#define VERSION 1u
+#define VERSION 1u          /* FONT, STRS */
+#define HUD0_VERSION 2u     /* 2: anchors on the title-safe frame, motion sensor bottom left, blip sprite at globals +0x64 */
 
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
 static int16_t rds16(const uint8_t *p) { return (int16_t)rd16(p); }
@@ -64,7 +65,7 @@ huddef_status huddef_open(huddef_section *s, const uint8_t *d, size_t size)
 	memset(s, 0, sizeof *s);
 	if (!d || size < HUD0_HEADER) return HUDDEF_ERR_TRUNCATED;
 	if (memcmp(d, "HUD0", 4) != 0) return HUDDEF_ERR_MAGIC;
-	if (rd16(d + 4) != VERSION) return HUDDEF_ERR_VERSION;
+	if (rd16(d + 4) != HUD0_VERSION) return HUDDEF_ERR_VERSION;
 	if (rd32(d + 8) > size) return HUDDEF_ERR_TRUNCATED;
 	if (rd32(d + 8) != size) return HUDDEF_ERR_LAYOUT;
 	for (i = 0; i < 9; i++) {
@@ -146,6 +147,7 @@ huddef_status huddef_open(huddef_section *s, const uint8_t *d, size_t size)
 		if (rd16(g + 0x62) != n[7]) return HUDDEF_ERR_LAYOUT;
 		if ((rd16(g + 0x50) != HUDDEF_NONE && rd16(g + 0x50) >= n[6]) || (rd16(g + 0x52) != HUDDEF_NONE && rd16(g + 0x52) >= n[6]))
 			return HUDDEF_ERR_LAYOUT;
+		if (rd16(g + 0x64) != HUDDEF_NONE && rd16(g + 0x64) >= n[6]) return HUDDEF_ERR_LAYOUT;
 	}
 	s->data = d;
 	s->size = size;
@@ -176,7 +178,7 @@ huddef_globals huddef_get_globals(const huddef_section *s)
 	huddef_globals r;
 	const uint8_t *g = s->globals;
 	memset(&r, 0, sizeof r);
-	r.damage_sprite = r.damage_mp_sprite = r.digit_first = HUDDEF_NONE;
+	r.damage_sprite = r.damage_mp_sprite = r.digit_first = r.blip_sprite = HUDDEF_NONE;
 	if (!g) return r;
 	r.anchor = g[0];
 	r.off_x = rds16(g + 2); r.off_y = rds16(g + 4);
@@ -195,6 +197,7 @@ huddef_globals huddef_get_globals(const huddef_section *s)
 	r.digit_x_offset = (int8_t)g[0x5E]; r.digit_y_offset = (int8_t)g[0x5F];
 	r.decimal_width = (int8_t)g[0x60]; r.colon_width = (int8_t)g[0x61];
 	r.icon_count = rd16(g + 0x62);
+	r.blip_sprite = rd16(g + 0x64);
 	return r;
 }
 

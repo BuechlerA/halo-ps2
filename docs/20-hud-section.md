@@ -1,4 +1,4 @@
-# `HUD0`, `FONT`, `STRS`, `HUDT` sections, version 1 (HUD layouts, fonts, strings, HUD textures)
+# `HUD0` (version 2), `FONT`, `STRS`, `HUDT` (version 1) sections (HUD layouts, fonts, strings, HUD textures)
 
 Output of `tools/halo2ps2/hudconv.py` (workstream F of [Phase 3](14-phase3-plan.md)), read by `engine/src/ui/huddef.c`
 (contract: `engine/src/ui/huddef.h`). The four sections live in one [`.hp2` pack](07-hp2-format.md),
@@ -25,9 +25,14 @@ section holds converted copies in `assets/` only, this document describes format
 * **Virtual screen**: positions and sizes are pixels of 640 x 480, origin top left, y down; the engine scales to 512 x 448.
   Every drawable already carries its resolved top-left corner (`x`, `y`) and drawn size (`w`, `h`, sprite size x scale) and
   also the tag's raw anchor / offset / scales so the integrator can re-derive them.
-* **Anchors** (`0 top left, 1 top right, 2 bottom left, 3 bottom right, 4 centre`): an element's matching corner (its centre for
-  4) is placed at the anchor point plus the tag's offset: `x = anchor_x + off_x - (w if right, w/2 if centre)`, likewise `y`.
-  Crosshair overlays are always centre anchored. **Unverified** for 1..3 (see below).
+* **Anchors** (`0 top left, 1 top right, 2 bottom left, 3 bottom right, 4 centre`): the anchor points are the corners of the
+  **title-safe frame**, 7.5 % in from every screen edge (`48, 36` / `592, 36` / `48, 444` / `592, 444`), and the screen
+  centre (`320, 240`). An element's matching corner (its centre for 4) is placed at the anchor point plus the tag's offset,
+  x right and y down at every anchor: `x = anchor_x + off_x - (w if right, w/2 if centre)`, likewise `y`. Crosshair overlays
+  are always centre anchored. The **motion sensor** (background, foreground, centre) is laid out from the bottom-left anchor
+  whatever the unit HUD's anchor says, and its centre offset is counted *inward* from that corner (`x = 48 + off_x`,
+  `y = 444 - off_y`). Verified against an Xbox frame (ADR-060, "Source facts" below). `verify` checks that every element,
+  meter and number of all ten maps is drawn entirely on screen under this rule.
 * **Colours** are RGBA words on the GS scale, R in the low byte (`0x80808080` = opaque white): they go straight into vertex
   colours of a modulated texture. Tag colours are `ColorARGBInt` (bytes B, G, R, A).
 * **Time** is in ticks of 1/30 s; floats in the records are `f32`.
@@ -62,7 +67,9 @@ Layouts are in the docstring of `hudconv.py` with the offsets. "verified" means 
 | `unicode_string_list` (20 B entries, UTF-16LE, NUL included in the length) and `hud_message_text` (2 B elements: type 0 text of `value` units / type 1 icon `value`; 64 B messages) | verified: text units of a message add up to the next message's start on every message of ten maps |
 | unit tag -> unit HUD references | found by scanning the first 4 KiB of every `bipd` / `vehi` tag for `unhi` references (offsets vary: biped 0x8F0 / 0x920 on the Master Chief, vehicle seats elsewhere); **order** = order of appearance, which of them is single / multiplayer or which seat is unverified |
 | Anchor values 0 top left, 4 centre | verified (passenger HUDs stack from the top left, the Warthog driver reticle is centre anchored 40 px up, crosshairs are centred) |
-| Anchor values 1..3 and the corner alignment rule | **unverified**: the cyborg HUD is anchor 1 (top right) with the shield / health panels laid out left to right from offset ~0, so "the element's right edge at the anchor" keeps the whole unit HUD on screen and gives the Halo CE look (see the preview), but it is a convention |
+| Anchor points on the 7.5 % title-safe frame, the matching corner at the anchor, offsets x right / y down | verified against a gameplay frame of the Xbox build (xemu, 640 x 480, 2 px accuracy): the top-left weapon panel art of `master plasma` at offset (12, 1) is at x 61, y 36; its heat meter at (4, 21) at x 52..157, y 57..73; the grenade panel (82, 1) at x 131; the top-right `cyborg` shield panel (0, 1) with its 128 px image at x 464..592, y 37; the motion sensor circle centre at (89, 403) with radius 41. All 24 HUD tags of the ten maps use anchors 0 (20 weapon + 2 grenade + 6 unit HUDs), 1 (`cyborg`, `cyborg_mp`) or 4 (`warthog driver`): the bottom anchors are never used by retail data, their rule is the mirror of the top ones |
+| Motion sensor always bottom left, centre offset inward from the corner | verified: both unit HUDs with a sensor are top-right anchored, yet the Xbox frame draws the sensor bottom left; the sensor images (`hud_weapon_backgrounds` 3 / 4, 128 and 64 px) carry the radar circle in the image's bottom-left corner, and the tag's centre offset (41, 41) / (31, 31) is the circle centre's distance from that corner (radius = the same number) |
+| Motion sensor blip: `ui\hud\bitmaps\hud_sensor_blip` (32 x 32 dxt3 disc), sequence 0 | verified present in all ten maps; no HUD tag references it (the engine finds it by path, like the converter); `hud_sensor_blip_custom` (dxt1) is not used. The Xbox frame shows blips about 6 px wide, friendly pale yellow, hostile red; still enemies are hidden there (velocity sensitivity), which the port does not model |
 | Meter drawing (clip the sprite to the value, colour between `colour_min` and `colour_max`, empty colour behind) and flash / disabled states | **unverified**, from the public tag names; the data only gives the fields |
 
 Not converted, with the reason: multitexture overlays of static elements (2 of them, both on the sniper HUD: scope scroll /
@@ -72,7 +79,7 @@ remaining `hud_globals` fields (help-text colours, damage indicator geometry bey
 semantics (the Xbox controller glyph sprites are exported, the PS2 port draws its own).
 
 ## `HUD0` layout
-Header, 128 bytes: `char[4] "HUD0"`, `u16 version (1)`, `u16 reserved`, `u32 total size` (= section size), then counts at
+Header, 128 bytes: `char[4] "HUD0"`, `u16 version (2)`, `u16 reserved`, `u32 total size` (= section size), then counts at
 `0x0C` huds, `0x10` elements, `0x14` meters, `0x18` numbers, `0x1C` crosshairs, `0x20` sounds, `0x24` sprites, `0x28` icons,
 `0x2C` links; `0x30` zero; `0x34` globals offset; table offsets from `0x38`: huds, elements, meters, numbers, crosshairs,
 sounds, sprites, icons, links. Each table sits after the previous one, 16-aligned.
@@ -84,7 +91,8 @@ strings / icon strings (ustr tag ids, +0x2C / +0x30), messages / level messages 
 `icon bitmap`, `hud_number tag` (+0x3C / +0x40), `f32 motion range, velocity sensitivity, scale` (+0x44; 20, 0.0002, 32 on
 retail, **names unverified**), `u16 damage sprite, multiplayer damage sprite` (+0x50: arrows in the damage bitmap),
 `u32 damage colour` (+0x54), `u16 digit_first, digit_count` (+0x58: the 15 digit sprites), `s8 x 6` (+0x5C: bitmap digit width,
-screen digit width, x offset, y offset, decimal point width, colon width), `u16 icon count` (+0x62).
+screen digit width, x offset, y offset, decimal point width, colon width), `u16 icon count` (+0x62), `u16 blip sprite` (+0x64:
+the motion sensor blip, 0xFFFF when the map has no `hud_sensor_blip` bitmap; version 2).
 
 **HUD, 64 B**: `u32 tag_id` (0), `u8 kind` (4: 0 unit, 1 weapon, 2 grenade), `u8 anchor` (5), `u16 flags` (6: weapon HUD
 flags raw, bit 0 = use the parent's flashing parameters), `u32 child_tag` (8: weapon HUD whose elements and crosshairs are
@@ -105,7 +113,7 @@ bitmap), `u16 type` (0x3E: weapon sub overlay type / crosshair type).
 
 | role | where | meaning |
 |---|---|---|
-| 1..7 | unit HUD (always 1..6 in this order, then one 7 per auxiliary overlay) | hud background, shield panel background, health panel background, motion sensor background, foreground, motion sensor centre (offset only: the radar centre inside its background, no sprite), auxiliary overlay background |
+| 1..7 | unit HUD (always 1..6 in this order, then one 7 per auxiliary overlay) | hud background, shield panel background, health panel background, motion sensor background, foreground (both anchor 2, bottom left), motion sensor centre (no sprite: `x, y` = the radar centre on screen, `off_x, off_y` = its distance from the sensor corner = the radar radius in pixels), auxiliary overlay background |
 | 8, 9 | weapon HUD | static element (state attached, solo / multiplayer), overlay sub element (the parent overlay's state and bitmap) |
 | 10 | weapon HUD | crosshair overlay (in the HUD's element range after the others; use the crosshair list) |
 | 11..13 | grenade HUD | grenade background, total grenades background, overlay (type 1 / 4) |
@@ -227,9 +235,19 @@ strings), then truncates each section at every length, corrupts every table, 90 
 and verifies every campaign map found in `assets/decompressed` (ranges, sequences, meter colours, crosshair masks, fonts), and
 checks the reference parsers, the corrupt-tag cases and the PNG writer.
 
+## Motion tracker (engine, `ui/hud.c`)
+`hud_build` draws one blip per living biped or vehicle object (not the player's body) within `motion range` world units of the
+player (20 on retail), at `centre + (right, -forward) / range * radius` with the player's facing up, where `radius` is the
+motion sensor centre's corner distance (41 px on the cyborg HUD; `motion scale` 32 is exported but not used: unverified
+whether it is this radius). The blip is the `hud_sensor_blip` sprite drawn 7 px wide (10 for vehicles), tinted pale yellow for
+teams 1 / 2 (player, human), red for 3 / 4 / 5 (covenant, flood, sentinel), grey otherwise; the team is the unit tag's default
+team (`game_unit_t.team`, set when the object is created) or the actor's team once `units_attach` took it over. Not modelled:
+the Xbox hides enemies that stand still (`motion velocity sensitivity`), shows the player's own vehicle and lets blips fade.
+
 ## Open points
-* Anchors 1..3 and the alignment rule, the meaning of meter flags / min value / alpha multiplier / bias / value scale, and of
-  the overlay `type` / `flags` words need a comparison with the Xbox picture (Phase 6) or more of the public tag documentation.
+* The meaning of meter flags / min value / alpha multiplier / bias / value scale, and of the overlay `type` / `flags` words need
+  a comparison with the Xbox picture or more of the public tag documentation; the bottom anchors (2, 3) are unused by retail
+  data and mirror the verified top ones.
 * Whether the 5-sprite reticle warning sequence is an animation or a composite.
 * The sniper scope (multitexture overlays, screen effects) is not converted: the first pass draws its crosshair overlays only.
-* Motion sensor drawing needs the object blips, which have no data here (range / velocity / scale are exported).
+* Motion tracker: the velocity rule and whether `motion scale` is the radar radius.
