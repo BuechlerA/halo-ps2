@@ -108,8 +108,9 @@ Done on this branch (host tests 83 ok, PCSX2 recompiler runs of `a10mission` for
 | 2 | ANIM v2 (graph node names) + name-based node map (ADR-056): rifle and pistol are held like the reference, reload and ready poses are right; overlay-type animations (`moving`, `overlays`) are no longer played as base poses |
 | 3 | letterbox bars during cinematics (verified against xemu, which shows them for the whole intro), view model and damage wash hidden while a cinematic runs |
 | 4 | device objects follow their device position (`mission_sync_devices`, `OBJ_F_POSED`); not yet checked on a door in a frame dump |
+| 5 | HUD anchors and tracker (2026-10-18, ADR-057): anchors on the 7.5 % title-safe frame, motion sensor bottom left, blips from the units in range. Measured on an xemu attract-demo frame: the ammo and grenade counters are **top left** (an earlier version of this paragraph said "beside the shield", which was wrong), the shield top right, the tracker bottom left |
 
-Still open from the list above: F6 (HUD anchors; the reference has the shield top right, the ammo counter top right beside it, the motion tracker bottom left), F7 (sprite edges), the hands' colour: the gloves render navy because the colour-change / multipurpose maps are not converted (docs/11), and the Xbox tints them olive.
+Still open from the list above: F7 (sprite edges), the hands' colour: the gloves render navy because the colour-change / multipurpose maps are not converted (docs/11), and the Xbox tints them olive.
 
 New findings from the fixed intro (compare `frames/intro2`, `frames/cryo` with the xemu captures):
 
