@@ -3,6 +3,7 @@
 #include "core/mem.h"
 #include "render/bsp_render.h"
 #include "world/bsp.h"
+#include "world/cchg.h"
 #include "world/anim.h"
 #include "world/model.h"
 #include "world/scen.h"
@@ -14,6 +15,7 @@ typedef struct { tex_section tex; int has; } texset_t;
 typedef struct {
 	int      valid;
 	uint32_t model_tag;              /* 0 = fog only */
+	uint32_t model_tag2;             /* second sky of the scenario's palette, 0 = none */
 	float    fog_rgb[3], fog_near, fog_far, fog_density, outdoor[3], indoor[3];
 } sky_info_t;
 
@@ -30,6 +32,7 @@ typedef struct {
 	scen_section  scen;
 	texset_t      obj_tex;
 	sky_info_t    sky;
+	cchg_t        cchg;           /* object colour change (CCHG section of the object pack) */
 	int           has_objects;
 	tex_source_t  obj_source;
 } world_t;

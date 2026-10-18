@@ -18,6 +18,8 @@ test: $(HOST_TMP)/halo-test.hp2 $(HOST_TMP)/halo-bsp.hp2
 	$(HOST_TMP)/test_config
 	cc $(CFLAGS) test_texcache.c ../src/render/texcache.c -o $(HOST_TMP)/test_texcache
 	$(HOST_TMP)/test_texcache
+	cc $(CFLAGS) test_cchg.c ../src/world/cchg.c -o $(HOST_TMP)/test_cchg
+	$(HOST_TMP)/test_cchg
 	cc $(CFLAGS) test_chain.c ../src/render/chain.c ../src/render/upload.c -o $(HOST_TMP)/test_chain
 	$(HOST_TMP)/test_chain
 	cc $(CFLAGS) test_clip.c ../src/render/clip.c ../src/render/camera.c -lm -o $(HOST_TMP)/test_clip

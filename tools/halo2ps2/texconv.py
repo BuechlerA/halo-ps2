@@ -85,6 +85,9 @@ FLAT_GREY = 0x80808080               # RGBA8, alpha on the PS2 0x80 = 1.0 scale
 MAX_TEX, MIN_TEX, MAX_MIPS = 256, 8, 4
 LM_BUDGET_BYTES = 512 * 1024         # per BSP, after conversion (see docs/09-tex-section.md)
 LM_DEFAULT_GAIN = 1.0
+CHROMA_STRENGTH = 0.4                # how much of the lightmap colour reaches the vertices and the object lighting (1.0 = all of it)
+LM_GAMMA = 0.5                       # lightmap luminance tone curve exponent (1.0 = linear: index = luma x gain)
+LM_WHITE = 249.0                     # the brightest lightmap texel of the retail maps (a10: 249): the curve's 1.0
 PSMT4_MAX_RMS = 3.0                  # 16 colours are used when they reproduce the image within this RMS
 
 # ---- shader tag layout --------------------------------------------------------------------
@@ -158,6 +161,9 @@ class ShaderInfo:
     alpha_test: bool = False
     keep_alpha: bool = False             # base map alpha is transparency (not a specular mask)
     note: str = ""                       # why it is untextured, if it is
+    change_source: int = 0               # colour change (objtex.py): 1..4 = the object's change colour a..d tints a second pass of the part
+    mask_bitmap: int | None = None       # its mask: the blue channel of this bitmap becomes the alpha of the base map in that pass
+    texture2: int = 0xFFFF               # the second pass's texture: the base map with the mask as alpha (NO_TEXTURE: none)
     texture: int = NO_TEXTURE            # filled when the texture table is built
 
 
@@ -725,14 +731,40 @@ def lightmap_size(w: int, h: int, extra_shift: int = 0) -> tuple[int, int]:
     return max(MIN_TEX, w >> s), max(MIN_TEX, h >> s)
 
 
-def convert_lightmap_page(index: int, page: Rgba, extra_shift: int = 0, gain: float = LM_DEFAULT_GAIN) -> LightmapPage:
-    """RGBA page -> PSMT8 luminance page. Index = clamp(luma x gain); the shared CLUT is a grey
+def lightmap_curve(luma: int, gain: float, gamma: float = LM_GAMMA) -> int:
+    """Index of the grey ramp for a lightmap luminance. ``gamma`` 1 is the linear ``luma x gain``. Otherwise the brightest texel
+    (LM_WHITE) maps to 127 x gain (1.0 x gain when 0x80 is 1.0) and darker texels follow x ** gamma: the retail a10 lightmaps are
+    bimodal (a quarter of the texels at 170..249, the rest mostly below 80), so the linear gain 1.5 that matched the mean
+    brightness of the Xbox intro doubled every lit floor and wall to white (2026-10-18 comparison, scripts/cmp-intro.sh) while
+    the curve keeps the mean and lifts the shadows."""
+    if gamma == 1.0:
+        return min(255, int(luma * gain + 0.5))
+    return min(255, int(127.0 * gain * (min(luma, LM_WHITE) / LM_WHITE) ** gamma + 0.5))
+
+
+def lightmap_tone_rgb(r: float, g: float, b: float, gain: float, gamma: float = LM_GAMMA, chroma: float = None) -> tuple[float, float, float]:
+    """A lightmap colour as the BSP passes show it: the luminance through ``lightmap_curve`` (index units, 128 = 1.0), the tint
+    pulled towards neutral by ``chroma`` (default CHROMA_STRENGTH). The object lighting probes use it, so a crewman stands in the
+    light of the wall behind him instead of a linear ``luma x 1.0`` that was 2.5 times darker than the walls (Keyes, bridge)."""
+    chroma = CHROMA_STRENGTH if chroma is None else chroma
+    if gamma == 1.0 and chroma == 1.0:
+        return r * gain, g * gain, b * gain                 # the legacy linear probe
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    if y < 1.0:
+        return 0.0, 0.0, 0.0
+    ty = float(lightmap_curve(int(y + 0.5), gain, gamma))
+    return tuple(ty * (1.0 + chroma * (c / y - 1.0)) for c in (r, g, b))  # type: ignore[return-value]
+
+
+def convert_lightmap_page(index: int, page: Rgba, extra_shift: int = 0, gain: float = LM_DEFAULT_GAIN,
+                          gamma: float = LM_GAMMA) -> LightmapPage:
+    """RGBA page -> PSMT8 luminance page. Index = ``lightmap_curve(luma, gain, gamma)``; the shared CLUT is a grey
     ramp (see ``grey_ramp_clut``), so index 0x80 modulates by 1.0 when used as alpha."""
     w, h, rgba = page
     tw, th = lightmap_size(w, h, extra_shift)
     y = resample_plane(luminance(rgba), w, h, tw, th)
-    if gain != 1.0:
-        y = bytes([min(255, int(v * gain + 0.5)) for v in y])
+    if gain != 1.0 or gamma != 1.0:
+        y = bytes([lightmap_curve(v, gain, gamma) for v in y])
     n = len(rgba) // 4
     avg = [sum(rgba[c::4]) // n for c in range(3)]
     return LightmapPage(index, w, h, tw, th, _pad16(y), avg[0] | avg[1] << 8 | avg[2] << 16 | 0xFF000000,
@@ -748,10 +780,14 @@ def grey_ramp_clut() -> bytes:
     return out.tobytes()
 
 
-def vertex_chroma(page: Rgba | tuple[int, int, bytes], lm_uv: tuple[float, float]) -> tuple[int, int, int]:
+def vertex_chroma(page: Rgba | tuple[int, int, bytes], lm_uv: tuple[float, float],
+                  strength: float = CHROMA_STRENGTH) -> tuple[int, int, int]:
     """Chroma-only tint for a vertex: the page colour at ``lm_uv`` (bilinear, clamped) divided by its
-    luminance, scaled so 0x80 = 1.0 and clamped to 0..255. A neutral grey page gives (128, 128, 128);
-    pages (nearly) black at that point give neutral too. Luminance itself lives in the PSMT8 page."""
+    luminance, scaled so 0x80 = 1.0, pulled towards neutral by ``strength`` and clamped to 0..255. A neutral grey page
+    gives (128, 128, 128); pages (nearly) black at that point give neutral too. Luminance itself lives in the PSMT8 page.
+    The a10 lightmaps are amber on average (BSP 1: mean 120 / 90 / 51); at full strength every wall came out yellow-green where
+    the Xbox intro frames show neutral grey walls (2026-10-18 comparison, scripts/cmp-intro.sh); 0.4 keeps the red alarm
+    lights and the cold console light without the global cast."""
     w, h, px = page
     u, v = lm_uv
     fx = min(max(u * w - 0.5, 0.0), w - 1.0)
@@ -767,7 +803,7 @@ def vertex_chroma(page: Rgba | tuple[int, int, bytes], lm_uv: tuple[float, float
     y = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
     if y < 1.0:
         return 128, 128, 128
-    return tuple(max(0, min(255, int(c / y * 128 + 0.5))) for c in rgb)  # type: ignore[return-value]
+    return tuple(max(0, min(255, int((1.0 + strength * (c / y - 1.0)) * 128 + 0.5))) for c in rgb)  # type: ignore[return-value]
 
 
 # ---- BSP scanning ----------------------------------------------------------------------------
@@ -845,7 +881,7 @@ def lightmap_pages_rgba(m: MapData, info: BspInfo) -> dict[int, Rgba]:
 # ---- section writers / parsers ---------------------------------------------------------------
 TEXS_HEADER = "<4sHHIIIIIII28x"
 TEXTURE_FMT = "<IHHBBHIIIHHI"
-BINDING_FMT = "<IHHBBHffI8x"
+BINDING_FMT = "<IHHBBHffIH6x"
 LMAP_HEADER = "<4sHHIIIIIfI28x"
 PAGE_FMT = "<HHBBHIIHHII4x"
 for _f, _n in ((TEXS_HEADER, HEADER_SIZE), (LMAP_HEADER, HEADER_SIZE), (TEXTURE_FMT, TEXTURE_REC),
@@ -872,7 +908,7 @@ def build_texs(textures: list[Ps2Texture], shaders: list[ShaderInfo]) -> bytes:
     for s in binds:
         flat = textures[s.texture].avg_rgba if s.texture != NO_TEXTURE else FLAT_GREY
         brecs += struct.pack(BINDING_FMT, s.shader_id, s.texture, s.flags, s.blend,
-                             GROUP_CODES.get(s.group or "", 0), 0, s.uv_scale[0], s.uv_scale[1], flat)
+                             GROUP_CODES.get(s.group or "", 0), s.change_source, s.uv_scale[0], s.uv_scale[1], flat, s.texture2)
     untextured = sum(1 for s in binds if s.texture == NO_TEXTURE)
     total = data_off + len(data)
     head = struct.pack(TEXS_HEADER, TEXS_MAGIC, VERSION, 0, len(textures), len(binds), tex_off, bind_off,
@@ -926,13 +962,13 @@ def parse_texs(data: bytes) -> TexsView:
                          "avg_rgba": avg})
     bindings, last = [], -1
     for i in range(nb):
-        sid, tex, flags, blend, group, _r2, su, sv, flat = struct.unpack_from(
+        sid, tex, flags, blend, group, change, su, sv, flat, tex2 = struct.unpack_from(
             BINDING_FMT, data, bo + i * BINDING_REC)
         if sid <= last or (tex != NO_TEXTURE and tex >= nt):
             raise TexError(f"binding {i}: unsorted or bad texture index")
         last = sid
         bindings.append({"shader_id": sid, "texture": tex, "flags": flags, "blend": blend, "group": group,
-                         "uv_scale": (su, sv), "flat_rgba": flat})
+                         "uv_scale": (su, sv), "flat_rgba": flat, "change": change, "texture2": tex2})
     return TexsView(textures, bindings, data)
 
 

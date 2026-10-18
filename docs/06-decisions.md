@@ -558,5 +558,40 @@ and rescue (target, floor below, awaited volumes), `prof2 1` (EE prep split into
 at the top LOD level; the way to buy that back is `cinelod 1` (about 2.5 ms of `units`), but a run with it (and with `unitlod 20`) takes a different path through the mission (win at tick 24201-24600, 73-89 assists instead of 60, 0.7-0.9 % late), so the Gate M4 numbers are quoted without them until the bot's route is stable against sim changes.
 `vis` in the profiler now counts drawn objects only (objects past the cap are in `skip`). Carried and suspended units now play the ground idle animation instead of the airborne one.
 
+## ADR-064 Intro parity with the Xbox: sky node pose and palette, additive blends, lightmap tone curve and chroma, cinematic near plane
+**Decision**: (1) `obj_render_sky` skins the sky model with the bind-pose inverse of its node (a sky has no animation, so Halo poses its nodes with the identity and
+the skin matrix `world(pose) * inverse(world(default))` reduces to the inverse); a10's `sky_x10`/`space` node is yawed 90 degrees by default, which turns the dome, galaxy and
+planets by -90 degrees: without it the intro's planet stood behind the camera. (2) `SKY0` carries the model of the scenario's second sky (u32 at +60, was padding); the sky pass
+draws the palette entry of the camera's cluster (`vis_t.sky_index`, the camera cluster's `sky` field, else the first visible cluster with a sky): a10's exterior BSP 7 (the intro's
+space shots) has one cluster with sky 1, the nebula sky; every window onto space elsewhere is sky 0. (3) A sky dome whose chicago shader stacks maps (nebula + stars) is converted
+as one part per additive map (`modelconv.add_sky_layers`, pseudo shader ids `objtex.layer_shader_id`). (4) `mat_binding_t.add`: additive materials (shader blend 3) draw as
+`Cs + Cd` in the BSP (doubled: the exhaust map is a 104 grey), object and sky passes; every other blend still draws as alpha. (5) Lightmap luminance goes through a tone curve
+(`texconv.lightmap_curve`: white point 249 -> 127 x gain, exponent 0.5, gain 1.7) instead of the linear gain 1.5, and the vertex chroma is pulled 60 % towards neutral
+(`CHROMA_STRENGTH` 0.4). (6) The cinematic near plane is never below the engine default 0.05: the VU1 object program drops every object nearer than about 0.04 (the captain 0.27 away
+in the bridge vanished at the script's 0.01).
+**Why**: frame-by-frame comparison of the PS2 intro with the Xbox intro video at the same times (`scripts/cmp-intro.sh`, 2026-10-18): black sky with a teal smear, no planet, yellow-green
+bridge, white hangar floors, no Keyes in the bridge's long shot. The lightmap pages of a10 are bimodal and amber (BSP 1: a quarter of the texels at 170..249, mean colour 120 / 90 / 51),
+so linear gain and full chroma doubled every lit surface to white and tinted it yellow, while the mean brightness of the intro matched the Xbox within 15 %.
+**Consequences**: object packs (`objpack.py`: SKY0, sky layers, a30/a50 second skies) and TEX/BSP packs (`texconv.py`, `bspconv.py`: tone curve, chroma) must be rebuilt
+(`scripts/build-world.sh`); a30 now draws its cluster-selected sky (unverified against the Xbox). Not fixed, found by the same comparison: colour-change tints (crew jumpsuits are red / yellow /
+orange on the Xbox, near-black here; Keyes' uniform and the marines too), Cortana's purple hologram (multi-stage `sotr` colours), screen effects (desaturation, convolution), the
+exhaust and galaxy glow (additive sprites / bloom), the halo ring in the first shot (edge-on here), marines' rifles, and the intro's pacing at the end of the bridge (about 4 s early: `sound_impulse_time`).
+
+## ADR-065 Colour change (`CCHG`, a second pass per part), object lighting on the BSP's tone curve, XBE analysis
+**Decision**: (1) Object tags carry up to four change colours (object tag +0x164, each with up to eight permutations of cumulative weight and a lower / upper rgb bound); a `shader_model`
+with a colour change source a..d (+0x4C) and a multipurpose map (+0xBC, blue channel = mask) gets a second texture in its `OTEX` binding (the base map with the mask as alpha,
+`tex_binding.change` / `texture2`, the 16-bit field that was reserved at +10 and the first of the free bytes at +24), and `objpack.py` writes a `CCHG` section (`chgconv.py`,
+`world/cchg.[ch]`). The object pass draws such a part a second time over the first, alpha blended at the same depth, with the ambient and sun colours multiplied by the object's
+change colour (picked by a seed from the object index and definition), so where the mask is 1 the result is base x tint x light. Keyes' uniform keeps only its grey permutation
+(`chgconv.GREY_ONLY`; the Xbox intro shows grey). The first-person arms pick with seed 1. (2) The object lighting probes (`scenconv.cluster_lights`) use the BSP's tone curve and chroma
+strength (`texconv.lightmap_tone_rgb`) with a gain of 1.7 x 1.8: the linear gain 1.0 they used left characters about 2.5 times darker than the walls they stand against.
+(3) `default.xbe` was analysed (docs/36-xbe-analysis.md, `tools/xbe/`).
+**Why**: the Xbox intro shows red / yellow / orange / purple crew jumpsuits, khaki-free skin tones and a captain as bright as the bulkheads; here they were black, pink and charcoal.
+The tag data answered colour change completely; the executable showed that Halo assembles its combiner programs at runtime and that its environment pass adds the lightmap to a vertex term instead
+of doubling it.
+**Consequences**: object packs must be rebuilt (`objpack.py` / `build-world.sh`; the `OTEX` and `SCEN` sections change, a `CCHG` section is new, a pack without it still loads with no tints);
+models are not duplicated (the second pass reuses the part's batches), the cost is one more draw of the tinted parts (crew, marines' faces, props with a change colour) and ~0.4 MiB of `OTEX` on a10.
+Marine armour, rifles, Cortana's hologram colour and the screen filters are still open (ADR-064).
+
 ## Open decisions
 None.

@@ -20,8 +20,10 @@
 typedef struct {
 	int16_t  tex;               /* texture index, -1 = untextured (flat) */
 	uint8_t  flags;             /* MAT_* */
-	uint8_t  pad;
+	uint8_t  add;               /* 1: additive blend (colour + framebuffer); the other blends all draw as alpha blends */
 	float    uv_scale[2];       /* multiplies the material's baked uv (shader tiling) */
+	uint8_t  cc;                /* colour change 1..4 (objects only): a second pass with `tex2` and the object's change colour */
+	int16_t  tex2;              /* that pass's texture (base map with the mask as alpha), -1 = none */
 } mat_binding_t;
 
 /* A texture or lightmap page ready for upload. `pixels` and `clut` must be flushed from the

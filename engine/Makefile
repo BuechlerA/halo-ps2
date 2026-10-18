@@ -73,6 +73,7 @@ EE_OBJS = src/main.o \
           src/world/ansm.o \
           src/world/bsp.o \
           src/world/cinedef.o \
+          src/world/cchg.o \
           src/world/cmod.o \
           src/world/devdef.o \
           src/world/coll.o \

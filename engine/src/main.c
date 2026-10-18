@@ -380,9 +380,12 @@ int main(int argc, char *argv[])
 			s_objr.max_batches = (unsigned)cfg_int(&s_cfg, "objcap", 900);
 			s_objr.draw_objects = (int)cfg_int(&s_cfg, "objects", 1);
 			s_objr.draw_fp = (int)cfg_int(&s_cfg, "fp", 1);
+			s_objr.cchg = &s_world.cchg;
 			s_objr.sky_model = -1;
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
-			printf("[obj] sky model: %s\n", s_objr.sky_model >= 0 ? "drawn" : "none");
+			s_objr.sky_model2 = -1;
+			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag2) s_objr.sky_model2 = model_find(&s_world.models, s_world.sky.model_tag2);
+			printf("[obj] sky model: %s, second %s\n", s_objr.sky_model >= 0 ? "drawn" : "none", s_objr.sky_model2 >= 0 ? "drawn" : "none");
 			s_have_objects = 1;
 		}
 	}
@@ -587,6 +590,43 @@ int main(int argc, char *argv[])
 					for (ei = 0; ei < ec; ei++)
 						printf("[ev] t%u type %u tag %08x arg %u obj %d val %.1f\n", s_tick, ev[ei].type, (unsigned)ev[ei].tag, ev[ei].arg, ev[ei].obj, ev[ei].value);
 				}
+				if ((s_tick % 15) == 0 && mapp_active() && cfg_int(&s_cfg, "cinelog", 0)) {
+					const cine_state *cs = mapp_mission()->cine;
+					cine_pose cp = cine_cam_pose(&cs->cam);
+					printf("[cin] t%u bsp %d cin %d ctl %d mode %d cam %.2f %.2f %.2f yaw %.0f pit %.0f roll %.0f fov %.0f nc %.2f lb %.2f fade %.2f (%.2f %.2f %.2f)\n", s_tick, s_world.bsp_index, cs->screen.cinematic,
+					       cs->cam.control, cs->cam.mode, (double)cp.pos[0], (double)cp.pos[1], (double)cp.pos[2], (double)(cp.yaw * 57.29578f), (double)(cp.pitch * 57.29578f),
+					       (double)(cp.roll * 57.29578f), (double)(cp.fov * 57.29578f), (double)cs->cam.near_clip, (double)cs->screen.letterbox, (double)cs->screen.fade_alpha,
+					       (double)cs->screen.fade_rgb[0], (double)cs->screen.fade_rgb[1], (double)cs->screen.fade_rgb[2]);
+					if (s_have_objects && cfg_str(&s_cfg, "cinetrack", NULL)) {                 /* position of the objects whose definition name contains the string */
+						unsigned oi;
+						for (oi = 0; oi < s_objects.count; oi++) {
+							const object_t *ob = &s_objects.obj[oi];
+							scen_def d;
+							if (ob->model < 0) continue;
+							d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
+							if (strstr(d.name, cfg_str(&s_cfg, "cinetrack", ""))) printf("[cin]   #%u %s at %.2f %.2f %.2f anim %u frame %.1f flags %02x\n", oi, d.name, (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (unsigned)ob->anim, (double)ob->frame, ob->flags);
+						}
+					}
+				}
+				if (s_have_objects && mapp_active() && cfg_int(&s_cfg, "nearlog", 0) && s_tick == (uint32_t)cfg_int(&s_cfg, "nearlog", 0)) {   /* objects around the cinematic camera */
+					const cine_state *cs = mapp_mission()->cine;
+					cine_pose cp = cine_cam_pose(&cs->cam);
+					unsigned oi;
+					for (oi = 0; oi < s_objects.count; oi++) {
+						const object_t *ob = &s_objects.obj[oi];
+						float dx = ob->pos[0] - cp.pos[0], dy = ob->pos[1] - cp.pos[1], dz = ob->pos[2] - cp.pos[2];
+						scen_def d;
+						if (ob->model < 0 || dx * dx + dy * dy + dz * dz > (float)cfg_int(&s_cfg, "nearrad", 10) * (float)cfg_int(&s_cfg, "nearrad", 10)) continue;
+						d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
+						printf("[near] #%u %s type %u model %d graph %d anim %u frame %.1f flags %02x at %.2f %.2f %.2f (d %.2f)\n", oi, d.name, ob->type, ob->model, ob->graph, (unsigned)ob->anim, (double)ob->frame, ob->flags,
+						       (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (double)sqrtf(dx * dx + dy * dy + dz * dz));
+						if (cfg_int(&s_cfg, "nearnodes", 0) && ob->type == 1) {
+							static object_nodes_t nn;
+							unsigned ni, nc = objects_pose(ob, &s_objr.world, &nn);
+							for (ni = 0; ni < nc && ni < 12; ni++) printf("[near]    node %u world %.2f %.2f %.2f\n", ni, (double)nn.world[ni].m[3][0], (double)nn.world[ni].m[3][1], (double)nn.world[ni].m[3][2]);
+						}
+					}
+				}
 				if ((s_tick % 30) == 0 && cfg_int(&s_cfg, "gamestat", 1))
 					printf("[game] t=%us pos %.1f %.1f %.1f hp %.0f sh %.0f shots %u proj %u hits %u kills %u\n", s_tick / 30, s_game.player.pos[0], s_game.player.pos[1],
 					       s_game.player.pos[2], s_game.vitals.health, s_game.vitals.shield, (unsigned)s_game.st_shots, (unsigned)s_game.st_projectiles,
@@ -602,7 +642,9 @@ int main(int argc, char *argv[])
 				if (cs && cs->cam.control && cs->cam.mode == CINE_CAM_POSE) {
 					cine_pose cp = cine_cam_pose(&cs->cam);
 					cine_pose_to_camera(&cp, &s_cam);
-					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip;
+					/* The intro asks for near 0.01 (and 0.0625 -> 0.01 in the bridge); the VU1 object program drops every object below about 0.04 (a
+					 * captain 0.27 away vanishes, found against the Xbox intro), so the script's value is raised to the engine's default. */
+					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip > CAMERA_NEAR_DEFAULT ? cs->cam.near_clip : CAMERA_NEAR_DEFAULT;
 				}
 			}
 		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);

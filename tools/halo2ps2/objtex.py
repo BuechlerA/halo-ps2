@@ -61,8 +61,108 @@ def _bitmap_ref(m: texconv.MapData, off: int) -> int | None:
     return tid if e is not None and e.group == "bitm" else None
 
 
+# Extra map layers of a chicago shader as pseudo shaders: a part of a sky dome that adds the stars over a nebula is drawn twice, the second
+# time with a pseudo shader id that resolves to the added map (additive). {pseudo id: (chicago shader id, map index)}.
+LAYER_BASE = 0xFE000000
+_LAYERS: dict[int, tuple[int, int]] = {}
+
+
+def layer_shader_id(shader_id: int, index: int) -> int:
+    for pid, key in _LAYERS.items():
+        if key == (shader_id, index):
+            return pid
+    pid = LAYER_BASE + len(_LAYERS) + 1
+    _LAYERS[pid] = (shader_id, index)
+    return pid
+
+
+def chicago_layers(m: texconv.MapData, shader_id: int) -> list[int]:
+    """Indices of the maps of a `schi` shader that add to the base map `chicago_base_map` picks: not the base, not a pure modulator
+    (colour function multiply / double multiply with no alpha of its own): the space sky's stars over its nebula."""
+    e = m.by_id.get(shader_id)
+    if e is None or e.group != "schi":
+        return []
+    block = m.tag_off(e)
+    count, addr = struct.unpack_from("<II", m.region, block + texconv.TRANSPARENT_MAPS)
+    if count < 2:
+        return []
+    first = addr - m.base
+    base = texconv.chicago_base_map(m, first, count)
+    out = []
+    for i in range(count):
+        if i == base:
+            continue
+        mo = first + i * texconv.SCHI_MAP[0]
+        cf, af = struct.unpack_from("<HH", m.region, mo + texconv.SCHI_COLOR_FN)
+        if i + 1 < count and cf in (texconv.CF_MULTIPLY, texconv.CF_DOUBLE_MULTIPLY) and af in (texconv.AF_CURRENT, texconv.AF_NEXT_MAP):
+            continue
+        if _bitmap_ref(m, mo + texconv.SCHI_MAP[3]) is not None:
+            out.append(i)
+    return out
+
+
+def resolve_layer(m: texconv.MapData, pseudo_id: int) -> texconv.ShaderInfo:
+    sid, index = _LAYERS[pseudo_id]
+    e = m.by_id[sid]
+    info = texconv.ShaderInfo(pseudo_id, "schi", f"{e.path}#map{index}")
+    block = m.tag_off(e)
+    count, addr = struct.unpack_from("<II", m.region, block + texconv.TRANSPARENT_MAPS)
+    mo = addr - m.base + index * texconv.SCHI_MAP[0]
+    info.bitmap_id = _bitmap_ref(m, mo + texconv.SCHI_MAP[3])
+    u, v = struct.unpack_from("<2f", m.region, mo + texconv.SCHI_MAP[1])[0], struct.unpack_from("<f", m.region, mo + texconv.SCHI_MAP[2])[0]
+    if 0.0 < u <= 4096.0 and 0.0 < v <= 4096.0:
+        info.uv_scale = (u, v)
+    info.blend = texconv.BLEND_ADD
+    info.flags |= texconv.BF_TWO_SIDED
+    if info.bitmap_id is None:
+        info.note, info.flags = "no layer map", info.flags | texconv.BF_UNTEXTURED
+    return info
+
+
+# Colour change (chgconv.py): a shader_model whose colour change source is a..d (+0x4C) and that has a multipurpose map (+0xBC) gets a second
+# texture, the base map with the multipurpose BLUE channel (the mask) as alpha, and `change_source` in its binding. The engine draws such a
+# part a second time over the first pass, alpha blended, with the object's change colour as the light colour.
+SOSO_CHANGE_SOURCE, SOSO_MULTIPURPOSE = 0x4C, 0xBC
+
+
+def soso_change(m: texconv.MapData, shader_id: int) -> tuple[int, int] | None:
+    """(change source 1..4, mask bitmap tag id) of a shader_model with a colour change and a multipurpose map, else None."""
+    e = m.by_id.get(shader_id)
+    if e is None or e.group != "soso":
+        return None
+    block = m.tag_off(e)
+    if block < 0 or block + SOSO_MIN_SIZE > len(m.region):
+        return None
+    src = struct.unpack_from("<H", m.region, block + SOSO_CHANGE_SOURCE)[0]
+    mask = _bitmap_ref(m, block + SOSO_MULTIPURPOSE)
+    return (src, mask) if 1 <= src <= 4 and mask is not None else None
+
+
+def convert_cc_texture(m: texconv.MapData, base: bitmaps.BitmapImage, mask: bitmaps.BitmapImage, source_id: int, max_dim: int) -> texconv.Ps2Texture:
+    """The base map (colour) with the mask's blue channel as alpha, converted like an object texture of alpha class blend."""
+    tw, th = target_size(base.width, base.height, max_dim)
+    level = 1 if base.mip_count >= 1 and base.width >> 1 >= tw and base.height >> 1 >= th else 0
+    w, h, rgba = bitmaps.decode_level(base, m.pixels(base), level)
+    mw, mh, mrgba = bitmaps.decode_level(mask, m.pixels(mask), 0)
+    plane = texconv.resample_plane(bytes(mrgba[2::4]), mw, mh, w, h)
+    rgba = bytearray(rgba)
+    rgba[3::4] = plane
+    rgba = texconv.resample_rgba(bytes(rgba), w, h, tw, th, True)
+    return texconv.convert_rgba(source_id, rgba, tw, th, texconv.CLASS_BLEND, 0, 128)
+
+
 def resolve_object_shader(m: texconv.MapData, shader_id: int) -> texconv.ShaderInfo:
-    """Base map, blend state and uv scale of a model part's shader. Never raises."""
+    """Base map, blend state and uv scale of a model part's shader (and its colour change, if any). Never raises."""
+    info = _resolve_object_shader(m, shader_id)
+    got = soso_change(m, shader_id)
+    if got is not None and info.bitmap_id is not None:
+        info.change_source, info.mask_bitmap = got
+    return info
+
+
+def _resolve_object_shader(m: texconv.MapData, shader_id: int) -> texconv.ShaderInfo:
+    if shader_id in _LAYERS:
+        return resolve_layer(m, shader_id)
     e = m.by_id.get(shader_id)
     if e is None or e.group != "soso":
         return texconv.resolve_shader(m, shader_id)
@@ -147,7 +247,7 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
     shaders = {sid: resolve_object_shader(m, sid) for sid in ids}
     reasons: dict[str, int] = {}
     # which bitmaps are actually decodable (decided before sizing the budget)
-    plan: dict[tuple[int, int], tuple[bitmaps.BitmapImage, int]] = {}
+    plan: dict[tuple[int, int, int], tuple[bitmaps.BitmapImage, int]] = {}
     for s in shaders.values():
         if s.bitmap_id is None:
             reasons[s.note or "no base map"] = reasons.get(s.note or "no base map", 0) + 1
@@ -161,18 +261,20 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             reasons[s.note] = reasons.get(s.note, 0) + 1
             continue
         cap = texconv.klass_cap_for(s)
-        plan.setdefault((s.bitmap_id, cap), (images[0], cap))
+        plan.setdefault((s.bitmap_id, cap, 0), (images[0], cap))
+        if s.mask_bitmap:
+            plan.setdefault((s.bitmap_id, -1, s.mask_bitmap), (images[0], cap))
     sizes = [(img.width, img.height) for img, _ in plan.values()]
     dim = max_dim
     while dim > MIN_MAX_DIM and estimate_bytes(sizes, dim) > budget:
         dim //= 2
     textures: list[texconv.Ps2Texture] = []
-    seen: dict[tuple[int, int], int] = {}
+    seen: dict[tuple[int, int, int], int] = {}
     for sid in ids:
         s = shaders[sid]
         if s.bitmap_id is None:
             continue
-        key = (s.bitmap_id, texconv.klass_cap_for(s))
+        key = (s.bitmap_id, texconv.klass_cap_for(s), 0)
         if key not in seen:
             img, cap = plan[key]
             try:
@@ -185,6 +287,19 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             textures.append(tex)
         s.texture = seen[key]
         tex = textures[s.texture]
+        if s.mask_bitmap and s.change_source:
+            key2 = (s.bitmap_id, -1, s.mask_bitmap)
+            if key2 not in seen:
+                try:
+                    mimgs = m.images(s.mask_bitmap)
+                    if not mimgs or not mimgs[0].decodable:
+                        raise bitmaps.BitmapError("colour change mask is not a decodable 2D image")
+                    seen[key2] = len(textures)
+                    textures.append(convert_cc_texture(m, plan[key][0], mimgs[0], s.bitmap_id, dim))
+                except bitmaps.BitmapError:
+                    s.change_source = 0
+            if s.change_source:
+                s.texture2 = seen[key2]
         if s.group == "soso" and s.alpha_test and not tex.flags & (texconv.TF_PUNCH | texconv.TF_BLEND):
             s.blend = texconv.BLEND_OPAQUE        # the map has no alpha: nothing to test
     blob = texconv.build_texs(textures, [shaders[sid] for sid in ids])

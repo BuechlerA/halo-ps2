@@ -15,6 +15,7 @@ typedef struct render_ctx {
 	const frustum_t *frustum;
 	u32             frame;
 	const render_options_t *opt;
+	int             sky_index;        /* palette entry of the sky to draw (vis_t.sky_index) */
 	int             sky_visible;      /* a visible cluster has the sky flag (vis_t.sky_visible): the sky pass draws only then */
 } render_ctx_t;
 
