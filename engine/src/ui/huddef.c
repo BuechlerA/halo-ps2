@@ -423,8 +423,8 @@ huddef_status huddef_fonts_open(huddef_fonts *f, const uint8_t *d, size_t size)
 			prev = code;
 			if (w * h != 0) {                                                      /* blanks (space) carry no texture */
 				if (rd16(g + 12) == HUDDEF_NONE) return HUDDEF_ERR_LAYOUT;
-				if (rd16(g + 18) < rd16(g + 14) || rd16(g + 18) - rd16(g + 14) != w ||
-				    rd16(g + 20) < rd16(g + 16) || rd16(g + 20) - rd16(g + 16) != h)
+				if (rd16(g + 18) < rd16(g + 14) || (uint32_t)(rd16(g + 18) - rd16(g + 14)) != w ||
+				    rd16(g + 20) < rd16(g + 16) || (uint32_t)(rd16(g + 20) - rd16(g + 16)) != h)
 					return HUDDEF_ERR_LAYOUT;
 			}
 		}

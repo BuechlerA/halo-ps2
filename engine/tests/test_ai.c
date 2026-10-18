@@ -9,6 +9,7 @@
  *   5. conversations through the sound hook
  *   6. cost of 16 actors (host microseconds per tick and per phase), determinism, snapshot / restore
  *   7. the built-ins through the registered script host (return values, effects), random-argument fuzz, a soak with the real a10 script machine */
+#define _POSIX_C_SOURCE 200809L   /* clock_gettime under -std=c11 on glibc */
 #include "ai/ai.h"
 #include "script/hs_host_ai.h"
 #include "script/hs_host_obj.h"
@@ -577,6 +578,7 @@ static void test_follow_list(void)
 			aidef_command_list_def cl;
 			aidef_command_def c[3];
 			unsigned k, n_go = 0, goals = 0;
+			(void)c;
 			aidef_point_def pts[3];
 			float spot[3], dmin;
 			int actor;

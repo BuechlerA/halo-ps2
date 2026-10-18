@@ -10,6 +10,7 @@
  *    on the sector graph (costs equal, completeness, partial end sector); reachability symmetry; every leg of the routes
  *    against coll_sphere_sweep; PATH_BENCH=1 (PATH_BENCH_BSP=<n>): queries per millisecond of the first pack's BSP n;
  *    PATH_VERBOSE=1 / PATH_VERBOSE2=1: describe / list the legs the capsule cannot follow. */
+#define _POSIX_C_SOURCE 200809L   /* clock_gettime under -std=c11 on glibc */
 #include "ai/path.h"
 #include "stream/hp2.h"
 #include "world/coll.h"

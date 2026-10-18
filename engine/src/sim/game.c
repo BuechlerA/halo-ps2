@@ -203,7 +203,8 @@ static int ray_objects(game_t *g, const float a[3], const float b[3], int ignore
 		r = o->radius * 1.5f + 0.3f;
 		rel[0] = o->pos[0] - a[0]; rel[1] = o->pos[1] - a[1]; rel[2] = o->pos[2] - a[2];
 		t = dl2 > 0.0f ? dot3(rel, d) / dl2 : 0.0f;
-		if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+		if (t < 0.0f) t = 0.0f;
+		if (t > 1.0f) t = 1.0f;
 		c[0] = a[0] + d[0] * t - o->pos[0]; c[1] = a[1] + d[1] * t - o->pos[1]; c[2] = a[2] + d[2] * t - o->pos[2];
 		if (dot3(c, c) > r * r) continue;
 		if (!cmod_get_model(g->cmod, (uint32_t)u->model, &m) || m.node_count > 64) continue;
