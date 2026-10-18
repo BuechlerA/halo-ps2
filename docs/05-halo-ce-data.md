@@ -49,7 +49,7 @@ uncompressed cache the game sees in memory. `tools/halo2ps2/mapinfo.py` does thi
 - **Model vertex and index buffers live inside the tag region on Xbox**: the
   index header stores them as `0x80xxxxxx` pointers right after the path strings
   (3.9–4.9 MiB of vertices per campaign map, see
-  [reports/tag-inventory.md](reports/tag-inventory.md)). PC stores a file offset
+  [reports/tag-index.md](reports/tag-index.md)). PC stores a file offset
   and size there instead. Bitmap pixels and sound samples are raw data outside
   tag space, referenced by file offset and streamed by the Xbox engine (sounds on
   demand, BSPs on switch).

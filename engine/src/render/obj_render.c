@@ -216,14 +216,14 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 		diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
 		if (diameter < 3.0f && dist > ob->radius * 2.0f) { o->st_culled++; continue; }   /* sub-pixel clutter */
 		lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
-		if ((ob->flags & OBJ_F_ANIMATED) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { o->st_culled++; continue; }
+		if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { o->st_culled++; continue; }
 		light_at(o, c, &light);
 		o->st_visible++;
 		if (draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget > o->st_batches ? budget - o->st_batches : 0) == 0
 		    && o->st_batches >= budget) { o->st_skipped++; }
 	}
 
-	if (o->draw_fp && o->fp && o->fp->active) {
+	if (o->draw_fp && !o->hide_fp && o->fp && o->fp->active) {
 		const fpview_t *f = o->fp;
 		scen_light light;
 		uint16_t perm[OBJ_MAX_REGIONS];
@@ -245,7 +245,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 			mi = model_get(o->world.models, (uint32_t)f->weapon_model);
 			model_select_permutations(o->world.models, &mi, NULL, perm);
 			for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
-			if (objects_pose_model(&o->world, f->weapon_model, f->weapon_graph, f->weapon_anim, f->weapon_frame, f->weapon_node_offset, &f->weapon_root, &wn))
+			if (objects_pose_model(&o->world, f->weapon_model, f->weapon_graph, f->weapon_anim, f->weapon_frame, &f->weapon_root, &wn))
 				draw_model(o, rc, f->weapon_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS, &wn, 0, &light, 400);
 		}
 	}

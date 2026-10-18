@@ -276,7 +276,7 @@ static int check_corruption(const uint8_t *good, size_t n)
 	buf[0] = 'X';
 	CHECK(anim_open(&s, buf, n) == ANIM_ERR_MAGIC);
 	buf[0] = 'A';
-	buf[4] = 2;
+	buf[4] = 3;                                  /* version 2 is the current one */
 	CHECK(anim_open(&s, buf, n) == ANIM_ERR_VERSION);
 	free(buf);
 	CHECK(anim_open(&s, NULL, 0) == ANIM_ERR_TRUNCATED);

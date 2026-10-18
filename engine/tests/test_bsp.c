@@ -127,7 +127,7 @@ int main(int argc, char **argv)
 	for (uint32_t i = 0; i < 6; i++) {
 		bsp_batch bt = bsp_get_batch(&b, i);
 		CHECK(bt.triangles == tris[i] && bt.material == mat[i] && bt.radius > 0.0f);
-		CHECK(bt.vif_offset % 16 == 0 && bt.vif_qwords * 16 >= 4 + 32 + 3 * bt.triangles * 20);
+		CHECK(bt.vif_offset % 16 == 0 && bt.vif_qwords * 16u >= 4u + 32u + 3u * bt.triangles * 20u);
 	}
 	/* batch 0 packet: UNPACK V4-32 addr 0 (2 qw), V4-16 addr 4 and 76, V4-8 unsigned addr 148 */
 	bsp_batch b0 = bsp_get_batch(&b, 0);

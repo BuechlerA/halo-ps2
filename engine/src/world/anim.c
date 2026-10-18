@@ -111,7 +111,7 @@ anim_status anim_open(anim_section *s, const uint8_t *d, size_t size)
 	memset(s, 0, sizeof *s);
 	if (!d || size < HEADER_SIZE) return ANIM_ERR_TRUNCATED;
 	if (memcmp(d, "ANIM", 4) != 0) return ANIM_ERR_MAGIC;
-	if (rd16(d + 4) != 1u) return ANIM_ERR_VERSION;
+	if (rd16(d + 4) != 2u) return ANIM_ERR_VERSION;
 	ng = rd32(d + 8);
 	na = rd32(d + 12);
 	goff = rd32(d + 16);
@@ -133,6 +133,11 @@ anim_status anim_open(anim_section *s, const uint8_t *d, size_t size)
 		prev_tag = tag;
 		if (nn < 1u || nn > ANIM_MAX_NODES || first != acc || cnt > na - acc) return ANIM_ERR_LAYOUT;
 		if (doff % 16u || doff < POOL_RESERVED || doff > pool_size || (size_t)nn * 32u > pool_size - doff) return ANIM_ERR_LAYOUT;
+		{
+			uint32_t noff = rd32(g + 20), n;
+			if (noff % 16u || noff < POOL_RESERVED || noff > pool_size || (size_t)nn * ANIM_NODE_NAME_LEN > pool_size - noff) return ANIM_ERR_LAYOUT;
+			for (n = 0; n < nn; n++) if (d[poff + noff + ANIM_NODE_NAME_LEN * n + ANIM_NODE_NAME_LEN - 1] != 0) return ANIM_ERR_LAYOUT;
+		}
 		for (k = 0; k < cnt; k++) {
 			const uint8_t *a = d + aoff + ANIM_REC * (first + k);
 			uint32_t type = rd16(a + A_TYPE), fc = rd16(a + A_FRAMES), loop = rd16(a + A_LOOP), fl = rd16(a + A_FLAGS);
@@ -187,8 +192,23 @@ anim_graph anim_get_graph(const anim_section *s, uint32_t index)
 		g.node_count = (uint16_t)rd16(p + 4);
 		g.anim_count = (uint16_t)rd16(p + 6);
 		g.first_anim = rd32(p + 8);
+		g.names_off = rd32(p + 20);
 	}
 	return g;
+}
+
+const char *anim_node_name(const anim_section *s, const anim_graph *g, uint32_t i)
+{
+	if (!s || !s->pool || !g || i >= g->node_count || !g->names_off) return "";
+	return (const char *)s->pool + g->names_off + ANIM_NODE_NAME_LEN * i;
+}
+
+int anim_find_node(const anim_section *s, const anim_graph *g, const char *name)
+{
+	uint32_t i;
+	if (!name || !name[0]) return -1;
+	for (i = 0; g && i < g->node_count; i++) if (strcmp(anim_node_name(s, g, i), name) == 0) return (int)i;
+	return -1;
 }
 
 /* The record of animation k of g, or NULL when g does not belong to this section / k is out of range. */

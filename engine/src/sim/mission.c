@@ -186,6 +186,27 @@ void mission_sync_player(mission_t *m)
 	o->flags &= ~OBJ_F_INACTIVE;
 }
 
+void mission_sync_devices(mission_t *m)
+{
+	unsigned i;
+	if (!m->devices || !m->dev || !m->objects) return;
+	for (i = 0; i < m->devices->count; i++) {
+		devdef_device pd = devdef_get_device(m->dev, i);
+		devdef_def df;
+		object_t *o;
+		int slot;
+		if (pd.scen_index == DEVDEF_NONE || pd.scen_index >= OBJ_MAX_PLACEMENTS) continue;
+		slot = m->objects->by_placement[pd.scen_index];
+		if (!mission_object_live(m, slot)) continue;
+		o = &m->objects->obj[slot];
+		df = devdef_get_def(m->dev, pd.def);
+		if (o->graph < 0 || df.pos_anim == DEVDEF_NO_ANIM) continue;
+		o->anim = df.pos_anim;
+		o->frame = devices_anim_frame(m->devices, i);
+		o->flags = (o->flags & ~OBJ_F_ANIMATED) | OBJ_F_POSED;
+	}
+}
+
 /* zones: 0 scripts, 1 devices, 2 object pre-hook, 3 AI, 4 units, 5 game, 6 post-hook + misc, 7 cinematics */
 #define ZONE(z, stmt) do { uint32_t zt = m->clock ? m->clock() : 0; stmt; if (m->clock) { float zms = m->clock_ms(zt, m->clock()); m->zone_sum[z] += zms; if (zms > m->zone_peak[z]) m->zone_peak[z] = zms; } } while (0)
 void mission_tick(mission_t *m, const game_input_t *in)
@@ -194,7 +215,7 @@ void mission_tick(mission_t *m, const game_input_t *in)
 	if (m->game) m->game->player_frozen = m->cinematic;
 	mission_sync_player(m);
 	ZONE(0, if (m->hs) hs_tick(m->hs));
-	ZONE(1, if (m->devices) devices_tick(m->devices));
+	ZONE(1, if (m->devices) { devices_tick(m->devices); mission_sync_devices(m); });
 	ZONE(2, hs_host_obj_pre(m, in));                           /* recordings feed their units; latches the player's input for the action tests */
 	ZONE(3, if (m->ai) ai_tick(m->ai));                        /* decisions: unit controls */
 	ZONE(4, if (m->units && m->game) units_tick(m->units, m->game));    /* execution */

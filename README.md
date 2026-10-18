@@ -19,6 +19,7 @@ campaign** from the user's own Xbox disc, targeting a **locked 30 fps** (60 fps 
 | [docs/11-model-section.md](docs/11-model-section.md), [12-anim-section.md](docs/12-anim-section.md), [13-scen-section.md](docs/13-scen-section.md) | Object models, animations, scenario placements and lighting |
 | [docs/14-phase3-plan.md](docs/14-phase3-plan.md) and [15](docs/15-coll-section.md) [16](docs/16-cmod-section.md) [17](docs/17-unit-section.md) [18](docs/18-weap-section.md) [19](docs/19-ansm-section.md) [20](docs/20-hud-section.md) [21](docs/21-snd-section.md) [22](docs/22-fx-section.md) | Phase 3 workstreams: collision, object hit shapes, units, weapons, animation state tables, HUD, sound, effects |
 | [docs/23-phase4-plan.md](docs/23-phase4-plan.md) and [24](docs/24-script-section.md) [25](docs/25-ai-section.md) [26](docs/26-path-section.md) [27](docs/27-dev-section.md) [28](docs/28-cine-section.md) [29](docs/29-strm-section.md) [30](docs/30-mission-host.md) [31](docs/31-units.md) [32](docs/32-ai-runtime.md) [33](docs/33-host-objects.md) [34](docs/34-host-misc.md) | Phase 4 workstreams: scripts, AI data, pathfinding, devices, cinematics, streamed audio, mission host, units, AI runtime, script built-ins |
+| [docs/35-xbox-reference.md](docs/35-xbox-reference.md) | xemu setup for Xbox parity checks (boot files are user-supplied) |
 | [docs/10-m1-hardware-check.md](docs/10-m1-hardware-check.md) | Console procedure (deferred to Phase 6) and the `halo.cfg` reference |
 
 ## Layout

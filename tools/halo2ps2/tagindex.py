@@ -5,7 +5,7 @@ The tag region starts at the header's ``tag data offset`` and is loaded by the
 Xbox at virtual base 0x803A6000; every pointer inside it is an absolute address
 (``offset = address - base + tag_data_offset``).  See docs/05-halo-ce-data.md.
 
-Index header (36 bytes, verified on all retail maps, see docs/reports/tag-inventory.md):
+Index header (36 bytes, verified on all retail maps, see docs/reports/tag-index.md):
 
     +0x00 u32  tag array address        (= base + 0x24 on every map)
     +0x04 u32  scenario tag id          (index in low 16 bits, salt in high 16)
@@ -442,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     ar = sub.add_parser("report", help="write the markdown inventory")
     ar.add_argument("maps", nargs="+", type=Path)
-    ar.add_argument("-o", "--out", type=Path, default=Path("docs/reports/tag-inventory.md"))
+    ar.add_argument("-o", "--out", type=Path, default=Path("docs/reports/tag-index.md"))
     ar.add_argument("--no-inventory", action="store_true", help="skip bitmap/sound/script statistics")
     ar.add_argument("--json", action="store_true", help="print summaries as JSON too")
     ad = sub.add_parser("dump", help="list tag entries")

@@ -22,8 +22,10 @@ skeleton already starts.**
 - [x] Decompress all 10 campaign maps; produce tag inventory per map (group
       counts, raw data sizes, bitmap formats/resolutions, sound formats, script
       built-in usage, structure BSP counts) →
-      [reports/tag-inventory.md](reports/tag-inventory.md) (reports only, no data)
-- [x] Choose pipeline parser: hand-written structs, ADR-011
+      [reports/tag-index.md](reports/tag-index.md) (`tagindex.py report`: layout, tag regions, BSPs) and
+      [reports/tag-inventory.md](reports/tag-inventory.md) (`report.py`: bitmaps, sounds, script built-ins by name from the
+      executable's function table, `hsnames.py`); reports only, no data
+- [x] Choose pipeline parser: hand-written structs, ADR-011 (`tagindex.py` for the converters, `tagcache.py` for the inventory report)
 - [x] CI: `.github/workflows/ci.yml` builds the ELF (ps2dev image), runs the tool
       tests, the host C tests and the asset-free check on every push
       (green on GitHub; its first run caught two real failures: LeakSanitizer on Linux

@@ -83,10 +83,7 @@ static void fp_apply_slot(game_t *g)
 	if (!s || s->weapon < 0 || s->fp_model < 0) { f->weapon_model = -1; fp_set(g, -1); return; }
 	f->weapon_model = s->fp_model;
 	f->weapon_graph = s->fp_graph;
-	if (s->fp_graph >= 0) {
-		f->arms_graph = s->fp_graph;                           /* arms and gun share the weapon's graph */
-		f->weapon_node_offset = (unsigned)model_get(g->ow.models, (uint32_t)f->arms_model).node_count;
-	}
+	if (s->fp_graph >= 0) f->arms_graph = s->fp_graph;     /* arms and gun share the weapon's graph (nodes mapped by name) */
 	fp_set(g, s->fp_anim_idle);
 	g->fp_timer = 0; g->fp_action = -1;
 }
@@ -869,6 +866,10 @@ void game_tick(game_t *g, const game_input_t *in)
 		const game_slot_t *cs = &g->slot[g->cur];
 		float sp = sqrtf(g->player.vel[0] * g->player.vel[0] + g->player.vel[1] * g->player.vel[1]);
 		int mv = fp_anim_for(g, cs, ANSM_FP_MOVING), idle = cs->fp_anim_idle;
+		if (mv >= 0 && cs->fp_graph >= 0 && g->ow.anims) {                 /* 'moving' is an OVERLAY in the data: not a base pose (overlay blending: later) */
+			anim_graph ag = anim_get_graph(g->ow.anims, (uint32_t)cs->fp_graph);
+			if (anim_get(g->ow.anims, &ag, (uint32_t)mv).type != 0) mv = -1;
+		}
 		int want = (sp > 0.4f && g->player.on_ground && mv >= 0) ? mv : idle;
 		if (g->fp && g->fp->active && want >= 0 && g->fp->arms_anim != (unsigned)want) fp_set(g, want);
 	}
@@ -896,7 +897,7 @@ void game_camera(const game_t *g, camera_t *cam)
 	const weap_weapon *w = cur_def(g);
 	player_eye(&g->player, &g->pp, eye);
 	cam->pos[0] = eye[0]; cam->pos[1] = eye[1]; cam->pos[2] = eye[2];
-	cam->yaw = g->player.yaw; cam->pitch = g->player.pitch;
+	cam->yaw = g->player.yaw; cam->pitch = g->player.pitch; cam->roll = 0.0f;
 	if (g->shake > 0.0f) {
 		float t = (float)g->tick;
 		cam->pitch += g->shake * sinf(t * 2.9f);

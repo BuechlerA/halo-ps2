@@ -117,13 +117,16 @@ because their node list is assembled at runtime / the model is elsewhere). Objec
 model at +0x28 and the graph at +0x38 (tag reference: 4 group, 4 path pointer, 4 length, 4 tag id).
 
 =====================================================================================================
-`ANIM` section format, version 1 (little endian, offsets from the section start; docs/12-anim-section.md)
+`ANIM` section format, version 2 (little endian, offsets from the section start; docs/12-anim-section.md)
 =====================================================================================================
-    header (64 B)  "ANIM", u16 version 1, u16 flags 0, u32 graph_count, u32 anim_count, u32 graphs_off,
+    header (64 B)  "ANIM", u16 version 2, u16 flags 0, u32 graph_count, u32 anim_count, u32 graphs_off,
                    u32 anims_off, u32 pool_off, u32 total size, zero to 64
     graph (32 B)   u32 tag_id, u16 node_count, u16 anim_count, u32 first_anim, u32 default_off (pool
                    offset of node_count x 32 B anim_xform floats: x y z w, tx ty tz, scale), u32 model tag
-                   id the rest pose was read from (0 = none: derived from animation data), zero to 32
+                   id the rest pose was read from (0 = none: derived from animation data), u32 names_off (pool
+                   offset of node_count x 32 B NUL-terminated node names in graph order; version 2: the engine
+                   maps a model's nodes onto a graph by name, so a graph may order nodes differently from the
+                   model, as the first-person weapon graphs do), zero to 32
     anim (96 B)    char[48] name, u16 type, u16 frame_count, u16 loop_frame, u16 flags, u16 node_count,
                    u16 root motion type (0..3 like `frame info type`; 0 = none or all zero), u16 node count of
                    the graph, 2 pad, f32 fps, u32 data_off, u32 data_bytes (pool-relative blob), u32 root_off
@@ -178,11 +181,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from halo2ps2 import hp2, mapinfo, tagindex  # noqa: E402
 
 MAGIC = b"ANIM"
-VERSION = 1
+VERSION = 2
 HEADER_SIZE = 64
 GRAPH_REC = 32
 ANIM_REC = 96
 NAME_LEN = 48
+NODE_NAME_LEN = 32                  # per node name slot in the graph's name table (model node names are 32 B too)
 MAX_NODES = 64
 POOL_ALIGN = 16
 
@@ -878,6 +882,7 @@ class GraphSource:
     rest: RestPose
     model_tag: int = 0
     problems: list[str] = field(default_factory=list)
+    node_names: list[str] = field(default_factory=list)     # graph order; missing names are written empty
 
 
 @dataclass
@@ -951,8 +956,10 @@ def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | Non
         default = b"".join(struct.pack("<4f3ff", *g.rest.rot[n], *g.rest.trans[n], g.rest.scale[n])
                            for n in range(g.node_count))
         default_off, _ = pool.add(default)
-        graph_recs.append(struct.pack("<IHHII I 12x", g.tag_id, g.node_count, len(g.anims), len(anim_recs),
-                                      default_off, g.model_tag))
+        names = b"".join(_node_name_bytes(g.node_names[n] if n < len(g.node_names) else "", g.path) for n in range(g.node_count))
+        names_off, _ = pool.add(names)
+        graph_recs.append(struct.pack("<IHHII I I 8x", g.tag_id, g.node_count, len(g.anims), len(anim_recs),
+                                      default_off, g.model_tag, names_off))
         gbytes = len(default)
         needed = None if animations_needed is None or g.tag_id not in animations_needed \
             else {int(i) for i in animations_needed[g.tag_id]}
@@ -1008,6 +1015,13 @@ def _pad16(n: int) -> int:
     return (n + 15) & ~15
 
 
+def _node_name_bytes(name: str, path: str) -> bytes:
+    raw = name.encode("latin1", "replace")
+    if len(raw) >= NODE_NAME_LEN:
+        raise ConvertError(f"{path}: node name {name!r} too long")
+    return raw.ljust(NODE_NAME_LEN, b"\0")
+
+
 # ---- map -> graphs -----------------------------------------------------------------------------------------
 def collect_models(t: MapTags) -> dict[int, ModelRest]:
     return {e.tag_id: read_model_rest(t, e) for e in t.idx.entries if e.group == "mode"}
@@ -1051,7 +1065,7 @@ def graph_source(g: Graph, models: dict[int, ModelRest], users: dict[int, list[i
             problems.append("no model with this node list checksum: rest pose derived from the animations")
         rest = rest_from_anims(g.anims, nn)
         pick = None
-    return GraphSource(g.tag_id, g.path, nn, g.anims, rest, pick.tag_id if pick else 0, problems)
+    return GraphSource(g.tag_id, g.path, nn, g.anims, rest, pick.tag_id if pick else 0, problems, [n.name for n in g.nodes])
 
 
 def load_graphs(src, anim_tags: list[int] | None = None) -> list[GraphSource]:
@@ -1086,6 +1100,7 @@ class SGraph:
     first_anim: int
     default_off: int
     model_tag: int
+    names_off: int = 0
 
 
 @dataclass
@@ -1132,6 +1147,11 @@ class Section:
         raw = self.pool(g.default_off, 32 * g.node_count)
         v = [struct.unpack_from("<8f", raw, 32 * n) for n in range(g.node_count)]
         return RestPose([x[0:4] for x in v], [x[4:7] for x in v], [x[7] for x in v])
+
+    def node_names(self, gi: int) -> list[str]:
+        g = self.graphs[gi]
+        raw = self.pool(g.names_off, NODE_NAME_LEN * g.node_count)
+        return [_cstr(raw[NODE_NAME_LEN * n:NODE_NAME_LEN * (n + 1)]) for n in range(g.node_count)]
 
     def blob(self, a: SAnim) -> bytes:
         return self.pool(a.data_off, a.data_bytes)
@@ -1283,8 +1303,8 @@ def parse_section(data: bytes) -> Section:
         raise ConvertError("inconsistent header")
     graphs = []
     for i in range(ng):
-        tag, nn, cnt, first, doff, model = struct.unpack_from("<IHHIII", data, goff + GRAPH_REC * i)
-        graphs.append(SGraph(tag, nn, cnt, first, doff, model))
+        tag, nn, cnt, first, doff, model, noff = struct.unpack_from("<IHHIIII", data, goff + GRAPH_REC * i)
+        graphs.append(SGraph(tag, nn, cnt, first, doff, model, noff))
     anims = []
     for i in range(na):
         (name, typ, fc, loop, flags, nn, rtype, gnodes, fps, doff, dbytes, roff,

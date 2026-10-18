@@ -10,10 +10,12 @@
 #define RENDER_CAMERA_H
 
 #define FRUSTUM_MAX_PLANES 16
+#define CAMERA_NEAR_DEFAULT 0.05f
 
 typedef struct {
 	float pos[3];
 	float yaw, pitch;          /* radians; pitch clamped to +-89 degrees by camera_look */
+	float roll;                /* radians, positive banks right (cinematic cameras; 0 for the player) */
 	float hfov;                /* horizontal field of view, radians (Halo default 70 degrees) */
 	float aspect;              /* display aspect, width/height (4/3: the buffer is 512x448 anamorphic) */
 	float near_z, far_z;

@@ -3,8 +3,10 @@
  * world/anim.c (reader + sampler, host-tested, pure C11, no heap, no double) and the engine's object
  * animation player.
  *
- * Node i of a graph is node i of the model it animates (Halo requires identical skeletons; the converter
- * checks node names against the model tags that use the graph and reports mismatches).
+ * Version 2 carries the graph's node NAMES: a model's node is driven by the graph node of the same name
+ * (sim/objects.c builds that map), because a graph may order its nodes differently from a model it animates
+ * (the first-person weapon graphs interleave hand and gun nodes breadth-first). Graphs whose node list matches
+ * the model's in order (every biped and its own graph) map 1:1.
  * Animation time is in frames at 30 Hz (the original tick rate, R3). */
 #ifndef WORLD_ANIM_H
 #define WORLD_ANIM_H
@@ -13,6 +15,7 @@
 
 #define ANIM_MAX_NODES 64
 #define ANIM_NAME_LEN 48
+#define ANIM_NODE_NAME_LEN 32
 
 typedef enum { ANIM_OK = 0, ANIM_ERR_TRUNCATED, ANIM_ERR_MAGIC, ANIM_ERR_LAYOUT, ANIM_ERR_VERSION } anim_status;
 
@@ -34,6 +37,7 @@ typedef struct {
 	uint32_t tag_id;                   /* Xbox tag id of the `model_animations` tag */
 	uint16_t node_count, anim_count;
 	uint32_t first_anim;               /* into the section's animation table */
+	uint32_t names_off;                /* pool offset of node_count x ANIM_NODE_NAME_LEN names */
 } anim_graph;
 
 typedef struct {
@@ -51,6 +55,10 @@ anim_status anim_open(anim_section *s, const uint8_t *data, size_t size);
 int         anim_find_graph(const anim_section *s, uint32_t tag_id);       /* binary search, -1 if absent */
 anim_graph  anim_get_graph(const anim_section *s, uint32_t index);
 anim_info   anim_get(const anim_section *s, const anim_graph *g, uint32_t k);
+/* Name of graph node i (NUL-terminated, at most ANIM_NODE_NAME_LEN - 1 characters; "" out of range or unnamed). */
+const char *anim_node_name(const anim_section *s, const anim_graph *g, uint32_t i);
+/* Index of the graph node called `name`, or -1. */
+int         anim_find_node(const anim_section *s, const anim_graph *g, const char *name);
 /* First animation whose name contains `token` (case-sensitive), or -1. Prefer exact matches. */
 int         anim_find_name(const anim_section *s, const anim_graph *g, const char *token);
 /* Sample animation k at fractional frame `frame` (loops or clamps per its flags) into `out`: all
