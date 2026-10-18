@@ -523,5 +523,16 @@ the tracker top right and everything flush with the screen edges; a gameplay fra
 in their bottom-left corner. **Consequences**: HUD packs must be rebuilt (`hudconv.py` per map, 0.3 s each; the reader rejects version 1); the velocity-sensitivity rule
 (still enemies hidden) and blip fading are not modelled; `motion scale` is exported but the radar radius comes from the centre offset. Details: docs/20-hud-section.md.
 
+## ADR-061 HUD offsets count inward from right anchors, meter bitmaps are flat masks, digits keep their cell size, weapon overlays are drawn
+**Decision**: `hudconv.py` places right-anchored elements at `x = anchor - off_x - w` (the offset counts inward, like the motion sensor centre already did; y stays down,
+bottom anchors keep their unverified mirror); the a8y8 meter bitmaps (`hud_unit_meters`, `hud_ammo_meters`) are converted to white alpha masks (their luminance is the tag's
+fill-order ramp, not a colour), so a meter is one flat tint clipped by its value; `ui/hud.c` draws a digit sprite at its own cell size (18 x 12) centred on the 9 px advance
+instead of squeezing the cell into the advance, and draws the weapon HUD's overlay sub elements (role 9: the "x" and clip icon after the ammo count). **Why**: the HUD of the
+a10 game scene was a "buggy mess" (no readable ammo digits, health segments 60 px right of the shield plate, shield fill 13 px past the panel, black-to-blue luminance
+gradients on the bars); an Xbox attract-demo frame (xemu, 3.5 px per virtual pixel) shows the shield / health plate, the "540 x" panel and the three-row ammo bar, and the
+corrected layout lands within 2 px of it. **Consequences**: `HUD0` stays version 2, so a pack built before this change is accepted but wrong: rebuild every HUD pack
+(`hudconv.py` per map). Meters clip by width, not by the Xbox's per-pixel luminance threshold (partial segments show, the ammo bar empties right to left rather than
+row by row); meter translucency / opacity and the grenade type of the panel colour are not modelled. Details: docs/20-hud-section.md.
+
 ## Open decisions
 None.
