@@ -53,7 +53,7 @@ static void walk(const unitdef_section *s)
 		if (got != (i < s->vehicle_count)) abort();
 		if (got && unitdef_find_vehicle(s, v.tag_id) != (int)i) abort();
 		if (v.type > UNITDEF_VEH_TURRET || !isfinite(v.max_forward)) abort();
-		for (k = 0; k < v.seat_count + 2; k++) {
+		for (k = 0; k < (uint32_t)v.seat_count + 2u; k++) {
 			int ok = unitdef_vehicle_seat(s, &v, k, &seat);
 			if (ok != (k < v.seat_count)) abort();
 			acc += seat.flags + (uint32_t)strlen(seat.label) + (uint32_t)strlen(seat.marker) + (uint32_t)strlen(seat.camera_marker);

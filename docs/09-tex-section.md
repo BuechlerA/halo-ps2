@@ -27,6 +27,7 @@ maps (a10 a30 a50 b30 b40 c10 c20 c40 d20 d40):
 | Lightmap pages are R5G6B5, swizzled, 8..512 px, no mips; the bitmap tag is the tag reference at `structure_bsp+0x00` (tag id at +0x0C, `0xFFFFFFFF` = none); the lightmap record's first `u16` is the page index; stored uv map straight to texel rows (v = 0 is the first row) | verified (no vertex of a10 BSP 1 lands on the atlas fill colour; with v flipped 25 % do) |
 | senv: flags `u16` at +0x28 (bit 0 alpha-tested), type `u16` at +0x2A, base map reference at +0x88; there is no base map uv scale | verified (every alpha-tested shader is a grate / alpha test / canopy / trees / moss material, every blended-type one is terrain or cliff) |
 | sotr / schi: counter `u8` +0x28, flags `u8` +0x29 (bit 0 alpha-test, bit 1 decal, bit 2 two-sided), framebuffer blend `u16` +0x2C, maps reflexive at +0x54, map element 100 B (sotr) or 220 B (schi); bitmap reference at element +0x1C / +0x6C, uv scale at +0x04,+0x08 / +0x54,+0x58 | verified for flags, blend (all light shaders add, rivers alpha) and bitmap references; uv scales plausible (one retail shader has 8 x 8), schi scale offsets only checked on sky shaders |
+| schi map: colour function `u16` +0x2C and alpha function `u16` +0x2E of each map say how the **next** map combines with it (0 current, 1 next map, 2 multiply, 3 double multiply, 4 add, ...). The PS2 base map is the least-tiled map that is not a pure colour modulator (multiply / double multiply with alpha function 0 or 1): `chicago_base_map`, ADR-058 | verified on every multi-map schi of a10 a30 b40 c10 d40 (space skies: mask x3 then stars; a30 sky dusk: mask, twinkle, stars, then the gradient; horizon land: detail tile then painting; rivers: alpha mask then water) |
 | sgla: diffuse scale +0x154, diffuse map +0x158; swat: base map +0x4C | verified (names), swat has no scale |
 | `scex`, `smet`, `spla`, `soso` and every other group | not used by BSP materials; resolve to "untextured" |
 | a8 decodes as white with the stored alpha; p8 / p8-bump as grey | unverified (no BSP base map uses them) |
@@ -114,6 +115,22 @@ add) to add. Water (swat) and glass (sgla) are alpha blended.
 
 Untextured fallback ("flat grey"): shaders with no base map (e.g. self-illumination only), cube
 or 3D base maps (cryo glass, monitor glass), unknown tag ids and unsupported shader groups.
+The engine draws an untextured **opaque** material flat (vertex colour, lightmap on top) and
+**skips** an untextured **blended** one (ADR-057): with no base map an additive or alpha-blended
+material can only add a flat grey over what is behind it.
+
+What stays flat on a10 and why (the 14 of 55 materials of BSP 7, the exterior, that the
+playtest review F10 counted; the other 41 are `senv` hull and panel shaders with DXT base maps,
+converted as usual, see `resolve_shader`):
+
+| shader | group, flags | materials (BSP 7 / all a10) | base map | why it stays flat |
+|---|---|---|---|---|
+| `levels\a10\shaders\cryo glass` | sotr, two-sided, add | 11 / 41 | `cube map glass` (cube, 64 px) | cube-map reflection only (ADR-004: no environment maps); skipped by the engine, the tube/window shows what is behind it |
+| `levels\a10\shaders\monitor glass` | sotr, two-sided, alpha | 2 / 4 | `cube map pillar controls` (cube) | same |
+| `levels\a10\shaders\monitor glow` | senv, opaque | 1 / 2 | none (self-illumination map only) | no base map; drawn flat grey under its lightmap |
+
+The playtest's "flat grey blob" was not these materials: the exterior's hull shaders were bound
+and uploaded all along, and the blob was the clip-matrix corruption of ADR-057.
 
 ## `LMn` layout (lightmap pages of BSP n)
 Header, 64 bytes: `char[4] "LMAP"`, `u16 version (1)`, `u16 reserved`, `u32 page slots`,
@@ -191,6 +208,13 @@ at every length under ASan/UBSan. The Python twin is `texconv.parse_texs` / `par
 
 ## Open points
 * Lightmap gain (0x80 vs 0xFF for 1.0) needs the Phase 6 console pass; the PSMT8 CLUT swap is confirmed on the console.
+* The a10 bridge (BSP 1) was reported "far darker than the Xbox" (playtest review F11) on frames that ADR-057 has since
+  shown were drawn with a corrupted projection, so the observation is void. The data does not single the bridge out
+  either (2026-10-18, lightmap sampled at every baked vertex, gain 1.5): raw luma mean 72 on BSP 1 against 49 in the
+  cryo bay (BSP 0), 64 in BSP 4 and 85 in the hangar; brightest channel / luma 1.10 with no vertex beyond the 2.0 chroma
+  clamp (BSP 4: 4.4 %), 0 % blue-dominant texels, reconstructed brightness 1.01 of the ideal. The post-fix bridge dumps
+  average 32 (frame 1500, Keyes against the dark console wall) and 92 (frame 2400, the lit ceiling). The global gain
+  stays 1.5; a xemu capture of the same frames (docs/35) is the next step if the bridge still reads dark on screen.
 * Detail maps could return as a second pass if fill allows; `senv` keeps their tags at +0xB8,
   +0xCC, +0xFC with scales at +0xB4, +0xC8, +0xF8.
 * Sprite sheets, cube maps and 3D bitmaps (particles, sky, reflections) are skipped by the

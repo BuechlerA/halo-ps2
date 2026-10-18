@@ -633,7 +633,7 @@ int fxdef_sprite(const fxdef_section *s, uint32_t bitmap, uint32_t sequence, uin
 	out->texture = FXD_NONE;
 	if (!in_range(s, FXD_T_BITMAPS, bitmap)) return 0;
 	/* the last non-empty sequence at or before the requested one, else the first non-empty one */
-	seq = sequence < b.sequence_count ? sequence : (b.sequence_count ? b.sequence_count - 1 : 0);
+	seq = sequence < b.sequence_count ? sequence : (b.sequence_count ? (uint32_t)b.sequence_count - 1u : 0u);
 	for (k = seq + 1; k-- > 0;) {
 		fxd_sequence q = fxdef_get_sequence(s, &b, k);
 		if (q.sprite_count) {

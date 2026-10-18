@@ -73,6 +73,7 @@ typedef struct {
 	uint8_t  has_vitals, dead, fading;
 	uint16_t death_ticks;
 	uint8_t  ally;                  /* set by units.c: an ally of the player (its projectiles never hurt the player) */
+	uint8_t  team;                  /* the unit tag's default team (0 none, 1 player, 2 human, 3 covenant, 4 flood, 5 sentinel), overwritten by units.c */
 	float    dmg_scale;             /* set by units.c: multiplier on the damage of the projectiles this object owns (0 = 1) */
 } game_unit_t;
 

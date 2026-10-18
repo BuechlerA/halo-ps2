@@ -391,10 +391,10 @@ int main(int argc, char *argv[])
 		}
 		if (load_bsp(first_bsp)) return 1;
 	}
+	apply_options();   /* every config, with or without an object pack (ADR-059); `skyfog` reads s_world.sky, loaded with the obj pack above */
 	if (s_have_objects) {
 		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
 		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
-		apply_options();                                     /* sky-derived fog needs the sky data */
 		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
 	printf("[mem] level arena: %u KB used of %u KB\n", (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024));
@@ -642,8 +642,8 @@ int main(int argc, char *argv[])
 		if ((frame % 60) == 0) {
 			profiler_report(&s_prof);
 			if (s_path.count == 0 && cfg_int(&s_cfg, "printcam", 0))
-				printf("[cam] pos %.2f %.2f %.2f yaw %.1f pitch %.1f\n", s_cam.pos[0], s_cam.pos[1], s_cam.pos[2],
-				       s_cam.yaw * 57.29578f, s_cam.pitch * 57.29578f);
+				printf("[cam] pos %.2f %.2f %.2f yaw %.1f pitch %.1f roll %.1f fov %.1f near %.3f\n", s_cam.pos[0], s_cam.pos[1], s_cam.pos[2],
+				       s_cam.yaw * 57.29578f, s_cam.pitch * 57.29578f, s_cam.roll * 57.29578f, s_cam.hfov * 57.29578f, s_cam.near_z);
 		}
 	}
 	return 0;

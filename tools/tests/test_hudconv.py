@@ -73,6 +73,7 @@ TAGS = [
     ("weap", "weapons\\rifle\\rifle", 0x3000), ("weap", "weapons\\nohud\\nohud", 0x3000),
     ("bipd", "characters\\cyborg\\cyborg", 0x3000), ("vehi", "vehicles\\hog\\hog", 0x3000),
     ("snd!", "sound\\hit", 0x100), ("lsnd", "sound\\charge", 0x100), ("scen", "scenery\\rock", 0x100),
+    ("bitm", "ui\\hud\\bitmaps\\hud_sensor_blip", 0x3000),       # the motion sensor blip, found by path (last: keeps the sprite indices)
 ]
 
 # bitmap images: name -> list of (w, h, format, fill(x, y) -> int) ; pixel data are placed in the temp map file
@@ -83,6 +84,7 @@ IMAGES = {
              (512, 16, FMT_AY8, lambda x, y: x // 2)],
     "digits": [(128, 64, FMT_AY8, lambda x, y: 255)],
     "icons": [(16, 16, FMT_AY8, lambda x, y: 128 + x)] * 4,
+    "hud_sensor_blip": [(32, 32, FMT_AY8, lambda x, y: 255 if (x - 16) ** 2 + (y - 16) ** 2 < 196 else 0)],
 }
 # sequences: name -> list of (first image, image count, [(image, left, right, top, bottom, regx, regy)])
 SEQS = {
@@ -92,8 +94,9 @@ SEQS = {
     "digits": [(0, 0, [(0, (k % 8) * 16 / 128, ((k % 8) * 16 + 12) / 128, (k // 8) * 32 / 64, ((k // 8) * 32 + 20) / 64, 0.0, 0.0)
                        for k in range(15)])],
     "icons": [(i, 1, []) for i in range(4)],
+    "hud_sensor_blip": [(0, 1, [])],
 }
-BITMAP_TYPE = {"sheet": 3, "back": 0, "digits": 3, "icons": 0}
+BITMAP_TYPE = {"sheet": 3, "back": 0, "digits": 3, "icons": 0, "hud_sensor_blip": 0}
 
 
 def write_bitmaps(r: Region, mapfile_pixels: bytearray) -> None:
@@ -414,11 +417,15 @@ def test_colours_layout() -> None:
     assert hc.opaque_if_unset(hc.gs_colour(10, 20, 30, 50)) == hc.gs_colour(10, 20, 30, 50)
     assert [hc.ticks(s) for s in (0.0, 0.225, 1.0, 3.0, -1.0, float("nan"), 1e9)] == [0, 7, 30, 90, 0, 0, 0xFFFF]
     # anchors: the matching corner (centre) goes to anchor point + offset
-    assert hc.resolve_position(hc.A_TL, 5, 6, 100, 20) == (5, 6)
-    assert hc.resolve_position(hc.A_TR, -5, 6, 100, 20) == (535, 6)
-    assert hc.resolve_position(hc.A_BL, 12, -40, 128, 32) == (12, 408)
-    assert hc.resolve_position(hc.A_BR, 0, 0, 10, 10) == (630, 470)
+    # anchors: the matching corner (centre) goes to the title-safe frame corner (48, 36 in) + offset, y down everywhere
+    assert hc.resolve_position(hc.A_TL, 5, 6, 100, 20) == (53, 42)
+    assert hc.resolve_position(hc.A_TR, -5, 6, 100, 20) == (487, 42)
+    assert hc.resolve_position(hc.A_BL, 12, -40, 128, 32) == (60, 372)
+    assert hc.resolve_position(hc.A_BR, 0, 0, 10, 10) == (582, 434)
     assert hc.resolve_position(hc.A_C, 0, -40, 32, 16) == (304, 192)
+    # the motion sensor centre is counted inward from the corner; the sensor is bottom left whatever the HUD's anchor
+    assert hc.corner_point(hc.A_BL, 41, 41) == (89, 403) and hc.corner_point(hc.A_TR, 10, 5) == (582, 41)
+    assert hc.element_anchor(hc.R_MOTION_BG, hc.A_TR) == hc.A_BL and hc.element_anchor(hc.R_SHIELD_BG, hc.A_TR) == hc.A_TR
     assert hc._scale(0.0, -1.0) == (1.0, 1.0) and hc._scale(2.0, 1.5) == (2.0, 1.5) and hc._scale(float("nan"), 3.0) == (1.0, 3.0)
     assert hc.pow2_ceil(1) == 1 and hc.pow2_ceil(100) == 128 and hc.pow2_ceil(512) == 512
 
@@ -456,21 +463,21 @@ def test_collect() -> None:
                                               hc.R_MOTION_CENTER, hc.R_AUX_BG]
         bg, shield_bg, health_bg, motion_bg, motion_fg, centre, aux_bg = ua.elems[0], ua.elems[1], ua.elems[2], ua.elems[3], ua.elems[4], ua.elems[5], ua.elems[6]
         assert (bg.role, bg.sprite, bg.frames, bg.w) == (hc.R_HUD_BG, NONE, 0, 0)
-        assert (shield_bg.role, shield_bg.w, shield_bg.h, shield_bg.x, shield_bg.y) == (hc.R_SHIELD_BG, 128, 32, 512, 1)
+        assert (shield_bg.role, shield_bg.w, shield_bg.h, shield_bg.x, shield_bg.y) == (hc.R_SHIELD_BG, 128, 32, 464, 37)
         assert shield_bg.colour == gs(170, 213, 255, 220) and shield_bg.flash_colour == gs(255, 85, 43, 255)
         assert (shield_bg.flash_period, shield_bg.flash_delay, shield_bg.flash_count, shield_bg.flash_length) == (90, 7, 3, 7)
-        assert (health_bg.w, health_bg.h, health_bg.x, health_bg.y, health_bg.off_x, health_bg.off_y) == (100, 20, 535, 18, -5, 18)
-        assert (motion_bg.w, motion_bg.h, motion_bg.x) == (512, 16, 128) and motion_bg.seq == 2
-        assert motion_fg.sprite == NONE
-        assert (centre.role, centre.x, centre.y, centre.off_x, centre.sprite) == (hc.R_MOTION_CENTER, 681, 41, 41, NONE)
-        assert aux_bg.role == hc.R_AUX_BG and aux_bg.frames == 3 and aux_bg.w == 32 and aux_bg.x == 640 - 7 - 32
+        assert (health_bg.w, health_bg.h, health_bg.x, health_bg.y, health_bg.off_x, health_bg.off_y) == (100, 20, 487, 54, -5, 18)
+        assert (motion_bg.w, motion_bg.h, motion_bg.x, motion_bg.y, motion_bg.anchor) == (512, 16, 48, 444 - 16, hc.A_BL) and motion_bg.seq == 2
+        assert motion_fg.sprite == NONE and motion_fg.anchor == hc.A_BL
+        assert (centre.role, centre.x, centre.y, centre.off_x, centre.anchor, centre.sprite) == (hc.R_MOTION_CENTER, 89, 403, 41, hc.A_BL, NONE)
+        assert aux_bg.role == hc.R_AUX_BG and aux_bg.frames == 3 and aux_bg.w == 32 and aux_bg.x == 592 - 7 - 32
         sm, hm, am = ua.meters
-        assert (sm.role, sm.w, sm.h, sm.x, sm.y, sm.alpha_mult, sm.alpha_bias, sm.value_scale, sm.flags) == (hc.M_SHIELD, 32, 16, 640 + 7 - 32, 0, 1, 55, 198, 0)
+        assert (sm.role, sm.w, sm.h, sm.x, sm.y, sm.alpha_mult, sm.alpha_bias, sm.value_scale, sm.flags) == (hc.M_SHIELD, 32, 16, 592 + 7 - 32, 36, 1, 55, 198, 0)
         assert sm.colour_min == gs(0, 80, 159, 255) and sm.colour_max == gs(40, 150, 255, 255) and sm.colour_flash == gs(255, 255, 255, 255)
         assert sm.colour_empty == 0 and sm.colour_disabled == gs(0, 37, 74, 255) and (sm.opacity, sm.translucency) == (0.0, 0.5)
         assert (hm.flags, hm.min_value, hm.alpha_mult, hm.alpha_bias, hm.off_x, hm.off_y) == (1, 31, 30, 15, 36, 17)
         assert hm.colour_min == gs(255, 0, 0, 255)
-        assert (am.role, am.min_fraction, am.aux_flags, am.state) == (hc.M_AUX, 0.25, 1, 0) and am.y == 33
+        assert (am.role, am.min_fraction, am.aux_flags, am.state) == (hc.M_AUX, 0.25, 1, 0) and am.y == 36 + 33
         assert [(s.sound_tag, s.group, s.latched, s.scale) for s in ua.sounds] == [
             (ids["snd!:sound\\hit"], "snd!", 2, 0.5), (ids["lsnd:sound\\charge"], "lsnd", 1, 0.0)]
         # unit HUD B: centred, width scale 2, height scale unset (1.0)
@@ -487,18 +494,18 @@ def test_collect() -> None:
         junk = hud(hs, ids, "wphi:weapons\\junk\\junk")
         assert junk.icon_seq == NONE and junk.icon_sprite == NONE and any("junk" in n for n in hs.notes)
         st = [x for x in rifle.elems if x.role == hc.R_STATIC][0]
-        assert (st.state, st.allowed, st.x, st.y, st.w, st.h) == (1, 1, 12, 408, 128, 32)
+        assert (st.state, st.allowed, st.x, st.y, st.w, st.h) == (1, 1, 48 + 12, 444 - 40 - 32, 128, 32)
         ov = [x for x in rifle.elems if x.role == hc.R_OVERLAY][0]
         assert (ov.state, ov.allowed, ov.type, ov.ext_flags, ov.seq, ov.off_x, ov.off_y) == (0, 1, 16, 1, 2, 53, 4)
-        assert (ov.w, ov.h, ov.x, ov.y) == (16, 16, 53, 480 + 4 - 16)               # bottom left anchor, 16 px sprite
+        assert (ov.w, ov.h, ov.x, ov.y) == (16, 16, 48 + 53, 444 + 4 - 16)         # bottom left anchor, 16 px sprite
         wm = rifle.meters[0]
-        assert (wm.role, wm.state, wm.allowed, wm.alpha_mult, wm.alpha_bias, wm.x, wm.y) == (hc.M_WEAPON, 1, 0, 4, 2, 14, 480 + 15 - 16)
+        assert (wm.role, wm.state, wm.allowed, wm.alpha_mult, wm.alpha_bias, wm.x, wm.y) == (hc.M_WEAPON, 1, 0, 4, 2, 48 + 14, 444 + 15 - 16)
         assert wm.colour_disabled == gs(128, 43, 22, 128)                                   # alpha 128 kept
         n0, n1 = rifle.numbers
         assert (n0.role, n0.state, n0.allowed, n0.max_digits, n0.flags, n0.fraction_digits) == (hc.N_WEAPON, 0, 1, 3, 1, 0)
         assert (n0.sx, n0.sy) == (1.0, 1.0)                                                 # zero scale = unset
         digit_h = hs.sprites[hs.globals.digit_first].h
-        assert (n0.w, n0.h) == (3 * 9, digit_h) and n0.x == 29 and n0.y == 480 + 3 - digit_h
+        assert (n0.w, n0.h) == (3 * 9, digit_h) and n0.x == 48 + 29 and n0.y == 444 + 3 - digit_h
         assert (n1.allowed, n1.max_digits, n1.flags, n1.fraction_digits, n1.sx) == (2, 2, 3, 1, 1.5)
         assert n1.w == round((2 * 9 + 6) * 1.5)                                              # digits + decimal point, scaled
         assert n0.colour == gs(255, 240, 230, 255) and n0.flash_period == 30 and n0.flash_length == 30
@@ -513,7 +520,7 @@ def test_collect() -> None:
         # grenade HUDs
         g0 = hud(hs, ids, "grhi:ui\\hud\\grenade")
         assert [e.role for e in g0.elems] == [hc.R_GRENADE_BG, hc.R_GRENADE_COUNT_BG, hc.R_GRENADE_OVERLAY, hc.R_GRENADE_OVERLAY]
-        assert (g0.elems[0].x, g0.elems[0].y, g0.elems[0].w) == (82, 1, 128)
+        assert (g0.elems[0].x, g0.elems[0].y, g0.elems[0].w) == (48 + 82, 36 + 1, 128)
         assert [(e.seq, e.type) for e in g0.elems[2:]] == [(2, 1), (3, 4)]
         assert (g0.numbers[0].role, g0.numbers[0].max_digits, g0.numbers[0].sx) == (hc.N_GRENADE, 1, 1.0)
         # hud_globals
@@ -528,6 +535,9 @@ def test_collect() -> None:
         assert (dsp.w, dsp.h) == (12, 20) and dsp.u0 == 16 + 16 * 0 + 0 and dsp.v0 == 32
         assert len(g.icons) == 3 and [i[1] for i in g.icons] == [0, 1, 3] and g.icons[0][2:5] == (-6, -2, -5)
         assert g.icons[0][5] == gs(75, 239, 80, 255) and g.damage_sprite != NONE and g.damage_mp_sprite != NONE
+        # the blip: the last sprite, sequence 0 of the bitmap found by path
+        assert g.blip_tag == ids["bitm:ui\\hud\\bitmaps\\hud_sensor_blip"] and g.blip_sprite == len(hs.sprites) - 1
+        assert (hs.sprites[g.blip_sprite].w, hs.sprites[g.blip_sprite].h) == (32, 32)
         assert g.damage_colour == gs(255, 0, 0, 200)
         # links: weapon -> HUD, unit -> HUDs in order, grenade type -> HUD
         assert sorted(hs.links) == sorted([
@@ -564,7 +574,7 @@ def test_sections() -> None:
         assert [s.tag for s in pk.sections] == ["HUD0", "FONT", "STRS", "HUDT"]
         h0 = hc.parse_hud0(pk.read("HUD0"))
         assert len(h0["huds"]) == 7 and len(h0["sprites"]) == len(hs.sprites) and len(h0["links"]) == 6 and len(h0["sounds"]) == 2
-        assert len(h0["icons"]) == 3 and h0["globals"]["icon_count"] == 3
+        assert len(h0["icons"]) == 3 and h0["globals"]["icon_count"] == 3 and h0["globals"]["blip_sprite"] == len(hs.sprites) - 1
         for sec in ("HUD0", "FONT", "STRS", "HUDT"):
             raw = pk.read(sec)
             assert len(raw) % 16 == 0 or sec == "HUDT"

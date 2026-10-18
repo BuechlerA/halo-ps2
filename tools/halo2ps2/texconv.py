@@ -31,8 +31,12 @@ shaders used by BSP materials of a10 a30 a50 b30 b40 c10 c20 c40 d20 d40).  A ta
                   multiply, 3 add, 4 subtract, 5 min, 6 max, 7 alpha-multiply add),
                   +0x54 reflexive of maps {count, address}.
                   sotr map (100 B): +0x04 u scale, +0x08 v scale, +0x1C bitmap reference.
-                  schi map (220 B): +0x54 u scale, +0x58 v scale, +0x6C bitmap reference.
-                  The first map is the base map.
+                  schi map (220 B): +0x2C u16 colour function and +0x2E u16 alpha function (how the
+                  next map combines with this one: 0 current, 1 next map, 2 multiply, 3 double multiply,
+                  4 add, ...), +0x54 u scale, +0x58 v scale, +0x6C bitmap reference.
+                  sotr: the first map is the base map. schi: ``chicago_base_map`` skips the maps that only
+                  modulate the ones after them (multiply / double multiply with no alpha of their own:
+                  the star mask of the space sky, detail tiles) and takes the least tiled of the rest.
     sgla (480 B)  +0x28 u16 flags, +0x154 f32 diffuse scale, +0x158 diffuse map reference.
     swat (624 B)  +0x28 u16 flags, +0x4C base map reference (no scale).
 Everything else (scex, smet, spla, soso, ...) is not used by BSP materials in the retail data and
@@ -88,6 +92,9 @@ SENV_FLAGS, SENV_TYPE, SENV_BASE_MAP, SENV_SIZE = 0x28, 0x2A, 0x88, 836
 TRANSPARENT_FLAGS, TRANSPARENT_BLEND, TRANSPARENT_MAPS = 0x29, 0x2C, 0x54
 SOTR_MAP = (100, 0x04, 0x08, 0x1C)      # element size, u scale, v scale, bitmap ref
 SCHI_MAP = (220, 0x54, 0x58, 0x6C)
+SCHI_COLOR_FN, SCHI_ALPHA_FN = 0x2C, 0x2E   # per schi map: how the *next* map combines with it (u16 each)
+CF_MULTIPLY, CF_DOUBLE_MULTIPLY = 2, 3      # colour functions that make a map a modulator of what follows
+AF_CURRENT, AF_NEXT_MAP = 0, 1              # alpha functions under which the map contributes no alpha of its own
 SGLA_SCALE, SGLA_MAP, SWAT_MAP = 0x154, 0x158, 0x4C
 BLEND_FROM_FRAMEBUFFER = {0: BLEND_ALPHA, 1: BLEND_MULTIPLY, 2: BLEND_DOUBLE_MULTIPLY, 3: BLEND_ADD,
                           4: BLEND_SUBTRACT, 5: BLEND_ALPHA, 6: BLEND_ALPHA, 7: BLEND_ADD}
@@ -171,6 +178,28 @@ def _bitmap_ref(m: MapData, block: int, off: int) -> int | None:
     return tid if e is not None and e.group == "bitm" else None
 
 
+def chicago_base_map(m: MapData, first: int, count: int) -> int:
+    """Index of the map of a ``schi`` shader that stands in for the whole stack on PS2 (one texture per
+    material). A map whose colour function multiplies it with the next map (2, 3) while its alpha function
+    is "current" or "next map" (0, 1) is a pure colour modulator, a mask or detail tile over the maps after
+    it (the space sky's 64 px ``star mask`` x3 over the 256 px ``stars`` x16, a30's ``detail ground`` over
+    ``horizon land``), and is skipped; a modulator that also supplies the alpha (the a30 rivers) stays
+    eligible because the shape matters more than the pattern. Of the remaining maps the one with the
+    smallest tiling is the backdrop (a30's ``sky dusk`` gradient x1 against the ``stars`` x18 added over
+    it); ties keep the earlier map. Falls back to map 0."""
+    best, best_tile = 0, None
+    for i in range(count):
+        mo = first + i * SCHI_MAP[0]
+        cf, af = _read(m.region, mo + SCHI_COLOR_FN, "<HH")
+        if i + 1 < count and cf in (CF_MULTIPLY, CF_DOUBLE_MULTIPLY) and af in (AF_CURRENT, AF_NEXT_MAP):
+            continue
+        u, v = _read(m.region, mo + SCHI_MAP[1], "<f")[0], _read(m.region, mo + SCHI_MAP[2], "<f")[0]
+        tile = abs(u * v) if (u == u and v == v and u != 0.0 and v != 0.0) else 1.0
+        if best_tile is None or tile < best_tile:
+            best, best_tile = i, tile
+    return best
+
+
 def resolve_shader(m: MapData, shader_id: int) -> ShaderInfo:
     e = m.by_id.get(shader_id)
     if e is None:
@@ -197,6 +226,8 @@ def resolve_shader(m: MapData, shader_id: int) -> ShaderInfo:
             count, addr = _read(m.region, block + TRANSPARENT_MAPS, "<II")
             if count:
                 mo = addr - m.base
+                if e.group == "schi" and count > 1:
+                    mo += chicago_base_map(m, mo, count) * size
                 info.bitmap_id = _bitmap_ref(m, mo, ref)
                 u, v = _read(m.region, mo + us, "<f")[0], _read(m.region, mo + vs, "<f")[0]
                 if 0.0 < u <= 4096.0 and 0.0 < v <= 4096.0:

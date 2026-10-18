@@ -113,7 +113,7 @@ static void walk(const fxdef_section *s)
 				acc += sp.texture;
 			}
 		}
-		for (k = 0; k < b.sequence_count + 3; k++) {
+		for (k = 0; k < (uint32_t)b.sequence_count + 3u; k++) {
 			if (fxdef_sprite(s, i, k, 7, &sp)) acc += sp.image;
 		}
 	}
