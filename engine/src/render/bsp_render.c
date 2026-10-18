@@ -595,7 +595,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 
 	if (s_sky_pass) {
 		render_ctx_t rc;
-		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible;
 		s_sky_pass(s_sky_user, &rc);
 	}
 
@@ -617,6 +617,9 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 			ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);   ad[n++].addr = GS_A_CLAMP_1;
 		} else {
 			s_stats.untextured_batches += s_mat_count[m];
+			/* An untextured blended material (glass and lights whose base map is a cube map, ADR-057) would add or blend a
+			 * flat grey over what is behind it; drawing nothing is closer to the reference than the wash. */
+			if (blend) continue;
 		}
 		ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);      ad[n++].addr = GS_A_ALPHA_1;
 		ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 2); ad[n++].addr = GS_A_TEST_1;
@@ -668,12 +671,12 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 
 	if (s_obj_pass) {
 		render_ctx_t rc;
-		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible;
 		s_obj_pass(s_obj_user, &rc);
 	}
 	if (s_overlay_pass) {
 		render_ctx_t rc;
-		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible;
 		s_overlay_pass(s_overlay_user, &rc);
 	}
 

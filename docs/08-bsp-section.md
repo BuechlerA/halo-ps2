@@ -187,6 +187,29 @@ VU1 memory: addresses 0..3 are `a)`, vertices follow; each UNPACKed element occu
   hook for the later lightmap-chroma bake (per vertex of the material, returns r, g, b, a); packet
   layout and reader do not change when it is filled in.
 
+## EE clipping load: a10 BSP 8 (the hangar)
+Measured on 2026-10-18 with `scripts/paths/a10mission.cfg` (the hangar cinematic, frames 5100 and 5400) and the
+converter's own decode of the section (ADR-017 for the mechanism, ADR-057 for how the symptom was hidden):
+
+| pose (frame) | visible tris | batches whose box crosses the near plane or band | tris that need clipping | processed within the 6 ms budget | skipped |
+|---|---:|---:|---:|---:|---:|
+| 5400 (`-25.25 7.14 1.48` yaw 272) | 9448 | 143 | ~2750 (26 %) | 46 batches, 745 tris, 149 polygons | 97 batches |
+| 5100 (`-24.67 6.14 1.37` yaw 256) | 9208 | 170 | ~2700 | 51 batches, 699 tris, 132 polygons | 119 batches |
+
+The hangar is built from large triangles: 1827 of its 17216 have an edge over 8 units and 355 over 16 (the floor and
+ceiling plates are 46 units across), so from any pose inside it a quarter of the visible triangles straddle a clip
+plane. The EE path spends about 2 ms of the 6 in `clip_polygon` and the rest testing and projecting the batches it
+reaches; the skipped batches (ordered far to near) lose the triangles the VU1 collapses. At both poses that costs
+**no visible pixel**: the same frame rendered with `clipbudget 60` (all 142 / 168 batches clipped, 2171 / 2433
+triangles, 14.7 / 16.5 ms of EE time) is pixel-identical to the budgeted one, because the far triangles that straddle
+the band are hidden behind nearer geometry or lie outside the view. So the budget is a frame-time guard, not a
+visible defect, in this scene (the dark hole seen before was the ADR-057 corruption); full clipping would cost 9-10 ms
+more per frame where the EE already spends 17-21 ms with 50 units. If a pose ever does show holes, the candidates are
+splitting long edges in the converter so the batch boxes stop straddling the planes from everywhere (recursive
+midpoint split of edges over L, crack-free because the decision is per edge: L = 12 adds 12 % triangles to BSP 8,
+L = 8 adds 35 %, the other a10 BSPs are unchanged, the exterior BSP 7 would grow 2-6x and must be excluded) and making
+the gather loop cheaper (~2.8 us per triangle on PCSX2's EE before any polygon is clipped).
+
 ## Reader validation (`bsp_open`)
 Everything is checked once, so accessors never read out of bounds: size field and signature; table
 offsets (16-aligned, >= 144, inside) and counts (no overflow, fit); counts within u16 range

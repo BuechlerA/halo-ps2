@@ -82,6 +82,23 @@ static void emit_part_state(chain_t *c, const gs_ad *ad, unsigned n, float su, f
 	(void)f2u;
 }
 
+/* GS state only (A+D through PATH2), nothing written to VU1 memory. The sky pass runs between the BSP frame
+ * header and the BSP batches, so it must not touch VU1 data memory: emit_part_state's UNPACK lands at absolute
+ * addresses 2..3 (the model layout's uv scale and GIF tag), which hold rows 2..3 of the BSP program's clip matrix
+ * (docs/03 §5.2, ADR-057). The sky pass packs its own GIF tags (sky_emit_polys) and needs neither word. */
+static void emit_gs_state(chain_t *c, const gs_ad *ad, unsigned n)
+{
+	u32 *w = chain_cnt(c, 1 + 1 + n, rb_take_pending());
+	u64 *q;
+	unsigned i;
+	if (!w) return;
+	w[0] = VIF_CODE(VIF_NOP, 0, 0); w[1] = VIF_CODE(VIF_NOP, 0, 0);
+	w[2] = VIF_CODE(VIF_FLUSHA, 0, 0); w[3] = VIF_CODE(VIF_DIRECT, 0, 1 + n);
+	q = (u64 *)(w + 4);
+	q[0] = GIF_TAG(n, 1, 0, 0, GIFX_FLG_PACKED, 1); q[1] = GIF_REGS_AD;
+	for (i = 0; i < n; i++) { q[2 + 2 * i] = ad[i].data; q[3 + 2 * i] = ad[i].addr; }
+}
+
 /* One batch: its data (a REF into the section, UNPACKed into the idle buffer while the previous batch runs), then
  * FLUSHE (the previous program must be done with the palette), the palette of the nodes it uses, and MSCAL. */
 static void emit_batch(chain_t *c, const render_ctx_t *rc, const model_section *ms, const model_batch *b)
@@ -288,7 +305,7 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 	unsigned r, p, bi, t, k, j;
 	u32 t0 = timer_cycles();
 	o->sky_ms = 0.0f;
-	if (o->sky_model < 0 || !ms) return;
+	if (o->sky_model < 0 || !ms || !rc->sky_visible) return;        /* no visible cluster sees the sky: nothing to draw */
 	mi = model_get(ms, (uint32_t)o->sky_model);
 	model_select_permutations(ms, &mi, NULL, perm);
 	g.near_z = rc->cam->near_z; g.zmax = 16777215.0f;
@@ -324,7 +341,7 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 			ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);           ad[n++].addr = GS_A_ALPHA_1;
 			ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 1); ad[n++].addr = GS_A_TEST_1;     /* Z test always */
 			ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, 1); ad[n++].addr = GS_A_ZBUF_1;                  /* no Z write */
-			emit_part_state(rc->chain, ad, n, 1.0f, 1.0f, 0);
+			emit_gs_state(rc->chain, ad, n);               /* never emit_part_state here: it would overwrite the BSP clip matrix */
 			prim = GS_PRIM(GSX_PRIM_TRIANGLE, 1, tex0 ? 1 : 0, 0, blend, 0, 0, 0, 0);
 			su = mb.uv_scale[0] / (float)(1u << part.uv_shift);
 			sv = mb.uv_scale[1] / (float)(1u << part.uv_shift);

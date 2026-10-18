@@ -308,7 +308,8 @@ def synthetic_map(tmp: Path) -> tuple[tc.MapData, dict[str, int]]:
             ("senv", "levels\\t\\shaders\\selfillum", 836),
             ("sotr", "levels\\t\\shaders\\light", 108 + 100), ("schi", "levels\\t\\shaders\\river", 108 + 220),
             ("sgla", "levels\\t\\shaders\\glass", 480), ("swat", "levels\\t\\shaders\\water", 624),
-            ("smet", "levels\\t\\shaders\\meter", 100), ("sotr", "levels\\t\\shaders\\nomaps", 108)]
+            ("smet", "levels\\t\\shaders\\meter", 100), ("sotr", "levels\\t\\shaders\\nomaps", 108),
+            ("schi", "levels\\t\\shaders\\sky", 108 + 3 * 220), ("schi", "levels\\t\\shaders\\river2", 108 + 2 * 220)]
     region = bytearray(tagindex.TagIndex.build(tags))
     idx = tagindex.TagIndex.parse_region(bytes(region), 0)
     ent = {e.path.split("\\")[-1]: e for e in idx.entries}
@@ -341,6 +342,22 @@ def synthetic_map(tmp: Path) -> tuple[tc.MapData, dict[str, int]]:
     struct.pack_into("<II", region, r + 0x54, 1, ent["river"].data_address + 108)
     struct.pack_into("<ff", region, r + 108 + 0x54, 2.0, 4.0)
     ref(r + 108 + 0x6C, "base")
+    k = off("sky")                         # schi, 3 maps: mask x3 (multiply, alpha current), stars x16x10 (add), backdrop x1
+    struct.pack_into("<BBHH", region, k + 0x28, 0, 0, 0, 0)
+    struct.pack_into("<II", region, k + 0x54, 3, ent["sky"].data_address + 108)
+    for i, (cf, af, su, sv, bm) in enumerate(((2, 0, 3.0, 3.0, "base"), (4, 4, 16.0, 10.0, "cube"), (0, 0, 1.0, 1.0, "base"))):
+        mo = k + 108 + i * 220
+        struct.pack_into("<HH", region, mo + 0x2C, cf, af)
+        struct.pack_into("<ff", region, mo + 0x54, su, sv)
+        ref(mo + 0x6C, bm)
+    r2 = off("river2")                     # schi, 2 maps: colour+alpha mask (multiply, alpha multiply) x1, water x1x4
+    struct.pack_into("<BBHH", region, r2 + 0x28, 0, 0, 0, 0)
+    struct.pack_into("<II", region, r2 + 0x54, 2, ent["river2"].data_address + 108)
+    for i, (cf, af, su, sv, bm) in enumerate(((2, 2, 1.0, 1.0, "cube"), (3, 3, 1.0, 4.0, "base"))):
+        mo = r2 + 108 + i * 220
+        struct.pack_into("<HH", region, mo + 0x2C, cf, af)
+        struct.pack_into("<ff", region, mo + 0x54, su, sv)
+        ref(mo + 0x6C, bm)
     gl = off("glass")
     struct.pack_into("<f", region, gl + 0x154, 6.0)
     ref(gl + 0x158, "base")
@@ -373,6 +390,11 @@ def test_shaders() -> None:
         river = tc.resolve_shader(m, ids["river"])
         assert river.uv_scale == (2.0, 4.0) and river.bitmap_id == ids["base"] and river.blend == tc.BLEND_ALPHA
         assert tc.klass_cap_for(river) == tc.CLASS_BLEND
+        sky = tc.resolve_shader(m, ids["sky"])          # the mask is skipped, the x1 backdrop beats the x16 stars
+        assert sky.bitmap_id == ids["base"] and sky.uv_scale == (1.0, 1.0) and tc.chicago_base_map(m, m.tag_off(m.by_id[ids["sky"]]) + 108, 3) == 2
+        assert tc.chicago_base_map(m, m.tag_off(m.by_id[ids["sky"]]) + 108, 2) == 1        # with only mask + stars: the stars
+        river2 = tc.resolve_shader(m, ids["river2"])    # a modulator that supplies the alpha stays the base
+        assert river2.bitmap_id == ids["cube"] and river2.uv_scale == (1.0, 1.0)
         glass = tc.resolve_shader(m, ids["glass"])
         assert glass.bitmap_id == ids["base"] and glass.uv_scale == (6.0, 6.0) and glass.blend == tc.BLEND_ALPHA
         water = tc.resolve_shader(m, ids["water"])

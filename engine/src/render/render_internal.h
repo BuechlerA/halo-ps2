@@ -15,6 +15,7 @@ typedef struct render_ctx {
 	const frustum_t *frustum;
 	u32             frame;
 	const render_options_t *opt;
+	int             sky_visible;      /* a visible cluster has the sky flag (vis_t.sky_visible): the sky pass draws only then */
 } render_ctx_t;
 
 /* MSCAL (or other VIF pair) that must ride on the next tag; the object pass takes it with its first chunk. */

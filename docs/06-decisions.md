@@ -469,5 +469,39 @@ of the same name, cached per (model, graph); the first-person weapon attaches to
 other models have the same exposure. **Consequences**: packs must be rebuilt (`anim_open` rejects version 1); about 60 KB more per map; one strcmp pass per
 new (model, graph) pair. Details: docs/12-anim-section.md section 8.
 
+## ADR-057 EE passes between the frame header and the BSP batches must not write VU1 data memory; untextured blended materials are not drawn
+**Decision**: the sky pass (`obj_render_sky`, ADR-029) emits its GS state with a PATH2 A+D packet only (`emit_gs_state`); it no longer calls
+`emit_part_state`, whose trailing `UNPACK V4-32` writes two quadwords at VU1 absolute addresses 2..3. In the object program's layout those are the part's
+uv scale and GIF-tag template, but the sky pass runs right after `emit_frame_header` and before the BSP batches, where addresses 0..3 hold the BSP
+program's clip matrix: the world's z row and translation row were replaced by `(1, 1, 0, 0)` and the bits of a GIF tag for the whole frame, in every
+frame that had a sky model loaded (every config with an `obj` pack, since Phase 2). Depth collapsed and height leaked into x and y, so the exterior BSP of
+a10 read as a flat grey lightmapped blob (F10 of the a10 playtest review) and the hangar as fans of black-and-white slivers converging on the screen
+centre (F11); the object pass looked right because it carries its own palette matrices, which is why the Phase 2/3 gate runs (timing gates, frames checked
+for objects) did not catch it. Two further changes ride along: the sky pass is skipped when no visible cluster has the sky flag
+(`render_ctx_t.sky_visible` from `vis_t.sky_visible`, saving the EE pass in interiors), and pass 1 of the BSP renderer no longer draws a material that is
+both untextured and blended (`mb->tex < 0 && blend`): glass and light shaders whose base map is a cube map (a10 `cryo glass`, `monitor glass`,
+docs/09) used to add a flat grey over whatever was behind them.
+**Why**: VU1 absolute addresses are a per-program convention (top of each `.vsm`); the only safe rule for an EE-side pass that is called inside the BSP
+frame is "GS registers only". Found with `sky3d 0` (frame identical to the no-sky render: 64 % of the pixels differed with the sky on, including walls
+nowhere near the sky) and confirmed on the `a10obj` M2 fly-through config, whose world was the same blob before the fix.
+**Consequences**: every a10 scene with the sky loaded now renders the world correctly (exterior hull plating, hangar, bridge, cryo bay); what remains in the
+hangar is the EE clip budget: at the hangar cinematic poses 140..170 batches straddle the near plane or guard band (about 2700 triangles), the 6 ms budget
+covers ~50 of them and the rest are dropped on VU1 (ADR-017); measured at both poses this loses no visible pixel (the dropped triangles sit
+behind nearer geometry or outside the view), so it stays a frame-time concern only. Measurements in docs/08 ("EE clipping load").
+
+## ADR-058 A chicago shader's base map is its least-tiled non-modulating map
+**Decision**: `texconv.resolve_shader` no longer takes the first map of a `shader_transparent_chicago` as the PS2 base map. Each schi map carries a
+colour function and an alpha function (u16 at +0x2C / +0x2E of the 220-byte map record) that say how the *next* map combines with it; a map that
+multiplies (2) or double-multiplies (3) the next one while contributing no alpha of its own (alpha function current 0 or next map 1) is a mask or
+detail tile and is skipped, and of the remaining maps the one with the smallest uv tiling is taken (`chicago_base_map`, docs/09). On the retail data
+this changes the a10 space sky from the 64 px grey `star mask` (x3) to the 256 px `stars` map (x16 x10), the a30 dusk sky from the same mask to the
+`sky dusk` gradient, and a30's `horizon land` from its detail tile to the horizon painting; the a30 rivers keep their first map (it supplies the
+alpha), as do the Pelican thrusters and every single-map shader. sotr (generic) shaders are untouched.
+**Why**: the a10 intro's "flat grey blob" that survived ADR-057 was the sky dome textured with the star mask: the blurry grey mask tiled three times
+over a 20400-unit sphere, alpha-blended over the clear colour, in front of nothing (the exterior BSP is not visible from the frame-400 pose at all).
+**Consequences**: object packs must be rebuilt (`objpack.py`, the `OTEX` section) for the sky change to show; the BSP `TEXS` packs are unchanged on
+the ten campaign maps (no BSP material of theirs is a multi-map chicago shader whose base changes). Stars converted at half resolution are faint
+(the source is a mostly black y8 map); the masked twinkle and the additive nebula layer of the three-map variant are still dropped.
+
 ## Open decisions
 None.

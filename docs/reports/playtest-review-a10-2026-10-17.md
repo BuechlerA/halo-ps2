@@ -109,6 +109,12 @@ Done on this branch (host tests 83 ok, PCSX2 recompiler runs of `a10mission` for
 | 3 | letterbox bars during cinematics (verified against xemu, which shows them for the whole intro), view model and damage wash hidden while a cinematic runs |
 | 4 | device objects follow their device position (`mission_sync_devices`, `OBJ_F_POSED`); not yet checked on a door in a frame dump |
 
+F10 and F11 (2026-10-18): both had one cause, not the ones guessed above. The sky pass wrote its uv scale and GIF tag into VU1 addresses 2..3,
+the BSP program's clip matrix rows for z and translation, so every frame with the sky model loaded drew the world with a corrupted projection
+(the "blob" and the "slivers"; ADR-057, docs/03 §5.2). With the pass fixed to GS state only, the exterior shows the hull plating from its
+`poa-*` base maps and the hangar is clean; the 14 flat materials of BSP 7 are cube-map glass and a self-illumination shader (docs/09) and the
+glass ones are now skipped instead of adding grey. The bridge brightness is reported in docs/09 (gain unchanged), the hangar's EE clip budget in docs/08 (no visible loss at the dump poses).
+
 Still open from the list above: F6 (HUD anchors; the reference has the shield top right, the ammo counter top right beside it, the motion tracker bottom left), F7 (sprite edges), the hands' colour: the gloves render navy because the colour-change / multipurpose maps are not converted (docs/11), and the Xbox tints them olive.
 
 New findings from the fixed intro (compare `frames/intro2`, `frames/cryo` with the xemu captures):
