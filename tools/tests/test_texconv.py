@@ -190,15 +190,24 @@ def test_lightmaps() -> None:
     assert tc.lightmap_size(128, 64) == (64, 32) and tc.lightmap_size(16, 8) == (8, 8)
     assert tc.lightmap_size(256, 256, 2) == (32, 32) and tc.lightmap_size(32, 32, 3) == (8, 8)
     page = tc.Rgba(64, 32, rgba_image(64, 32, lambda x, y: (x * 4, x * 4, x * 4, 255)))
-    lp = tc.convert_lightmap_page(3, page, 0, 1.0)      # explicit: the tool's default gain is a tunable
+    lp = tc.convert_lightmap_page(3, page, 0, 1.0, 1.0)      # explicit linear: the tool's default gain and curve are tunables
     assert (lp.index, lp.width, lp.height, lp.src_width) == (3, 32, 16, 64) and len(lp.pixels) == 512
     assert lp.pixels[0] <= 4
     assert lp.pixels[31] >= 240 and lp.pixels[0] < lp.pixels[16] < lp.pixels[31]
     assert lp.avg_luma == sum(lp.pixels) // len(lp.pixels) and lp.avg_rgba >> 24 == 255
-    boosted = tc.convert_lightmap_page(0, page, 0, 2.0)
+    boosted = tc.convert_lightmap_page(0, page, 0, 2.0, 1.0)
     assert abs(boosted.pixels[8] - 2 * lp.pixels[8]) <= 1 and max(boosted.pixels) == 255
-    tiny = tc.convert_lightmap_page(0, tc.Rgba(8, 8, bytes([9, 9, 9, 255]) * 64), 0, 1.0)
+    tiny = tc.convert_lightmap_page(0, tc.Rgba(8, 8, bytes([9, 9, 9, 255]) * 64), 0, 1.0, 1.0)
     assert (tiny.width, tiny.height, len(tiny.pixels)) == (8, 8, 64) and set(tiny.pixels) == {9}
+
+
+def test_lightmap_curve() -> None:
+    assert tc.lightmap_curve(100, 1.0, 1.0) == 100 and tc.lightmap_curve(200, 1.5, 1.0) == 255
+    # the curve: the white point maps to 127 x gain, darker texels follow a power law and stay above the linear ramp at low light
+    assert tc.lightmap_curve(int(tc.LM_WHITE), 1.0) == 127 and tc.lightmap_curve(255, 1.0) == 127
+    assert tc.lightmap_curve(int(tc.LM_WHITE), 1.5) in (190, 191) and tc.lightmap_curve(0, 1.5) == 0
+    quarter = tc.lightmap_curve(int(tc.LM_WHITE / 4), 1.0)
+    assert abs(quarter - 127 * 0.25 ** tc.LM_GAMMA) <= 1 and quarter > 127 // 4
 
 
 def test_vertex_chroma() -> None:
@@ -246,7 +255,7 @@ def fixture() -> tuple[bytes, bytes, list[tc.Ps2Texture], list[tc.ShaderInfo], l
         tc.ShaderInfo(0xE1740020, "sgla", "d", bitmap_id=0xE1780003, blend=tc.BLEND_ALPHA, texture=2),
     ]
     pages = [tc.convert_lightmap_page(0, tc.Rgba(64, 32, rgba_image(64, 32, lambda x, y: (x * 4, x * 4, x * 4, 255)))),
-             tc.convert_lightmap_page(2, tc.Rgba(16, 16, bytes([90, 90, 90, 255]) * 256))]
+             tc.convert_lightmap_page(2, tc.Rgba(16, 16, bytes([90, 90, 90, 255]) * 256), 0, 1.0, 1.0)]
     return tc.build_texs([t0, t1, t2], shaders), tc.build_lmap(pages, 1.0), [t0, t1, t2], shaders, pages
 
 
@@ -509,6 +518,7 @@ def main() -> None:
     test_quantiser()
     test_convert()
     test_lightmaps()
+    test_lightmap_curve()
     test_vertex_chroma()
     test_sections()
     test_shaders()

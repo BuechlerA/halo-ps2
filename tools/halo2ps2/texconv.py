@@ -85,6 +85,8 @@ FLAT_GREY = 0x80808080               # RGBA8, alpha on the PS2 0x80 = 1.0 scale
 MAX_TEX, MIN_TEX, MAX_MIPS = 256, 8, 4
 LM_BUDGET_BYTES = 512 * 1024         # per BSP, after conversion (see docs/09-tex-section.md)
 LM_DEFAULT_GAIN = 1.0
+LM_GAMMA = 0.5                       # lightmap luminance tone curve exponent (1.0 = linear: index = luma x gain)
+LM_WHITE = 249.0                     # the brightest lightmap texel of the retail maps (a10: 249): the curve's 1.0
 PSMT4_MAX_RMS = 3.0                  # 16 colours are used when they reproduce the image within this RMS
 
 # ---- shader tag layout --------------------------------------------------------------------
@@ -725,14 +727,26 @@ def lightmap_size(w: int, h: int, extra_shift: int = 0) -> tuple[int, int]:
     return max(MIN_TEX, w >> s), max(MIN_TEX, h >> s)
 
 
-def convert_lightmap_page(index: int, page: Rgba, extra_shift: int = 0, gain: float = LM_DEFAULT_GAIN) -> LightmapPage:
-    """RGBA page -> PSMT8 luminance page. Index = clamp(luma x gain); the shared CLUT is a grey
+def lightmap_curve(luma: int, gain: float, gamma: float = LM_GAMMA) -> int:
+    """Index of the grey ramp for a lightmap luminance. ``gamma`` 1 is the linear ``luma x gain``. Otherwise the brightest texel
+    (LM_WHITE) maps to 127 x gain (1.0 x gain when 0x80 is 1.0) and darker texels follow x ** gamma: the retail a10 lightmaps are
+    bimodal (a quarter of the texels at 170..249, the rest mostly below 80), so the linear gain 1.5 that matched the mean
+    brightness of the Xbox intro doubled every lit floor and wall to white (2026-10-18 comparison, scripts/cmp-intro.sh) while
+    the curve keeps the mean and lifts the shadows."""
+    if gamma == 1.0:
+        return min(255, int(luma * gain + 0.5))
+    return min(255, int(127.0 * gain * (min(luma, LM_WHITE) / LM_WHITE) ** gamma + 0.5))
+
+
+def convert_lightmap_page(index: int, page: Rgba, extra_shift: int = 0, gain: float = LM_DEFAULT_GAIN,
+                          gamma: float = LM_GAMMA) -> LightmapPage:
+    """RGBA page -> PSMT8 luminance page. Index = ``lightmap_curve(luma, gain, gamma)``; the shared CLUT is a grey
     ramp (see ``grey_ramp_clut``), so index 0x80 modulates by 1.0 when used as alpha."""
     w, h, rgba = page
     tw, th = lightmap_size(w, h, extra_shift)
     y = resample_plane(luminance(rgba), w, h, tw, th)
-    if gain != 1.0:
-        y = bytes([min(255, int(v * gain + 0.5)) for v in y])
+    if gain != 1.0 or gamma != 1.0:
+        y = bytes([lightmap_curve(v, gain, gamma) for v in y])
     n = len(rgba) // 4
     avg = [sum(rgba[c::4]) // n for c in range(3)]
     return LightmapPage(index, w, h, tw, th, _pad16(y), avg[0] | avg[1] << 8 | avg[2] << 16 | 0xFF000000,

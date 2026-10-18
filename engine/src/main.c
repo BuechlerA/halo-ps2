@@ -568,6 +568,16 @@ int main(int argc, char *argv[])
 					       cs->cam.control, cs->cam.mode, (double)cp.pos[0], (double)cp.pos[1], (double)cp.pos[2], (double)(cp.yaw * 57.29578f), (double)(cp.pitch * 57.29578f),
 					       (double)(cp.roll * 57.29578f), (double)(cp.fov * 57.29578f), (double)cs->cam.near_clip, (double)cs->screen.letterbox, (double)cs->screen.fade_alpha,
 					       (double)cs->screen.fade_rgb[0], (double)cs->screen.fade_rgb[1], (double)cs->screen.fade_rgb[2]);
+					if (s_have_objects && cfg_str(&s_cfg, "cinetrack", NULL)) {                 /* position of the objects whose definition name contains the string */
+						unsigned oi;
+						for (oi = 0; oi < s_objects.count; oi++) {
+							const object_t *ob = &s_objects.obj[oi];
+							scen_def d;
+							if (ob->model < 0) continue;
+							d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
+							if (strstr(d.name, cfg_str(&s_cfg, "cinetrack", ""))) printf("[cin]   #%u %s at %.2f %.2f %.2f anim %u frame %.1f flags %02x\n", oi, d.name, (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (unsigned)ob->anim, (double)ob->frame, ob->flags);
+						}
+					}
 				}
 				if (s_have_objects && mapp_active() && cfg_int(&s_cfg, "nearlog", 0) && s_tick == (uint32_t)cfg_int(&s_cfg, "nearlog", 0)) {   /* objects around the cinematic camera */
 					const cine_state *cs = mapp_mission()->cine;
@@ -581,6 +591,11 @@ int main(int argc, char *argv[])
 						d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
 						printf("[near] #%u %s type %u model %d graph %d anim %u frame %.1f flags %02x at %.2f %.2f %.2f (d %.2f)\n", oi, d.name, ob->type, ob->model, ob->graph, (unsigned)ob->anim, (double)ob->frame, ob->flags,
 						       (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (double)sqrtf(dx * dx + dy * dy + dz * dz));
+						if (cfg_int(&s_cfg, "nearnodes", 0) && ob->type == 1) {
+							static object_nodes_t nn;
+							unsigned ni, nc = objects_pose(ob, &s_objr.world, &nn);
+							for (ni = 0; ni < nc && ni < 12; ni++) printf("[near]    node %u world %.2f %.2f %.2f\n", ni, (double)nn.world[ni].m[3][0], (double)nn.world[ni].m[3][1], (double)nn.world[ni].m[3][2]);
+						}
 					}
 				}
 				if ((s_tick % 30) == 0 && cfg_int(&s_cfg, "gamestat", 1))
@@ -598,7 +613,9 @@ int main(int argc, char *argv[])
 				if (cs && cs->cam.control && cs->cam.mode == CINE_CAM_POSE) {
 					cine_pose cp = cine_cam_pose(&cs->cam);
 					cine_pose_to_camera(&cp, &s_cam);
-					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip;
+					/* The intro asks for near 0.01 (and 0.0625 -> 0.01 in the bridge); the VU1 object program drops every object below about 0.04 (a
+					 * captain 0.27 away vanishes, found against the Xbox intro), so the script's value is raised to the engine's default. */
+					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip > CAMERA_NEAR_DEFAULT ? cs->cam.near_clip : CAMERA_NEAR_DEFAULT;
 				}
 			}
 		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);

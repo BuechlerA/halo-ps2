@@ -523,5 +523,24 @@ the tracker top right and everything flush with the screen edges; a gameplay fra
 in their bottom-left corner. **Consequences**: HUD packs must be rebuilt (`hudconv.py` per map, 0.3 s each; the reader rejects version 1); the velocity-sensitivity rule
 (still enemies hidden) and blip fading are not modelled; `motion scale` is exported but the radar radius comes from the centre offset. Details: docs/20-hud-section.md.
 
+## ADR-061 Intro parity with the Xbox: sky node pose and palette, additive blends, lightmap tone curve and chroma, cinematic near plane
+**Decision**: (1) `obj_render_sky` skins the sky model with the bind-pose inverse of its node (a sky has no animation, so Halo poses its nodes with the identity and
+the skin matrix `world(pose) * inverse(world(default))` reduces to the inverse); a10's `sky_x10`/`space` node is yawed 90 degrees by default, which turns the dome, galaxy and
+planets by -90 degrees: without it the intro's planet stood behind the camera. (2) `SKY0` carries the model of the scenario's second sky (u32 at +60, was padding); the sky pass
+draws the palette entry of the camera's cluster (`vis_t.sky_index`, the camera cluster's `sky` field, else the first visible cluster with a sky): a10's exterior BSP 7 (the intro's
+space shots) has one cluster with sky 1, the nebula sky; every window onto space elsewhere is sky 0. (3) A sky dome whose chicago shader stacks maps (nebula + stars) is converted
+as one part per additive map (`modelconv.add_sky_layers`, pseudo shader ids `objtex.layer_shader_id`). (4) `mat_binding_t.add`: additive materials (shader blend 3) draw as
+`Cs + Cd` in the BSP (doubled: the exhaust map is a 104 grey), object and sky passes; every other blend still draws as alpha. (5) Lightmap luminance goes through a tone curve
+(`texconv.lightmap_curve`: white point 249 -> 127 x gain, exponent 0.5, gain 1.7) instead of the linear gain 1.5, and the vertex chroma is pulled 60 % towards neutral
+(`CHROMA_STRENGTH` 0.4). (6) The cinematic near plane is never below the engine default 0.05: the VU1 object program drops every object nearer than about 0.04 (the captain 0.27 away
+in the bridge vanished at the script's 0.01).
+**Why**: frame-by-frame comparison of the PS2 intro with the Xbox intro video at the same times (`scripts/cmp-intro.sh`, 2026-10-18): black sky with a teal smear, no planet, yellow-green
+bridge, white hangar floors, no Keyes in the bridge's long shot. The lightmap pages of a10 are bimodal and amber (BSP 1: a quarter of the texels at 170..249, mean colour 120 / 90 / 51),
+so linear gain and full chroma doubled every lit surface to white and tinted it yellow, while the mean brightness of the intro matched the Xbox within 15 %.
+**Consequences**: object packs (`objpack.py`: SKY0, sky layers, a30/a50 second skies) and TEX/BSP packs (`texconv.py`, `bspconv.py`: tone curve, chroma) must be rebuilt
+(`scripts/build-world.sh`); a30 now draws its cluster-selected sky (unverified against the Xbox). Not fixed, found by the same comparison: colour-change tints (crew jumpsuits are red / yellow /
+orange on the Xbox, near-black here; Keyes' uniform and the marines too), Cortana's purple hologram (multi-stage `sotr` colours), screen effects (desaturation, convolution), the
+exhaust and galaxy glow (additive sprites / bloom), the halo ring in the first shot (edge-on here), marines' rifles, and the intro's pacing at the end of the bridge (about 4 s early: `sound_impulse_time`).
+
 ## Open decisions
 None.

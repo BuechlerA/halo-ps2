@@ -5,7 +5,7 @@
 # (docs/23-phase4-plan.md; strm is ~120 MB per map and takes ~10 s with a cold cache). Needs assets/decompressed/<map>.map (tools/halo2ps2/mapinfo.py).
 #
 #   scripts/build-world.sh a10 a30 b40 c10
-#   LM_GAIN=2.0 scripts/build-world.sh a10     # lightmap luminance gain (tunable at M1; default 1.5)
+#   LM_GAIN=2.0 scripts/build-world.sh a10     # lightmap luminance gain (tunable at M1; default 1.7, with the tone curve of texconv.LM_GAMMA)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [ $# -ge 1 ] || { echo "usage: $0 map [map...]" >&2; exit 2; }
@@ -19,5 +19,5 @@ for m in "$@"; do
 		python3 -I "$ROOT/tools/halo2ps2/${kind%%:*}.py" "$src" -o "$ROOT/assets/hp2/$m.${kind##*:}.hp2" || echo "(no ${kind##*:} pack for $m)" >&2
 	done
 	python3 -I "$ROOT/tools/halo2ps2/streamconv.py" "$src" -o "$ROOT/assets/hp2/$m.strm.hp2" --cache "$ROOT/assets/hp2/.strmcache" || echo "(no strm pack for $m)" >&2
-	python3 -I "$ROOT/tools/halo2ps2/texconv.py" "$src" -o "$ROOT/assets/hp2/$m.tex.hp2" --lm-gain "${LM_GAIN:-1.5}"
+	python3 -I "$ROOT/tools/halo2ps2/texconv.py" "$src" -o "$ROOT/assets/hp2/$m.tex.hp2" --lm-gain "${LM_GAIN:-1.7}"
 done

@@ -109,6 +109,7 @@ ignored unless the config had one).
 | `gamelog 0/1`, `gamestat 0/1`, `audiolog 0/1` | print every game event / a status line per second / every sound played | 0, 1, 0 |
 | `mission 1` | Phase 4 mission mode (needs `game` and the `script`/`ai`/`dev`/`cin`/`path`/`strm` packs of the map): scripts, AI, devices, cinematics, streamed audio, BSP switches, objectives, checkpoints | 0 |
 | `bot 1`, `missionlog 1`, `threaddump 1` | the mission bot plays (ADR-054) / print `[bot]` goal lines and a `[mission]` status line every 10 s / list what every script thread waits on at the end | 0 |
+| `cinelog 1`, `cinetrack <name>`, `nearlog <tick>` + `nearrad`, `nearnodes` | mission debugging: the cinematic camera, fade and letterbox every 15 ticks (and the position of objects whose definition name contains `cinetrack`); objects within `nearrad` units of the camera at one tick (with node positions) | 0 |
 | `exitonend 1` | leave the main loop when scripts call `game_won` or `game_lost` | 0 |
 | `stream 0/1`, `streamlog 0/1` | open the streamed-audio files (dialogue, music) / log stream events | 1, 0 |
 | `memcard 0/1`, `mcformat 1`, `savetest 1` | memory-card saves (PCSX2 blank card needs `mcformat 1` once) / a card save at every Select+Cross | 0 |
