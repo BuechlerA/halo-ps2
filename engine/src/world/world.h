@@ -3,6 +3,7 @@
 #include "core/mem.h"
 #include "render/bsp_render.h"
 #include "world/bsp.h"
+#include "world/cchg.h"
 #include "world/anim.h"
 #include "world/model.h"
 #include "world/scen.h"
@@ -31,6 +32,7 @@ typedef struct {
 	scen_section  scen;
 	texset_t      obj_tex;
 	sky_info_t    sky;
+	cchg_t        cchg;           /* object colour change (CCHG section of the object pack) */
 	int           has_objects;
 	tex_source_t  obj_source;
 } world_t;

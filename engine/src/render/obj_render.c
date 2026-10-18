@@ -146,8 +146,22 @@ static unsigned pick_lod(const model_section *ms, const model_info *mi, const ui
 }
 
 /* Draw one model with the given node matrices. Returns the number of batches emitted. */
+/* Change colours of an object: tint[c] (rgb 0..255) is valid when has[c] (c = 0..3 for change colour a..d). */
+typedef struct { uint8_t rgb[CCHG_MAX_CHANGE][3]; uint8_t has[CCHG_MAX_CHANGE]; } cc_tints;
+
+static void cc_pick(const obj_render_t *o, int model, uint32_t seed, cc_tints *t)
+{
+	const uint8_t *rec;
+	unsigned c;
+	memset(t, 0, sizeof *t);
+	if (!o->cchg || !o->world.models || model < 0) return;
+	rec = cchg_find(o->cchg, model_get(o->world.models, (uint32_t)model).tag_id);
+	if (!rec) return;
+	for (c = 0; c < CCHG_MAX_CHANGE; c++) t->has[c] = (uint8_t)cchg_tint(rec, c + 1, seed, t->rgb[c]);
+}
+
 static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, const uint16_t *perm, unsigned regions,
-                           const object_nodes_t *nodes, unsigned lod, const scen_light *light, unsigned budget)
+                           const object_nodes_t *nodes, unsigned lod, const scen_light *light, unsigned budget, const cc_tints *cc)
 {
 	const model_section *ms = o->world.models;
 	model_info mi = model_get(ms, (uint32_t)model);
@@ -160,7 +174,7 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 		model_part_range pr = model_parts(ms, &mi, perm[r], lod);
 		for (p = 0; p < pr.part_count; p++) {
 			model_part part = model_get_part(ms, (uint32_t)pr.first_part + p);
-			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f } };
+			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f }, 0, -1 };
 			gs_ad ad[7];
 			unsigned n = 0;
 			u64 tex0 = 0;
@@ -189,6 +203,37 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 				o->st_triangles += b.triangles;
 			}
 			emitted += part.batch_count;
+			if (mb.cc && mb.tex2 >= 0 && cc && mb.cc <= CCHG_MAX_CHANGE && cc->has[mb.cc - 1] && rc->opt->textures && o->textures && o->textures->texture
+			    && emitted + part.batch_count <= budget) {
+				/* colour change: the part again, its base map with the mask as alpha, alpha blended over the first pass (same depth) and lit with the
+				 * object's change colour: where the mask is 1 the result is base x tint x light, elsewhere the first pass stays */
+				tex_image_t img2;
+				scen_light tl = *light;
+				unsigned k;
+				if (o->textures->texture(o->textures->user, mb.tex2, &img2) == 0) {
+					for (k = 0; k < 3; k++) {
+						tl.ambient[k] = (uint8_t)((unsigned)light->ambient[k] * cc->rgb[mb.cc - 1][k] / 255u);
+						tl.sun[k] = (uint8_t)((unsigned)light->sun[k] * cc->rgb[mb.cc - 1][k] / 255u);
+					}
+					emit_light(rc->chain, &tl);
+					n = 0;
+					ad[n].data = rb_object_tex0((unsigned)mb.tex2, &img2, 0);   ad[n++].addr = GS_A_TEX0_1;
+					ad[n].data = GS_TEX1(1, 0, 1, 1, 0, 0, 0);  ad[n++].addr = GS_A_TEX1_1;
+					ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);    ad[n++].addr = GS_A_CLAMP_1;
+					ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);       ad[n++].addr = GS_A_ALPHA_1;
+					ad[n].data = GS_TEST(0, 6, 0x40, 0, 0, 0, 1, 2); ad[n++].addr = GS_A_TEST_1;
+					ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, 0); ad[n++].addr = GS_A_ZBUF_1;
+					emit_part_state(rc->chain, ad, n, mb.uv_scale[0] / (float)(1u << part.uv_shift), mb.uv_scale[1] / (float)(1u << part.uv_shift),
+					                GS_PRIM(GSX_PRIM_TRIANGLE, 1, 1, rc->opt->fog, 1, 0, 0, 0, 0));
+					for (bi = 0; bi < part.batch_count; bi++) {
+						model_batch b2 = model_get_batch(ms, (uint32_t)part.first_batch + bi);
+						emit_batch(rc->chain, rc, ms, &b2);
+						o->st_triangles += b2.triangles;
+					}
+					emitted += part.batch_count;
+					emit_light(rc->chain, light);
+				}
+			}
 		}
 	}
 	o->st_batches += emitted;
@@ -211,6 +256,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	int bias = o->lod ? lodctl_lod_bias(o->lod) : 0;
 	unsigned i, budget = o->max_batches;
 	float right[3], up[3], fwd[3];
+	cc_tints cc;
 	u32 t0 = timer_cycles();
 	o->st_visible = o->st_culled = o->st_batches = o->st_triangles = o->st_skipped = 0;
 	if (!o->world.models || !o->world.scen) return;
@@ -236,7 +282,8 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 		if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { o->st_culled++; continue; }
 		light_at(o, c, &light);
 		o->st_visible++;
-		if (draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget > o->st_batches ? budget - o->st_batches : 0) == 0
+		cc_pick(o, ob->model, (uint32_t)i * 2654435761u + (uint32_t)ob->def * 40503u, &cc);
+		if (draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget > o->st_batches ? budget - o->st_batches : 0, &cc) == 0
 		    && o->st_batches >= budget) { o->st_skipped++; }
 	}
 
@@ -255,15 +302,16 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 		mi = model_get(o->world.models, (uint32_t)f->arms_model);
 		model_select_permutations(o->world.models, &mi, NULL, perm);
 		for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
+		cc_pick(o, f->arms_model, 1u, &cc);
 		draw_model(o, rc, f->arms_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS,
-		           &f->arms_nodes, 0, &light, 400);
+		           &f->arms_nodes, 0, &light, 400, &cc);
 		if (f->weapon_model >= 0) {
 			object_nodes_t wn;
 			mi = model_get(o->world.models, (uint32_t)f->weapon_model);
 			model_select_permutations(o->world.models, &mi, NULL, perm);
 			for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
 			if (objects_pose_model(&o->world, f->weapon_model, f->weapon_graph, f->weapon_anim, f->weapon_frame, &f->weapon_root, &wn))
-				draw_model(o, rc, f->weapon_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS, &wn, 0, &light, 400);
+				draw_model(o, rc, f->weapon_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS, &wn, 0, &light, 400, NULL);
 		}
 	}
 	o->st_ms = timer_ms(t0, timer_cycles());
@@ -338,7 +386,7 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 		pr = model_parts(ms, &mi, perm[r], lod);
 		for (p = 0; p < pr.part_count; p++) {
 			model_part part = model_get_part(ms, (uint32_t)pr.first_part + p);
-			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f } };
+			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f }, 0, -1 };
 			gs_ad ad[7];
 			unsigned n = 0;
 			u64 tex0 = 0, prim;

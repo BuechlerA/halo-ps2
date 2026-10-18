@@ -368,6 +368,7 @@ int main(int argc, char *argv[])
 			s_objr.max_batches = (unsigned)cfg_int(&s_cfg, "objcap", 900);
 			s_objr.draw_objects = (int)cfg_int(&s_cfg, "objects", 1);
 			s_objr.draw_fp = (int)cfg_int(&s_cfg, "fp", 1);
+			s_objr.cchg = &s_world.cchg;
 			s_objr.sky_model = -1;
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
 			s_objr.sky_model2 = -1;

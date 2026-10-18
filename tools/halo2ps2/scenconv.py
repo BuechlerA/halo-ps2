@@ -614,9 +614,13 @@ def _clamp8(v: float) -> int:
     return max(0, min(255, int(v + 0.5)))
 
 
+OBJECT_LM_GAIN = 1.7 * 1.8    # the BSP lightmap gain (scripts/build-world.sh LM_GAIN) x 1.8: a character stands in the light of all the walls around him, the
+                              # area mean of the lightmap of a cluster is about half of its lit walls, and the Xbox bridge crew is as bright as the bulkheads (2026-10-18)
+
+
 def cluster_lights(mats: list[bspconv.Material], st: bsp.Structure, pages: dict[int, texconv.Rgba],
                    suns: list[tuple[float, float, float] | None] | None = None,
-                   gain: float = texconv.LM_DEFAULT_GAIN) -> list[ClusterLight]:
+                   gain: float = texconv.LM_DEFAULT_GAIN, gamma: float = 1.0, chroma: float = 1.0) -> list[ClusterLight]:
     """One ``ClusterLight`` per cluster of ``st`` (formula in docs/13-scen-section.md).
 
     Per lightmapped triangle: area, normal (``-(e1 x e2)``, BSP triangles are wound clockwise), colour = mean of
@@ -650,7 +654,8 @@ def cluster_lights(mats: list[bspconv.Material], st: bsp.Structure, pages: dict[
             uvs = [mat.lmuv[k] for k in t]
             samples = [sample(*uv) for uv in uvs]
             samples.append(sample(sum(uv[0] for uv in uvs) / 3.0, sum(uv[1] for uv in uvs) / 3.0))
-            rgb = tuple(sum(sm[ch] for sm in samples) / 4.0 * gain for ch in range(3))
+            toned = [texconv.lightmap_tone_rgb(*sm, gain, gamma, chroma) for sm in samples]
+            rgb = tuple(sum(sm[ch] for sm in toned) / 4.0 for ch in range(3))
             tris.append((tuple(cl), ln / 2.0, (-n[0] / ln, -n[1] / ln, -n[2] / ln), rgb))  # type: ignore[arg-type]
     # BSP-wide mean colour (each triangle once)
     total = sum(t[1] for t in tris)
@@ -714,7 +719,7 @@ def map_lights(m: texconv.MapData, indices: list[int] | None) -> list[list[Clust
             mats, _ = bspconv.read_materials(block, loc)
             st = bsp.read_structure(loc, block)
             pages = texconv.lightmap_pages_rgba(m, infos[i])
-            out.append(cluster_lights(mats, st, pages, suns))
+            out.append(cluster_lights(mats, st, pages, suns, OBJECT_LM_GAIN, texconv.LM_GAMMA, texconv.CHROMA_STRENGTH))
     return out
 
 

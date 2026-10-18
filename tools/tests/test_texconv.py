@@ -254,7 +254,7 @@ def fixture() -> tuple[bytes, bytes, list[tc.Ps2Texture], list[tc.ShaderInfo], l
         tc.ShaderInfo(0xE1740002, None, "c", flags=tc.BF_UNTEXTURED),
         tc.ShaderInfo(0xE1740020, "sgla", "d", bitmap_id=0xE1780003, blend=tc.BLEND_ALPHA, texture=2),
     ]
-    pages = [tc.convert_lightmap_page(0, tc.Rgba(64, 32, rgba_image(64, 32, lambda x, y: (x * 4, x * 4, x * 4, 255)))),
+    pages = [tc.convert_lightmap_page(0, tc.Rgba(64, 32, rgba_image(64, 32, lambda x, y: (x * 4, x * 4, x * 4, 255))), 0, 1.0, 1.0),
              tc.convert_lightmap_page(2, tc.Rgba(16, 16, bytes([90, 90, 90, 255]) * 256), 0, 1.0, 1.0)]
     return tc.build_texs([t0, t1, t2], shaders), tc.build_lmap(pages, 1.0), [t0, t1, t2], shaders, pages
 

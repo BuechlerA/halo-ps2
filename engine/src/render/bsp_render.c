@@ -213,7 +213,7 @@ int bsp_render_set_world(arena_t *a, const bsp_section *s, const tex_source_t *s
 		unsigned bound = 0, flat = 0;
 		for (i = 0; i < s->material_count; i++) {
 			bsp_material m = bsp_get_material(s, i);
-			mat_binding_t b = { -1, 0, 0, { 1.0f, 1.0f } };
+			mat_binding_t b = { -1, 0, 0, { 1.0f, 1.0f }, 0, -1 };
 			if (src->binding && src->binding(src->user, m.shader_id, &b) == 0 && b.tex >= 0) bound++; else { b.tex = -1; flat++; }
 			s_bind[i] = b;
 		}

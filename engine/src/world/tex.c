@@ -100,8 +100,8 @@ const uint8_t *tex_clut(const tex_section *s, const tex_info *t)
 tex_binding tex_get_binding(const tex_section *s, uint32_t i)
 {
 	const uint8_t *p = s->bindings + (size_t)i * BINDING_REC;
-	tex_binding b = { rd32(p), (uint16_t)rd16(p + 4), (uint16_t)rd16(p + 6), p[8], p[9],
-	                  { rdf(p + 12), rdf(p + 16) }, rd32(p + 20) };
+	tex_binding b = { rd32(p), (uint16_t)rd16(p + 4), (uint16_t)rd16(p + 6), p[8], p[9], (uint16_t)rd16(p + 10),
+	                  { rdf(p + 12), rdf(p + 16) }, rd32(p + 20), (uint16_t)rd16(p + 24) };
 	return b;
 }
 
