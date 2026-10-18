@@ -577,7 +577,6 @@ static void test_follow_list(void)
 		for (l = 0; l < nl && !done; l++) {
 			aidef_command_list_def cl;
 			unsigned k, n_go = 0, goals = 0;
-			(void)c;
 			aidef_point_def pts[3];
 			float spot[3], dmin;
 			int actor;
