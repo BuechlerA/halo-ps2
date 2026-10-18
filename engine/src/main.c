@@ -212,6 +212,16 @@ static int do_revert(void)
 	return ok;
 }
 
+/* `prof2 1`: ms spent in each part of the 30 Hz tick, summed per 60-frame window (the zones are exclusive; P2_N must match the names in the prof2 print) */
+enum { P2_MAPP, P2_SERVE, P2_BSPSW, P2_STREAM, P2_FX, P2_AUDIO, P2_HUD, P2_N };
+static float s_p2_ms[P2_N], s_p2_peak[P2_N];
+static void p2_add(int zone, u32 t0)
+{
+	float ms = timer_ms(t0, timer_cycles());
+	s_p2_ms[zone] += ms;
+	if (ms > s_p2_peak[zone]) s_p2_peak[zone] = ms;
+}
+
 /* the mission asks for things the platform must do between ticks */
 static void serve_mission(void)
 {
@@ -482,7 +492,7 @@ int main(int argc, char *argv[])
 
 	limit = (u32)cfg_int(&s_cfg, "frames", 0);
 	for (;;) {
-		u32 t0 = timer_cycles(), t1, t2, tsim, tobj;
+		u32 t0 = timer_cycles(), t1, t2, tsim, tobj, tp, tw1, tw2;
 		fly_input in;
 		unsigned down = pad_poll(&in);
 
@@ -506,11 +516,17 @@ int main(int argc, char *argv[])
 					vitals_damage(&s_game.vitals, 1.0e6f, 1.0f, 1.0f, 1.0f);
 				}
 				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
-				if (mapp_active()) { mapp_tick(&gin); serve_mission(); } else game_tick(&s_game, &gin);
+				tp = timer_cycles();
+				if (mapp_active()) { mapp_tick(&gin); p2_add(P2_MAPP, tp); tp = timer_cycles(); serve_mission(); p2_add(P2_SERVE, tp); } else { game_tick(&s_game, &gin); p2_add(P2_MAPP, tp); }
+				tp = timer_cycles();
 				check_bsp_switch();
 				s_tick++;
 				s_hudr.tick = s_tick;
+				p2_add(P2_BSPSW, tp);
+				tp = timer_cycles();
 				if (s_stream_on) stream_ee_tick(&s_see);
+				p2_add(P2_STREAM, tp);
+				tp = timer_cycles();
 				if (s_fx.def) {
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -536,7 +552,11 @@ int main(int argc, char *argv[])
 					}
 					fx_tick(&s_fx);
 				}
+				p2_add(P2_FX, tp);
+				tp = timer_cycles();
 				if (s_ga.snd) { camera_t ac; game_camera(&s_game, &ac); gameaudio_events(&s_ga, &s_game, &ac); }
+				p2_add(P2_AUDIO, tp);
+				tp = timer_cycles();
 				{
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -560,6 +580,7 @@ int main(int argc, char *argv[])
 						}
 					}
 				}
+				p2_add(P2_HUD, tp);
 				if (cfg_int(&s_cfg, "gamelog", 0)) {
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -613,23 +634,41 @@ int main(int argc, char *argv[])
 			if (on < 0) on = (int)cfg_int(&s_cfg, "prof2", 0);
 			if (on) {
 				acc[0] += timer_ms(t0, tsim); acc[1] += timer_ms(tsim, tobj); acc[2] += timer_ms(tobj, t1);
-				if (++n == 60) { printf("[prof2] frame %u sim %.2f objects %.2f build %.2f ms\n", (unsigned)frame, acc[0] / 60.0f, acc[1] / 60.0f, acc[2] / 60.0f); acc[0] = acc[1] = acc[2] = 0.0f; n = 0; }
+				if (++n == 60) { {
+					unsigned z;
+					static const char *const zn[P2_N] = { "mapp", "serve", "bspsw", "stream", "fx", "audio", "hud" };
+					printf("[prof2] frame %u sim %.2f objects %.2f build %.2f ms; sim parts avg/peak:", (unsigned)frame, acc[0] / 60.0f, acc[1] / 60.0f, acc[2] / 60.0f);
+					for (z = 0; z < P2_N; z++) { printf(" %s %.2f/%.1f", zn[z], s_p2_ms[z] / 60.0f, s_p2_peak[z]); s_p2_ms[z] = s_p2_peak[z] = 0.0f; }
+					printf("\n");
+				}
+				acc[0] = acc[1] = acc[2] = 0.0f; n = 0; }
 			}
 		}
 		if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }      /* FINISH seen: burning vsyncs below clears the flag */
 		s_gpu_idle = 0;
+		tw1 = timer_cycles();
 		{
 			/* Present exactly s_vblanks vblanks after the previous flip (30 fps: 2). flip() itself waits for the next
 			 * vsync; if the build finished before the vsync that is already (s_vblanks - 1) vblanks after the last
 			 * flip, burn the vsyncs that have not happened yet. A build that ran long just lands on a later vsync. */
-			int passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS), v;
-			for (v = passed; v < s_vblanks - 1; v++) { if (s_stream_on) stream_ee_pump(&s_see); graph_wait_vsync(); }
+			int passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS);
+			while (passed < s_vblanks - 1) {
+				int now_passed;
+				if (s_stream_on) stream_ee_pump(&s_see);
+				/* the pump takes time: when it ran across the vsync we were about to wait for, that vsync is gone and waiting for "the next" one would
+				 * burn a whole extra frame (ADR-062: this alone made every frame whose EE work ended within a pump of the vblank 3 vblanks long) */
+				now_passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS);
+				if (now_passed > passed) { passed = now_passed; continue; }
+				graph_wait_vsync();
+				passed++;
+			}
 		}
+		tw2 = timer_cycles();
 		video_present(&s_video);                           /* vsync + display */
 		t2 = timer_cycles();
 
 		profiler_frame(&s_prof, timer_ms(t0, t1), timer_ms(t1, t2), bsp_render_stats(), t2);
-		if (frame > 0 && s_prof.last_interval > s_prof.drop_ms) printf("[prof] DROP frame %u interval %.1f ms (ee %.1f ms)\n", (unsigned)frame, s_prof.last_interval, timer_ms(t0, t1));
+		if (frame > 0 && s_prof.last_interval > s_prof.drop_ms) printf("[prof] DROP frame %u interval %.1f ms (ee %.1f ms; gpu wait %.1f, vsync burn %.1f, present %.1f)\n", (unsigned)frame, s_prof.last_interval, timer_ms(t0, t1), timer_ms(t1, tw1), timer_ms(tw1, tw2), timer_ms(tw2, t2));
 		if (s_have_objects) {
 			s_prof.obj_visible = s_objr.st_visible; s_prof.obj_culled = s_objr.st_culled;
 			s_prof.obj_batches = s_objr.st_batches; s_prof.obj_tris = s_objr.st_triangles; s_prof.lod_level = (unsigned)s_lod.level;

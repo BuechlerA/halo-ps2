@@ -217,27 +217,48 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	camera_basis(cam, right, up, fwd);
 	emit_model_setup(rc->chain, rc);
 
-	for (i = 0; o->draw_objects && o->table && i < o->table->count; i++) {
-		const object_t *ob = &o->table->obj[i];
-		model_info mi;
-		if (ob->model < 0 || (ob->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
-		mi = model_get(o->world.models, (uint32_t)ob->model);
-		float c[3], d[3], dist, w, diameter;
-		scen_light light;
-		unsigned lod;
-		mat4_transform_point(&ob->root, mi.centre, c);
-		d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
-		dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-		w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
-		if (dist - ob->radius > maxd || !frustum_sphere(rc->frustum, c, ob->radius)) { o->st_culled++; continue; }
-		diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
-		if (diameter < 3.0f && dist > ob->radius * 2.0f) { o->st_culled++; continue; }   /* sub-pixel clutter */
-		lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
-		if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { o->st_culled++; continue; }
-		light_at(o, c, &light);
-		o->st_visible++;
-		if (draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget > o->st_batches ? budget - o->st_batches : 0) == 0
-		    && o->st_batches >= budget) { o->st_skipped++; }
+	/* pass 1: cull and rank by distance; pass 2: pose and draw nearest first until the batch cap is spent, so the cap drops the far clutter
+	 * (not whatever comes last in the table) and the objects it drops cost no pose, lighting or model walk at all (ADR-062) */
+	{
+		static struct { float dist; uint16_t index; } cand[OBJ_MAX];
+		unsigned n = 0, k;
+		if (o->lod) budget = lodctl_batch_cap(o->lod, budget);
+		for (i = 0; o->draw_objects && o->table && i < o->table->count && i < OBJ_MAX; i++) {
+			const object_t *ob = &o->table->obj[i];
+			model_info mi;
+			float c[3], d[3], dist, w, diameter, key;
+			if (ob->model < 0 || (ob->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
+			mi = model_get(o->world.models, (uint32_t)ob->model);
+			mat4_transform_point(&ob->root, mi.centre, c);
+			d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
+			dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+			w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+			if (dist - ob->radius > maxd || !frustum_sphere(rc->frustum, c, ob->radius)) { o->st_culled++; continue; }
+			diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
+			if (diameter < 3.0f && dist > ob->radius * 2.0f) { o->st_culled++; continue; }   /* sub-pixel clutter */
+			key = dist - ob->radius;                                                          /* the nearest surface, so a big object close by is not ranked behind a small one */
+			for (k = n; k > 0 && cand[k - 1].dist > key; k--) cand[k] = cand[k - 1];          /* insertion sort: n is a few dozen */
+			cand[k].dist = key; cand[k].index = (uint16_t)i;
+			n++;
+		}
+		for (k = 0; k < n; k++) {
+			const object_t *ob = &o->table->obj[cand[k].index];
+			model_info mi;
+			float c[3], d[3], w, diameter;
+			scen_light light;
+			unsigned lod;
+			if (o->st_batches >= budget) { o->st_skipped += n - k; break; }
+			mi = model_get(o->world.models, (uint32_t)ob->model);
+			mat4_transform_point(&ob->root, mi.centre, c);
+			d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
+			w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+			diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
+			lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
+			if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { o->st_culled++; continue; }
+			light_at(o, c, &light);
+			o->st_visible++;
+			if (draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget - o->st_batches) == 0 && o->st_batches >= budget) o->st_skipped++;
+		}
 	}
 
 	if (o->draw_fp && !o->hide_fp && o->fp && o->fp->active) {

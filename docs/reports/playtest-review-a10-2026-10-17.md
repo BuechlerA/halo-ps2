@@ -141,3 +141,16 @@ Reference capture recipe (macOS): bind the keyboard in the xemu config, send key
 After the fixes (same config): 24256 frames, 712 late (2.94 %), `game_won` at 773 s, 60 assists of which 24 rescues, no fall, `a10game` 2 of 1081 late. Still open: the BSP 6 finale cutscene (frames 21975-22147, 173 late frames in a row, EE 29-52 ms:
 sim 11-17 ms plus build 15-28 ms with the object pass at its 900-batch cap) and the crowd scenes of BSP 0 / 8 (EE 16.5 ms, GS late: 21k object triangles, 964 batches, `lod=4`). The bot still takes 60 assists, so Gate M4's timing claim stays "script, AI and device
 control under a bot, not a human run".
+
+### 5.1 The remaining late frames, measured (ADR-062)
+
+| Question | Finding |
+|---|---|
+| Why the crowd scenes of BSP 0 / 8 were late | not the GS: EE 16.6 ms, GPU wait 0.0, vsync burn 16.8, present 16.7. The burn loop pumped the stream after deciding which vsync to wait for; a frame whose EE work ended within a pump of the vblank missed it and landed 3 vblanks out. Fixed in `main.c`; about 470 of the 703 late frames were this |
+| Why the BSP 6 finale is EE-bound | sim 11-17 ms: `units` 5 ms (18 body integrations per tick), `ai` 1.5, `post` 1.2, `dev` 1.2, `stream` 1.4, `game` 1.1; build 15-28 ms: world 15k tris plus objects 20k tris at the 900-batch cap, every visible object posed before the cap dropped it |
+| What carried units cost | 29-38 of 42 units in the cryo bay and the dropship scenes reported `on_ground` 0: `unit_suspended` and `objects_attach` re-teleported them every tick (`units_teleport` clears `on_ground`), so each swept its capsule for nothing. `units_pin` fixes it (BSP 0 cryo `units` 0.5 -> 0.01 ms, BSP 6 `units` 3.4 -> 2.4 ms) |
+| Devices | `mission_sync_devices` decoded every device record each tick: 1.17 -> 0.50 ms per tick |
+| Result (same config, normal speed, recompiler) | 90 of 24256 late (0.37 %, was 703 = 2.90 %); `game_won` at tick 23210, 60 assists (24 rescues), identical to the run before; `a10game` 0 of 1081 |
+| Still late | finale 60 frames (EE 34-41 ms), BSP 6 load 14, one stall per BSP switch; `cinelod 1` / `unitlod 20` would cut the finale further but send the bot down a different route (73-89 assists), so they stay off |
+
+Not covered: the bot's assists are unchanged (60); a human run was not measured; real-console GS cost is still unmeasured (ADR-022).

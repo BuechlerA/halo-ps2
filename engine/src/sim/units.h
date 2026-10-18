@@ -109,6 +109,8 @@ typedef struct {
 	unsigned count;                          /* high-water mark of u[] */
 	uint32_t spawned, died;                  /* statistics */
 	float    lod_distance;                   /* wu from the player beyond which a unit's body is integrated every other tick (0 = never; set by the host) */
+	uint8_t  lod_cine;                       /* host: allow lod_all during cinematics (the mission sets lod_all from the cinematic flag) */
+	uint8_t  lod_all;                        /* every unit's body is integrated every other tick (a cinematic: the mission sets it from the cinematic flag) */
 	unsigned ev_count;                       /* events of the last units_tick (dropped beyond UNIT_EVENTS) */
 	unit_event_t ev[UNIT_EVENTS];
 } units_t;
@@ -138,6 +140,9 @@ void  units_kill(units_t *s, game_t *g, int unit, int silent);
 int   units_alive(const units_t *s, const game_t *g, int unit);
 /* Teleports a unit (and its object) without physics. */
 void units_teleport(units_t *s, game_t *g, int unit, const float pos[3], float yaw);
+/* Holds a unit at `pos` every tick (a script's unit_suspended, an object carried by an attachment): like units_teleport but it keeps the unit on the ground and its settle count, so the body
+ * is not swept every tick; call it every tick. */
+void units_pin(units_t *s, game_t *g, int unit, const float pos[3], float yaw);
 /* Gives a weapon (tag id) to a unit; resets the weapon state. */
 void units_give_weapon(units_t *s, game_t *g, int unit, uint32_t weapon_tag);
 /* Eye / aim origin of a unit and its current aim direction. */

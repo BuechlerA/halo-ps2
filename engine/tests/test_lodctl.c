@@ -11,6 +11,7 @@ int main(void)
 	int i;
 	lodctl_init(&c, 33.3f, 30);
 	CHECK(c.level == 0 && lodctl_distance_scale(&c) == 1.0f && lodctl_lod_bias(&c) == 0 && lodctl_particle_scale(&c) == 1.0f);
+	CHECK(lodctl_batch_cap(&c, 900) == 900);
 
 	/* comfortable frames never change anything */
 	for (i = 0; i < 500; i++) lodctl_frame(&c, 20.0f, 0);
@@ -22,6 +23,7 @@ int main(void)
 	for (i = 0; i < 10; i++) lodctl_frame(&c, 40.0f, 0);
 	CHECK(c.level == LODCTL_MAX_LEVEL);
 	CHECK(lodctl_distance_scale(&c) == 0.4f && lodctl_lod_bias(&c) == 2 && lodctl_particle_scale(&c) == 0.25f);
+	CHECK(lodctl_batch_cap(&c, 900) == 540);
 	for (i = 0; i < 100; i++) lodctl_frame(&c, 45.0f, 1);
 	CHECK(c.level == LODCTL_MAX_LEVEL);
 

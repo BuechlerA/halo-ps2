@@ -26,5 +26,6 @@ void  lodctl_frame(lodctl_t *c, float frame_ms, int dropped);
 float lodctl_distance_scale(const lodctl_t *c);   /* multiplies object draw distances: 1.0 .. 0.4 */
 int   lodctl_lod_bias(const lodctl_t *c);         /* added to the chosen model LOD index: 0 .. 2 */
 float lodctl_particle_scale(const lodctl_t *c);   /* multiplies particle caps: 1.0 .. 0.25 */
+unsigned lodctl_batch_cap(const lodctl_t *c, unsigned cap);   /* the per-frame object batch cap at this level: cap, then 85 % and 60 % at the top two levels */
 
 #endif

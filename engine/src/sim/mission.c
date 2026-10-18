@@ -188,20 +188,31 @@ void mission_sync_player(mission_t *m)
 
 void mission_sync_devices(mission_t *m)
 {
+	/* the placement and animation of every device are fixed for the mission: decode them once (the per-tick decode of the packed records cost over 1 ms) */
+	static const devdef_section *cache_sec;
+	static unsigned cache_count;
+	static uint32_t scen[DEV_MAX_DEVICES];
+	static int32_t  anim[DEV_MAX_DEVICES];                      /* pos_anim, -1 none */
 	unsigned i;
 	if (!m->devices || !m->dev || !m->objects) return;
-	for (i = 0; i < m->devices->count; i++) {
-		devdef_device pd = devdef_get_device(m->dev, i);
-		devdef_def df;
+	if (cache_sec != m->dev || cache_count != m->devices->count) {
+		cache_sec = m->dev; cache_count = m->devices->count > DEV_MAX_DEVICES ? DEV_MAX_DEVICES : m->devices->count;
+		for (i = 0; i < cache_count; i++) {
+			devdef_device pd = devdef_get_device(m->dev, i);
+			devdef_def df = devdef_get_def(m->dev, pd.def);
+			scen[i] = pd.scen_index;
+			anim[i] = (pd.scen_index == DEVDEF_NONE || pd.scen_index >= OBJ_MAX_PLACEMENTS || df.pos_anim == DEVDEF_NO_ANIM) ? -1 : (int32_t)df.pos_anim;
+		}
+	}
+	for (i = 0; i < cache_count; i++) {
 		object_t *o;
 		int slot;
-		if (pd.scen_index == DEVDEF_NONE || pd.scen_index >= OBJ_MAX_PLACEMENTS) continue;
-		slot = m->objects->by_placement[pd.scen_index];
+		if (anim[i] < 0) continue;
+		slot = m->objects->by_placement[scen[i]];
 		if (!mission_object_live(m, slot)) continue;
 		o = &m->objects->obj[slot];
-		df = devdef_get_def(m->dev, pd.def);
-		if (o->graph < 0 || df.pos_anim == DEVDEF_NO_ANIM) continue;
-		o->anim = df.pos_anim;
+		if (o->graph < 0) continue;
+		o->anim = (uint16_t)anim[i];
 		o->frame = devices_anim_frame(m->devices, i);
 		o->flags = (o->flags & ~OBJ_F_ANIMATED) | OBJ_F_POSED;
 	}
@@ -218,6 +229,7 @@ void mission_tick(mission_t *m, const game_input_t *in)
 	ZONE(1, if (m->devices) { devices_tick(m->devices); mission_sync_devices(m); });
 	ZONE(2, hs_host_obj_pre(m, in));                           /* recordings feed their units; latches the player's input for the action tests */
 	ZONE(3, if (m->ai) ai_tick(m->ai));                        /* decisions: unit controls */
+	if (m->units) m->units->lod_all = (m->cinematic && m->units->lod_cine) ? 1u : 0u;        /* a cinematic: nobody plays it, bodies integrate at half rate (ADR-062) */
 	ZONE(4, if (m->units && m->game) units_tick(m->units, m->game));    /* execution */
 	memset(&none, 0, sizeof none);
 	ZONE(5, if (m->game) game_tick(m->game, (m->cinematic || m->hobj.player_input_disabled) ? &none : in));
