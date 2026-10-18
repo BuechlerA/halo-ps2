@@ -124,7 +124,10 @@ static void draw_number(hud_frame_t *f, const huddef_section *s, const huddef_gl
 	x = (float)n->x + (float)n->w - dw * (float)len;       /* right aligned inside the number's box */
 	for (i = 0; i < len; i++) {
 		huddef_sprite d = huddef_get_sprite(s, gl->digit_first + (uint32_t)(buf[i] - '0'));
-		add_quad(f, &d, x + dw * (float)i, (float)n->y, dw, dh, 1.0f, colour, HUDDEF_BLEND_ALPHA);
+		/* a digit sprite is a cell about twice the glyph's width with the glyph in its middle (the sheet's pitch, not the
+		 * on-screen advance): draw the cell at its own size, centred on the advance slot, never squeezed into it */
+		float cw = (float)d.w * (n->scale_x > 0.0f ? n->scale_x : 1.0f);
+		add_quad(f, &d, x + dw * (float)i + (dw - cw) * 0.5f, (float)n->y, cw, dh, 1.0f, colour, HUDDEF_BLEND_ALPHA);
 		f->digits++;
 	}
 }
@@ -149,7 +152,8 @@ static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hu
 	for (i = 0; i < h.elem_count; i++) {
 		huddef_elem e = huddef_get_elem(s, (uint32_t)h.elem_first + i);
 		uint32_t col;
-		if (e.role != HUDDEF_R_STATIC || e.allowed == HUDDEF_MAP_MULTIPLAYER) continue;
+		/* statics and overlay sub elements (the "x" and clip icon after the ammo count are the latter) */
+		if ((e.role != HUDDEF_R_STATIC && e.role != HUDDEF_R_OVERLAY) || e.allowed == HUDDEF_MAP_MULTIPLAYER) continue;
 		col = e.colour;
 		if (!col) { if (!low_ammo || !flash_on(tick, e.flash_period, e.flash_length)) continue; col = e.flash_colour; }
 		draw_elem(f, s, &e, col, tick);

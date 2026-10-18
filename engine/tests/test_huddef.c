@@ -230,7 +230,7 @@ int main(int argc, char **argv)
 	CHECK(e.colour == 0x6E806B55u && e.flash_period == 90 && e.flash_delay == 7 && e.flash_count == 3 && e.flash_length == 7);
 	CHECK(e.anchor == HUDDEF_A_TR && e.blend == HUDDEF_BLEND_ALPHA && near1(e.scale_x, 1.0f));
 	e = huddef_get_elem(&s, 2);
-	CHECK(e.role == HUDDEF_R_HEALTH_BG && e.x == 487 && e.y == 54 && e.off_x == -5 && e.off_y == 18 && e.w == 100);
+	CHECK(e.role == HUDDEF_R_HEALTH_BG && e.x == 497 && e.y == 54 && e.off_x == -5 && e.off_y == 18 && e.w == 100);
 	e = huddef_get_elem(&s, 3);
 	CHECK(e.role == HUDDEF_R_MOTION_BG && e.w == 512 && e.h == 16 && e.x == 48 && e.y == 444 - 16 && e.anchor == HUDDEF_A_BL && e.seq == 2);
 	e = huddef_get_elem(&s, 0);
@@ -238,7 +238,7 @@ int main(int argc, char **argv)
 	e = huddef_get_elem(&s, 5);
 	CHECK(e.role == HUDDEF_R_MOTION_CENTER && e.off_x == 41 && e.off_y == 41 && e.x == 89 && e.y == 403 && e.anchor == HUDDEF_A_BL);
 	e = huddef_get_elem(&s, 6);
-	CHECK(e.role == HUDDEF_R_AUX_BG && e.frames == 3 && e.w == 32 && e.x == 553 && e.sprite == 22);
+	CHECK(e.role == HUDDEF_R_AUX_BG && e.frames == 3 && e.w == 32 && e.x == 567 && e.sprite == 22);
 	e = huddef_get_elem(&s, 7);                                                /* vehicle HUD: centre anchor, width scale 2 */
 	CHECK(e.anchor == HUDDEF_A_C && near1(e.scale_x, 2.0f) && near1(e.scale_y, 1.0f) && e.w == 64 && e.h == 16 && e.x == 288 && e.y == 192);
 	e = huddef_get_elem(&s, 27);
@@ -246,7 +246,7 @@ int main(int argc, char **argv)
 
 	/* meters */
 	huddef_meter m = huddef_get_meter(&s, 0);
-	CHECK(m.role == HUDDEF_M_SHIELD && m.w == 32 && m.h == 16 && m.x == 567 && m.y == 36 && m.alpha_mult == 1 && m.alpha_bias == 55);
+	CHECK(m.role == HUDDEF_M_SHIELD && m.w == 32 && m.h == 16 && m.x == 553 && m.y == 36 && m.alpha_mult == 1 && m.alpha_bias == 55);
 	CHECK(m.value_scale == 198 && m.flags == 0 && m.colour_empty == 0 && near1(m.translucency, 0.5f) && near1(m.opacity, 0.0f));
 	CHECK(m.colour_min == 0x80502800u);                                        /* alpha 0 in the tag -> opaque (0x80) */
 	m = huddef_get_meter(&s, 1);

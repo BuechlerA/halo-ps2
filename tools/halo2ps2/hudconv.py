@@ -62,7 +62,7 @@ Common HUD element (all three interfaces, 0x24-byte header, then the body)
         +0x44 u8 maximum digits, u8 flags (1 leading zeros, 2 only when zoomed, 4 trailing 'm'), u8 fractional digits.
 anchors (u16 at the HUD tag's start, HEK order top left, top right, bottom left, bottom right, centre): the anchor points are
     the corners of the 7.5 % title-safe frame of the 640 x 480 screen (48 / 36 px in) and the screen centre; the element's
-    matching corner goes to anchor + offset (x right, y down). The unit HUD's motion sensor is always laid out from the
+    matching corner goes to anchor + offset (y down; x counted inward from a right anchor, i.e. leftwards). The unit HUD's motion sensor is always laid out from the
     bottom-left anchor, its centre offset counted inward from that corner (verified against an Xbox frame, ADR-060). The
     motion sensor blip is the bitmap ``ui\\hud\\bitmaps\\hud_sensor_blip`` (found by path, sequence 0).
 unit_hud_interface (``unhi``): fixed 0x56C B: +0x00 u16 anchor, then static 0x24 hud background, 0x8C shield panel
@@ -345,6 +345,12 @@ class Textures:
         while tw > texconv.MAX_TEX or th > texconv.MAX_TEX:
             tw, th = max(texconv.MIN_TEX, tw // 2), max(texconv.MIN_TEX, th // 2)
         mask = img.format in (bitmaps.FMT_AY8, bitmaps.FMT_A8)
+        if img.format == bitmaps.FMT_A8Y8:
+            # the meter bitmaps (hud_unit_meters, hud_ammo_meters) are a8y8: alpha is the shape, luminance a fill-order ramp
+            # (254 -> 30 along the shield bar, one step per health segment) the game thresholds against the meter value; the
+            # meter is drawn in one flat tint, so keep the alpha shape and drop the ramp (the engine clips by the value)
+            ent = self.m.by_id.get(tid)
+            mask = bool(ent) and ent.path.lower().endswith("_meters")
         if padded:                                           # transparent border right and below
             rows = [rgba[y * w * 4:(y + 1) * w * 4] + bytes((pw - w) * 4) for y in range(h)]
             rgba = b"".join(rows) + bytes((ph - h) * pw * 4)
@@ -696,9 +702,13 @@ def anchor_point(anchor: int) -> tuple[int, int]:
 
 def resolve_position(anchor: int, off_x: int, off_y: int, w: int, h: int) -> tuple[int, int]:
     """Top-left corner on the 640 x 480 virtual screen. The element's matching corner (its centre for A_C) sits at the
-    anchor point plus the tag's offset (x right, y down at every anchor)."""
+    anchor point plus the tag's offset; y is down at every anchor, x is counted inward from a right anchor (positive
+    moves left, like the motion sensor centre). Verified against an Xbox gameplay frame: the cyborg health panel at
+    offset (-5, 18) draws its cross icon 10 px right of where an x-right offset puts it, and the shield meter (7, 0) /
+    health meter (36, 17) land inside the panel instead of 7 / 36 px past its right edge. Bottom anchors are unused by
+    retail HUDs; their y rule is the unverified mirror of the top ones."""
     ax, ay = anchor_point(anchor)
-    x = ax + off_x - (w if anchor in (A_TR, A_BR) else w // 2 if anchor == A_C else 0)
+    x = ax - off_x - w if anchor in (A_TR, A_BR) else ax + off_x - (w // 2 if anchor == A_C else 0)
     y = ay + off_y - (h if anchor in (A_BL, A_BR) else h // 2 if anchor == A_C else 0)
     return x, y
 
