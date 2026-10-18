@@ -35,6 +35,39 @@ static void add_quad(hud_frame_t *f, const huddef_sprite *sp, float x, float y, 
 	q->blend = (uint8_t)blend;
 }
 
+int hud_team_hostile(unsigned team) { return team == 3 || team == 4 || team == 5; }     /* covenant, flood, sentinel (ai/units.c teams) */
+int hud_team_friendly(unsigned team) { return team == 1 || team == 2; }                  /* player, human */
+
+/* motion tracker blips: every living unit within the tracker range, around the radar centre (cx, cy) of radius `radius`
+ * pixels, the player's facing up. The sprite is the retail blip bitmap scaled to HUD_BLIP_SIZE. */
+static void draw_blips(hud_frame_t *f, const huddef_section *s, const huddef_globals *gl, const game_t *g, float cx, float cy, float radius)
+{
+	huddef_sprite sp;
+	float range = gl->motion_range > 0.0f ? gl->motion_range : 20.0f;
+	float c = cosf(g->player.yaw), sn = sinf(g->player.yaw);
+	unsigned i, n;
+	if (gl->blip_sprite == HUDDEF_NONE || !g->objects || radius <= 0.0f) return;
+	sp = huddef_get_sprite(s, gl->blip_sprite);
+	n = g->objects->count < OBJ_MAX ? g->objects->count : OBJ_MAX;
+	for (i = 0; i < n; i++) {
+		const object_t *o = &g->objects->obj[i];
+		const game_unit_t *u = &g->unit_state[i];
+		float dx, dy, fwd, right, d, size;
+		uint32_t col;
+		if ((o->type != SCEN_BIPED && o->type != SCEN_VEHICLE) || (o->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
+		if ((int)i == g->player_obj || u->dead || (u->has_vitals && vitals_dead(&u->vitals))) continue;
+		dx = o->pos[0] - g->player.pos[0]; dy = o->pos[1] - g->player.pos[1];
+		d = sqrtf(dx * dx + dy * dy);
+		if (d > range) continue;
+		fwd = dx * c + dy * sn;                        /* along the facing (x forward at yaw 0, z up) */
+		right = dx * sn - dy * c;                      /* to the right of the facing */
+		size = o->type == SCEN_VEHICLE ? HUD_BLIP_VEHICLE_SIZE : HUD_BLIP_SIZE;
+		col = hud_team_hostile(u->team) ? HUD_BLIP_HOSTILE : hud_team_friendly(u->team) ? HUD_BLIP_FRIENDLY : HUD_BLIP_NEUTRAL;
+		add_quad(f, &sp, cx + right / range * radius - size * 0.5f, cy - fwd / range * radius - size * 0.5f, size, size, 1.0f, col, HUDDEF_BLEND_ALPHA);
+		f->blips++;
+	}
+}
+
 /* flashing: on for `length` ticks every `period`, `count` times after `delay` (period 0 = never) */
 static int flash_on(uint32_t tick, uint16_t period, uint16_t length)
 {
@@ -217,17 +250,25 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 			unsigned i;
 			float shield = g->vitals.max_shield > 0.0f ? (g->vitals.shield + g->vitals.overshield) / g->vitals.max_shield : 0.0f;
 			float health = g->vitals.max_health > 0.0f ? g->vitals.health / g->vitals.max_health : 0.0f;
+			float cx = 0.0f, cy = 0.0f, radius = 0.0f;
+			int have_sensor = 0;
 			for (i = 0; i < h.elem_count; i++) {
 				huddef_elem e = huddef_get_elem(s, (uint32_t)h.elem_first + i);
 				if (e.role == HUDDEF_R_HUD_BG || e.role == HUDDEF_R_SHIELD_BG || e.role == HUDDEF_R_HEALTH_BG || e.role == HUDDEF_R_MOTION_BG ||
 				    e.role == HUDDEF_R_MOTION_FG)
 					draw_elem(f, s, &e, e.colour ? e.colour : 0x80808080u, tick);
+				if (e.role == HUDDEF_R_MOTION_BG && e.sprite != HUDDEF_NONE) have_sensor = 1;
+				if (e.role == HUDDEF_R_MOTION_CENTER) {   /* radar centre; the centre's distance from the sensor corner is the radar radius */
+					int ox = e.off_x < 0 ? -e.off_x : e.off_x, oy = e.off_y < 0 ? -e.off_y : e.off_y;
+					cx = (float)e.x; cy = (float)e.y; radius = (float)(ox < oy ? ox : oy);
+				}
 			}
 			for (i = 0; i < h.meter_count; i++) {
 				huddef_meter m = huddef_get_meter(s, (uint32_t)h.meter_first + i);
 				if (m.role == HUDDEF_M_SHIELD) draw_meter(f, s, &m, shield, tick, shield < 0.25f && shield > 0.0f);
 				else if (m.role == HUDDEF_M_HEALTH) draw_meter(f, s, &m, health, tick, health < 0.25f);
 			}
+			if (have_sensor) draw_blips(f, s, &gl, g, cx, cy, radius);
 		}
 	}
 	/* weapon HUD (or the default one with only a crosshair when the hands are empty) */

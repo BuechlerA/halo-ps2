@@ -19,8 +19,20 @@ typedef struct {
 typedef struct {
 	hud_quad_t q[HUD_MAX_QUADS];
 	unsigned   n;
-	unsigned   elements, meters, digits;   /* statistics */
+	unsigned   elements, meters, digits, blips;   /* statistics */
 } hud_frame_t;
+
+/* motion tracker: blips for every living unit (biped or vehicle, not the player's body) within the tracker range of the
+ * player, laid out around the radar centre with the player's facing up; friendly units (teams player / human) yellow,
+ * hostile ones (covenant / flood / sentinel) red, other teams grey. All units in range show (the Xbox hides still
+ * enemies: not modelled, docs/20). */
+#define HUD_BLIP_SIZE 7.0f                   /* virtual pixels (the Xbox blip is about 6 px wide on 640 x 480) */
+#define HUD_BLIP_VEHICLE_SIZE 10.0f
+#define HUD_BLIP_FRIENDLY 0x80507A80u        /* GS RGBA, R low byte: pale yellow */
+#define HUD_BLIP_HOSTILE 0x80302880u         /* red */
+#define HUD_BLIP_NEUTRAL 0x80606060u
+int hud_team_hostile(unsigned team);         /* 1 for the teams hostile to the player, 0 otherwise */
+int hud_team_friendly(unsigned team);
 
 #define HUD_MSG_COUNT 3
 #define HUD_MSG_LEN 80

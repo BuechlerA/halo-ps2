@@ -27,7 +27,7 @@ static void walk0(const huddef_section *s)
 	uint32_t acc = 0, i, k, ty;
 	huddef_globals g = huddef_get_globals(s);
 	if (isnan(g.item_scale_x) || isnan(g.motion_scale)) abort();
-	acc += g.font_sp + g.digit_count + g.icon_count;
+	acc += g.font_sp + g.digit_count + g.icon_count + g.blip_sprite;
 	for (i = 0; i < s->sprite_count; i++) {
 		huddef_sprite sp = huddef_get_sprite(s, i);
 		if (sp.u0 >= sp.u1 || sp.v0 >= sp.v1 || sp.w == 0 || sp.h == 0) abort();
@@ -181,10 +181,10 @@ int main(int argc, char **argv)
 	huddef_section s;
 	CHECK(huddef_open(&s, raw0, n0) == HUDDEF_OK);
 	CHECK(s.hud_count == 7 && s.elem_count == 27 && s.meter_count == 6 && s.number_count == 4 && s.cross_count == 4);
-	CHECK(s.sound_count == 2 && s.sprite_count == 26 && s.icon_count == 3 && s.link_count == 6);
+	CHECK(s.sound_count == 2 && s.sprite_count == 27 && s.icon_count == 3 && s.link_count == 6);   /* 26 + the motion sensor blip */
 	CHECK(((uintptr_t)s.huds | (uintptr_t)s.elems | (uintptr_t)s.sprites) % 16 == (uintptr_t)raw0 % 16);
 	tex_section ts;
-	CHECK(tex_open(&ts, rawt, nt) == TEX_OK && ts.texture_count == 11);
+	CHECK(tex_open(&ts, rawt, nt) == TEX_OK && ts.texture_count == 12);
 	CHECK(huddef_check_textures(&s, &ts) == HUDDEF_OK);
 
 	huddef_globals g = huddef_get_globals(&s);
@@ -196,6 +196,7 @@ int main(int argc, char **argv)
 	CHECK(g.digit_first == 0 && g.digit_count == 15 && g.bitmap_digit_width == 12 && g.screen_digit_width == 9);
 	CHECK(g.digit_x_offset == 1 && g.digit_y_offset == 0 && g.decimal_width == 6 && g.colon_width == 6 && g.icon_count == 3);
 	CHECK(g.damage_sprite == 17 && g.damage_mp_sprite == 16 && g.damage_colour == 0x64000080u);
+	CHECK(g.blip_sprite == 26 && huddef_get_sprite(&s, g.blip_sprite).w == 32);      /* the blip bitmap found by path, last sprite */
 	CHECK((g.text_colour_a >> 24) == 0x40);                                    /* float alpha 0.5 -> GS 0x40 */
 
 	/* sprites: digit 9 (12 x 20 px at texel 16,32), the 100 x 20 padded image, the halved 512 x 16 image */
@@ -207,7 +208,7 @@ int main(int argc, char **argv)
 	CHECK(sp.w == 512 && sp.h == 16 && sp.u1 == 256 && sp.v1 == 8 && sp.flags == HUDDEF_SF_SCALED);
 	sp = huddef_get_sprite(&s, 21);
 	CHECK(sp.w == 32 && sp.h == 16 && sp.reg_x == 16 && sp.reg_y == 8);
-	sp = huddef_get_sprite(&s, 26);                                            /* out of range: neutral */
+	sp = huddef_get_sprite(&s, 27);                                            /* out of range: neutral */
 	CHECK(sp.tex == HUDDEF_NONE && sp.w == 0);
 
 	/* HUD records */
@@ -225,19 +226,19 @@ int main(int argc, char **argv)
 
 	/* unit HUD elements, resolved for the top right anchor */
 	huddef_elem e = huddef_get_elem(&s, 1);
-	CHECK(e.role == HUDDEF_R_SHIELD_BG && e.w == 128 && e.h == 32 && e.x == 512 && e.y == 1 && e.sprite == 18 && e.frames == 1);
+	CHECK(e.role == HUDDEF_R_SHIELD_BG && e.w == 128 && e.h == 32 && e.x == 464 && e.y == 37 && e.sprite == 18 && e.frames == 1);
 	CHECK(e.colour == 0x6E806B55u && e.flash_period == 90 && e.flash_delay == 7 && e.flash_count == 3 && e.flash_length == 7);
 	CHECK(e.anchor == HUDDEF_A_TR && e.blend == HUDDEF_BLEND_ALPHA && near1(e.scale_x, 1.0f));
 	e = huddef_get_elem(&s, 2);
-	CHECK(e.role == HUDDEF_R_HEALTH_BG && e.x == 535 && e.y == 18 && e.off_x == -5 && e.off_y == 18 && e.w == 100);
+	CHECK(e.role == HUDDEF_R_HEALTH_BG && e.x == 487 && e.y == 54 && e.off_x == -5 && e.off_y == 18 && e.w == 100);
 	e = huddef_get_elem(&s, 3);
-	CHECK(e.role == HUDDEF_R_MOTION_BG && e.w == 512 && e.h == 16 && e.x == 128 && e.seq == 2);
+	CHECK(e.role == HUDDEF_R_MOTION_BG && e.w == 512 && e.h == 16 && e.x == 48 && e.y == 444 - 16 && e.anchor == HUDDEF_A_BL && e.seq == 2);
 	e = huddef_get_elem(&s, 0);
 	CHECK(e.role == HUDDEF_R_HUD_BG && e.sprite == HUDDEF_NONE && e.frames == 0 && e.state == HUDDEF_NO_STATE);
 	e = huddef_get_elem(&s, 5);
-	CHECK(e.role == HUDDEF_R_MOTION_CENTER && e.off_x == 41 && e.off_y == 41 && e.x == 681);
+	CHECK(e.role == HUDDEF_R_MOTION_CENTER && e.off_x == 41 && e.off_y == 41 && e.x == 89 && e.y == 403 && e.anchor == HUDDEF_A_BL);
 	e = huddef_get_elem(&s, 6);
-	CHECK(e.role == HUDDEF_R_AUX_BG && e.frames == 3 && e.w == 32 && e.x == 601 && e.sprite == 22);
+	CHECK(e.role == HUDDEF_R_AUX_BG && e.frames == 3 && e.w == 32 && e.x == 553 && e.sprite == 22);
 	e = huddef_get_elem(&s, 7);                                                /* vehicle HUD: centre anchor, width scale 2 */
 	CHECK(e.anchor == HUDDEF_A_C && near1(e.scale_x, 2.0f) && near1(e.scale_y, 1.0f) && e.w == 64 && e.h == 16 && e.x == 288 && e.y == 192);
 	e = huddef_get_elem(&s, 27);
@@ -245,27 +246,27 @@ int main(int argc, char **argv)
 
 	/* meters */
 	huddef_meter m = huddef_get_meter(&s, 0);
-	CHECK(m.role == HUDDEF_M_SHIELD && m.w == 32 && m.h == 16 && m.x == 615 && m.y == 0 && m.alpha_mult == 1 && m.alpha_bias == 55);
+	CHECK(m.role == HUDDEF_M_SHIELD && m.w == 32 && m.h == 16 && m.x == 567 && m.y == 36 && m.alpha_mult == 1 && m.alpha_bias == 55);
 	CHECK(m.value_scale == 198 && m.flags == 0 && m.colour_empty == 0 && near1(m.translucency, 0.5f) && near1(m.opacity, 0.0f));
 	CHECK(m.colour_min == 0x80502800u);                                        /* alpha 0 in the tag -> opaque (0x80) */
 	m = huddef_get_meter(&s, 1);
 	CHECK(m.role == HUDDEF_M_HEALTH && m.flags == 1 && m.min_value == 31 && m.alpha_mult == 30 && m.alpha_bias == 15 && m.off_x == 36);
 	m = huddef_get_meter(&s, 2);
-	CHECK(m.role == HUDDEF_M_AUX && near1(m.min_fraction, 0.25f) && m.aux_flags == 1 && m.y == 33);
+	CHECK(m.role == HUDDEF_M_AUX && near1(m.min_fraction, 0.25f) && m.aux_flags == 1 && m.y == 69);
 	m = huddef_get_meter(&s, 5);                                               /* rifle: the weapon meter, bottom left */
-	CHECK(m.role == HUDDEF_M_WEAPON && m.state == HUDDEF_S_LOADED_AMMO && m.allowed == HUDDEF_MAP_ANY && m.y == 480 + 15 - 16);
+	CHECK(m.role == HUDDEF_M_WEAPON && m.state == HUDDEF_S_LOADED_AMMO && m.allowed == HUDDEF_MAP_ANY && m.y == 444 + 15 - 16);
 	CHECK(huddef_get_meter(&s, 6).sprite == HUDDEF_NONE && huddef_get_meter(&s, 6).role == 0);
 
 	/* numbers */
 	huddef_number nb = huddef_get_number(&s, 0);
 	CHECK(nb.role == HUDDEF_N_WEAPON && nb.state == HUDDEF_S_TOTAL_AMMO && nb.allowed == HUDDEF_MAP_SOLO && nb.max_digits == 3);
-	CHECK(nb.flags == HUDDEF_NUM_LEADING_ZEROS && nb.fraction_digits == 0 && nb.w == 27 && nb.h == 20 && nb.x == 29 && nb.y == 480 + 3 - 20);
+	CHECK(nb.flags == HUDDEF_NUM_LEADING_ZEROS && nb.fraction_digits == 0 && nb.w == 27 && nb.h == 20 && nb.x == 48 + 29 && nb.y == 444 + 3 - 20);
 	CHECK(near1(nb.scale_x, 1.0f) && nb.flash_period == 30 && nb.flash_length == 30);
 	nb = huddef_get_number(&s, 1);
 	CHECK(nb.allowed == HUDDEF_MAP_MULTIPLAYER && nb.max_digits == 2 && nb.flags == 3 && nb.fraction_digits == 1 && near1(nb.scale_x, 1.5f));
 	CHECK(nb.w == 36);
 	nb = huddef_get_number(&s, 2);
-	CHECK(nb.role == HUDDEF_N_GRENADE && nb.max_digits == 1 && nb.x == 107);
+	CHECK(nb.role == HUDDEF_N_GRENADE && nb.max_digits == 1 && nb.x == 48 + 107);
 
 	/* crosshairs: the rifle's own, the master HUD's through the child chain */
 	huddef_crosshair c;
@@ -284,9 +285,9 @@ int main(int argc, char **argv)
 
 	/* weapon statics / overlays / grenade elements */
 	e = huddef_get_elem(&s, 13);
-	CHECK(e.role == HUDDEF_R_STATIC && e.state == 1 && e.allowed == 1 && e.x == 12 && e.y == 408 && e.w == 128);
+	CHECK(e.role == HUDDEF_R_STATIC && e.state == 1 && e.allowed == 1 && e.x == 60 && e.y == 372 && e.w == 128);
 	e = huddef_get_elem(&s, 14);
-	CHECK(e.role == HUDDEF_R_OVERLAY && e.type == 16 && e.flags == 1 && e.seq == 2 && e.x == 53 && e.y == 468 && e.allowed == 1);
+	CHECK(e.role == HUDDEF_R_OVERLAY && e.type == 16 && e.flags == 1 && e.seq == 2 && e.x == 101 && e.y == 432 && e.allowed == 1);
 	e = huddef_get_elem(&s, 21);
 	CHECK(e.role == HUDDEF_R_GRENADE_OVERLAY && e.seq == 2 && e.type == 1 && huddef_get_elem(&s, 22).type == 4);
 
@@ -315,13 +316,13 @@ int main(int argc, char **argv)
 	CHECK(huddef_fonts_open(&fo, rawf, nf) == HUDDEF_OK && fo.font_count == 2 && fo.glyph_count == 10);
 	CHECK(huddef_find_font(&fo, TID(T_FONT_L)) == 0 && huddef_find_font(&fo, TID(T_FONT_S)) == 1 && huddef_find_font(&fo, 5) == -1);
 	huddef_font fi = huddef_get_font(&fo, 0);
-	CHECK(fi.ascent == 17 && fi.descent == 4 && fi.leading_h == 4 && fi.leading_w == 0 && fi.glyph_first == 0 && fi.glyph_count == 5 && fi.tex_first == 9 && fi.tex_count == 1);
-	CHECK(huddef_get_font(&fo, 1).ascent == 8 && huddef_get_font(&fo, 1).glyph_first == 5 && huddef_get_font(&fo, 1).tex_first == 10);
+	CHECK(fi.ascent == 17 && fi.descent == 4 && fi.leading_h == 4 && fi.leading_w == 0 && fi.glyph_first == 0 && fi.glyph_count == 5 && fi.tex_first == 10 && fi.tex_count == 1);
+	CHECK(huddef_get_font(&fo, 1).ascent == 8 && huddef_get_font(&fo, 1).glyph_first == 5 && huddef_get_font(&fo, 1).tex_first == 11);
 	huddef_glyph gl;
-	CHECK(huddef_find_glyph(&fo, 0, 'A', &gl) && gl.advance == 10 && gl.w == 6 && gl.h == 8 && gl.ox == 1 && gl.oy == 8 && gl.tex == 9);
+	CHECK(huddef_find_glyph(&fo, 0, 'A', &gl) && gl.advance == 10 && gl.w == 6 && gl.h == 8 && gl.ox == 1 && gl.oy == 8 && gl.tex == 10);
 	CHECK(gl.u1 - gl.u0 == 6 && gl.v1 - gl.v0 == 8);
 	CHECK(huddef_find_glyph(&fo, 0, ' ', &gl) && gl.advance == 6 && gl.w == 0 && gl.tex == HUDDEF_NONE);
-	CHECK(huddef_find_glyph(&fo, 1, 'B', &gl) && gl.w == 12 && gl.tex == 10);
+	CHECK(huddef_find_glyph(&fo, 1, 'B', &gl) && gl.w == 12 && gl.tex == 11);
 	CHECK(!huddef_find_glyph(&fo, 0, 'z', &gl) && gl.tex == HUDDEF_NONE && !huddef_find_glyph(&fo, 2, 'A', &gl) && !huddef_find_glyph(&fo, 0, 0x10000u, &gl));
 	{
 		static const uint16_t txt[5] = { 'A', 'B', ' ', 'z', '?' };
@@ -366,7 +367,7 @@ int main(int argc, char **argv)
 	memset(copy + n0, 0, 16);
 	CHECK(huddef_open(&bad, copy, n0 + 16) == HUDDEF_ERR_LAYOUT);
 	memcpy(copy, raw0, n0);
-	copy[4] = 2;
+	copy[4] = 1;                                                               /* HUD0 version 1 packs are rejected (ADR-057) */
 	CHECK(huddef_open(&bad, copy, n0) == HUDDEF_ERR_VERSION);
 	memcpy(copy, raw0, n0);
 	copy[0] = 'X';
@@ -398,19 +399,19 @@ int main(int argc, char **argv)
 		const struct { const char *what; size_t at; uint32_t val; int bytes; } hit[] = {
 			{ "sprite empty rect", os + 12, 0, 2 }, { "sprite zero width", os + 4, 0, 2 }, { "sprite flags", os + 2, 7, 2 },
 			{ "elem role", oe, 14, 1 }, { "elem anchor", oe + 0x22, 5, 1 }, { "elem blend", oe + 0x23, 7, 1 }, { "elem state", oe + 1, 8, 1 },
-			{ "elem allowed", oe + 2, 3, 1 }, { "elem sprite past the table", oe + 64 + 4, 26, 2 }, { "elem frames past the table", oe + 64 + 3, 9, 1 },
+			{ "elem allowed", oe + 2, 3, 1 }, { "elem sprite past the table", oe + 64 + 4, 27, 2 }, { "elem frames past the table", oe + 64 + 3, 10, 1 },
 			{ "elem frames without sprite", oe + 3, 1, 1 }, { "elem scale NaN", oe + 0x18, 0x7FC00000u, 4 }, { "elem scale inf", oe + 0x1C, 0x7F800000u, 4 },
-			{ "meter role 0", om, 0, 1 }, { "meter role 5", om, 5, 1 }, { "meter anchor", om + 7, 5, 1 }, { "meter sprite", om + 4, 26, 2 },
+			{ "meter role 0", om, 0, 1 }, { "meter role 5", om, 5, 1 }, { "meter anchor", om + 7, 5, 1 }, { "meter sprite", om + 4, 27, 2 },
 			{ "meter opacity NaN", om + 0x38, 0x7FC00000u, 4 }, { "meter min fraction inf", om + 0x40, 0x7F800000u, 4 },
 			{ "number role", on, 0, 1 }, { "number digits 0", on + 3, 0, 1 }, { "number digits 13", on + 3, 13, 1 }, { "number flags", on + 4, 8, 1 },
 			{ "number fraction", on + 5, 5, 1 }, { "number anchor", on + 6, 5, 1 }, { "number scale NaN", on + 0x14, 0x7FC00000u, 4 },
 			{ "crosshair type", oc, 32, 1 }, { "crosshair elems past the table", oc + 2, 27, 2 }, { "crosshair count", oc + 4, 28, 2 },
-			{ "sound scale NaN", rd32(raw0 + 0x4C) + 0x0C, 0x7FC00000u, 4 }, { "icon sprite", oi, 26, 2 }, { "link kind", ol + 4, 3, 4 },
+			{ "sound scale NaN", rd32(raw0 + 0x4C) + 0x0C, 0x7FC00000u, 4 }, { "icon sprite", oi, 27, 2 }, { "link kind", ol + 4, 3, 4 },
 			{ "hud kind", oh + 4, 3, 1 }, { "hud anchor", oh + 5, 5, 1 }, { "hud elems past the table", oh + 0x16, 28, 2 },
 			{ "hud meters past the table", oh + 0x1A, 7, 2 }, { "hud numbers past", oh + 0x1E, 5, 2 }, { "hud crosshairs past", oh + 0x22, 5, 2 },
-			{ "hud sounds past", oh + 0x26, 3, 2 }, { "hud icon sprite", oh + 0x34, 26, 2 },
+			{ "hud sounds past", oh + 0x26, 3, 2 }, { "hud icon sprite", oh + 0x34, 27, 2 },
 			{ "globals anchor", og, 5, 1 }, { "globals item scale NaN", og + 0x18, 0x7FC00000u, 4 }, { "globals motion inf", og + 0x44, 0x7F800000u, 4 },
-			{ "globals digit range", og + 0x5A, 30, 2 }, { "globals icon count", og + 0x62, 4, 2 }, { "globals damage sprite", og + 0x50, 26, 2 },
+			{ "globals digit range", og + 0x5A, 30, 2 }, { "globals icon count", og + 0x62, 4, 2 }, { "globals damage sprite", og + 0x50, 27, 2 }, { "globals blip sprite", og + 0x64, 27, 2 },
 			{ "header size", 8, 1, 4 } };
 		(void)om;
 		for (size_t k = 0; k < sizeof hit / sizeof hit[0]; k++) {

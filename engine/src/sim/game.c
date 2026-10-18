@@ -132,6 +132,17 @@ static void unit_init_one(game_t *g, unsigned i)
 	game_unit_t *u = &g->unit_state[i];
 	memset(u, 0, sizeof *u);
 	u->model = -1;
+	if (g->unit && !(o->flags & OBJ_F_FREE)) {                 /* the unit tag's default team (the HUD tracker colours blips by it) */
+		uint32_t tag = object_tag(g, o);
+		int k;
+		if (o->type == SCEN_BIPED && (k = unitdef_find_biped(g->unit, tag)) >= 0) {
+			unitdef_biped_def bd;
+			if (unitdef_get_biped(g->unit, (uint32_t)k, &bd)) u->team = (uint8_t)(bd.default_team < 255u ? bd.default_team : 0u);
+		} else if (o->type == SCEN_VEHICLE && (k = unitdef_find_vehicle(g->unit, tag)) >= 0) {
+			unitdef_vehicle_def vd;
+			if (unitdef_get_vehicle(g->unit, (uint32_t)k, &vd)) u->team = (uint8_t)(vd.default_team < 255u ? vd.default_team : 0u);
+		}
+	}
 	if (!g->cmod || o->model < 0 || (o->flags & OBJ_F_FREE) || !cmod_find_object(g->cmod, object_tag(g, o), &co, &m)) return;
 	u->model = (int32_t)m.index;
 	if (m.max_body_vitality > 0.0f && m.max_body_vitality < 1e9f) {

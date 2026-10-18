@@ -330,6 +330,7 @@ static void set_damage_scale(game_t *g, const unit_t *u, float modifier)
 	if (modifier > 0.0f) scale *= modifier;
 	gu->dmg_scale = scale;
 	gu->ally = is_ally_team(u->team) ? 1 : 0;
+	gu->team = (uint8_t)(u->team > 0 && u->team < 255 ? u->team : 0);
 }
 
 /* ---- attach / detach ------------------------------------------------------------------------------------------------------ */

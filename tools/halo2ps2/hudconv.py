@@ -60,6 +60,11 @@ Common HUD element (all three interfaces, 0x24-byte header, then the body)
     number body: +0x24 default colour (no bitmap: digits come from hud_number), +0x28 flash colour, +0x2C f32 period,
         +0x30 delay, +0x34 u16 count, +0x36 u16 flash flags, +0x38 f32 length, +0x3C disabled colour,
         +0x44 u8 maximum digits, u8 flags (1 leading zeros, 2 only when zoomed, 4 trailing 'm'), u8 fractional digits.
+anchors (u16 at the HUD tag's start, HEK order top left, top right, bottom left, bottom right, centre): the anchor points are
+    the corners of the 7.5 % title-safe frame of the 640 x 480 screen (48 / 36 px in) and the screen centre; the element's
+    matching corner goes to anchor + offset (x right, y down). The unit HUD's motion sensor is always laid out from the
+    bottom-left anchor, its centre offset counted inward from that corner (verified against an Xbox frame, ADR-057). The
+    motion sensor blip is the bitmap ``ui\\hud\\bitmaps\\hud_sensor_blip`` (found by path, sequence 0).
 unit_hud_interface (``unhi``): fixed 0x56C B: +0x00 u16 anchor, then static 0x24 hud background, 0x8C shield panel
     background, 0xF4 shield panel meter, 0x17C health panel background, 0x1E4 health panel meter, 0x26C motion sensor
     background, 0x2D4 foreground (each element 104 B, meters 136 B: 104 + 32 pad), 0x35C motion sensor centre
@@ -97,14 +102,15 @@ from halo2ps2 import bitmaps, hp2, tagindex, texconv  # noqa: E402
 
 # ---- format constants (docs/20-hud-section.md) -----------------------------------------------------------------
 HUD0_MAGIC, FONT_MAGIC, STRS_MAGIC = b"HUD0", b"FONT", b"STRS"
-VERSION = 1
+VERSION = 1                          # FONT / STRS
+HUD0_VERSION = 2                     # 2: anchors on the title-safe frame, motion sensor bottom left, blip sprite in the globals
 HUD0_HEADER, FONT_HEADER, STRS_HEADER = 128, 64, 64
 SPRITE_REC, ELEM_REC, METER_REC, NUMBER_REC, CROSS_REC, HUD_REC = 24, 64, 80, 64, 16, 64
 ELEM_FMT = "<BBBBHHIhhhhhhffHBBIIIHHHHHHHH"
 METER_FMT = "<BBBBHBBhhhhhhffHBBIIIIIHHff"
 NUMBER_FMT = "<BBBBBBBBhhhhhhffHHIIIHHHHHH"
 HUD_FMT = "<IBBHIHHHHHHHHHHHHHHIHhhhHHII"
-GLOBALS_FMT = "<BBhhHffIIffIIIIIIIIIfffHHIHHbbbbbbHH"
+GLOBALS_FMT = "<BBhhHffIIffIIIIIIIIIfffHHIHHbbbbbbHHH"
 ICON_FMT = "<HHhhhhIBBHI"
 SOUND_REC, ICON_REC, LINK_REC, GLOBALS_REC = 32, 32, 16, 192
 FONT_REC, GLYPH_REC = 48, 24
@@ -114,15 +120,18 @@ NO_STATE = 0xFF
 MAX_HUDS, MAX_ELEMS = 255, 4096
 
 VIRT_W, VIRT_H = 640, 480           # the virtual screen every position is resolved to
+SAFE_X, SAFE_Y = 48, 36              # the anchors sit on the 7.5 % title-safe frame of that screen (verified on the Xbox frame)
+BLIP_BITMAP_PATH = "ui\\hud\\bitmaps\\hud_sensor_blip"   # the motion sensor blip (no HUD tag references it; all ten maps have it)
 TICK = 30                            # ticks per second
 
 # hud kind
 K_UNIT, K_WEAPON, K_GRENADE = 0, 1, 2
-# anchors (HEK order; unverified except 0 = top left, 4 = centre)
+# anchors (HEK order; all five verified, docs/20-hud-section.md)
 A_TL, A_TR, A_BL, A_BR, A_C = range(5)
 # element roles
 (R_NONE, R_HUD_BG, R_SHIELD_BG, R_HEALTH_BG, R_MOTION_BG, R_MOTION_FG, R_MOTION_CENTER, R_AUX_BG, R_STATIC, R_OVERLAY,
  R_CROSSHAIR, R_GRENADE_BG, R_GRENADE_COUNT_BG, R_GRENADE_OVERLAY) = range(14)
+MOTION_ROLES = (R_MOTION_BG, R_MOTION_FG, R_MOTION_CENTER)   # always drawn in the bottom-left corner (see element_anchor)
 M_SHIELD, M_HEALTH, M_AUX, M_WEAPON = 1, 2, 3, 4
 N_WEAPON, N_GRENADE = 1, 2
 # weapon "state attached to"
@@ -655,6 +664,8 @@ class Globals:
     digit_count: int = 0
     digit_widths: tuple[int, int, int, int, int, int] = (0, 0, 0, 0, 0, 0)
     icons: list[tuple] = field(default_factory=list)
+    blip_tag: int = 0                           # BLIP_BITMAP_PATH bitmap, 0 when the map lacks it
+    blip_sprite: int = NONE16                   # its sequence 0 as a sprite (the motion sensor blip)
 
 
 @dataclass
@@ -674,14 +685,38 @@ class HudSet:
 
 
 # ---- layout ---------------------------------------------------------------------------------------------------------
+def anchor_point(anchor: int) -> tuple[int, int]:
+    """The anchor points are the corners of the title-safe frame (7.5 % in from every edge, i.e. SAFE_X / SAFE_Y) and the
+    screen centre (verified against the Xbox frame: ammo panel, shield panel, meters and the motion sensor all land within
+    2 px of these points, docs/20-hud-section.md)."""
+    ax = VIRT_W - SAFE_X if anchor in (A_TR, A_BR) else VIRT_W // 2 if anchor == A_C else SAFE_X
+    ay = VIRT_H - SAFE_Y if anchor in (A_BL, A_BR) else VIRT_H // 2 if anchor == A_C else SAFE_Y
+    return ax, ay
+
+
 def resolve_position(anchor: int, off_x: int, off_y: int, w: int, h: int) -> tuple[int, int]:
-    """Top-left corner on the 640 x 480 virtual screen. The element's matching corner (or centre) sits at the anchor
-    point plus offset: top left is exact, the other anchors are an unverified convention (docs/20-hud-section.md)."""
-    ax = VIRT_W if anchor in (A_TR, A_BR) else VIRT_W // 2 if anchor == A_C else 0
-    ay = VIRT_H if anchor in (A_BL, A_BR) else VIRT_H // 2 if anchor == A_C else 0
+    """Top-left corner on the 640 x 480 virtual screen. The element's matching corner (its centre for A_C) sits at the
+    anchor point plus the tag's offset (x right, y down at every anchor)."""
+    ax, ay = anchor_point(anchor)
     x = ax + off_x - (w if anchor in (A_TR, A_BR) else w // 2 if anchor == A_C else 0)
     y = ay + off_y - (h if anchor in (A_BL, A_BR) else h // 2 if anchor == A_C else 0)
     return x, y
+
+
+def corner_point(anchor: int, off_x: int, off_y: int) -> tuple[int, int]:
+    """A point measured inward from the anchor corner (the motion sensor centre: its (41, 41) is the radar centre of the
+    cyborg sensor image counted from the image's bottom-left corner, which the Xbox frame shows at (89, 403))."""
+    ax, ay = anchor_point(anchor)
+    x = ax - off_x if anchor in (A_TR, A_BR) else ax + off_x
+    y = ay - off_y if anchor in (A_BL, A_BR) else ay + off_y
+    return x, y
+
+
+def element_anchor(role: int, hud_anchor: int) -> int:
+    """The anchor an element of a unit HUD is laid out from: the HUD's, except the motion sensor, which the engine draws
+    in the bottom-left corner whatever the unit HUD's anchor (both retail unit HUDs with a sensor are top-right anchored,
+    their sensor images carry the radar in the bottom-left corner of the image, and the Xbox frame shows it bottom left)."""
+    return A_BL if role in MOTION_ROLES else hud_anchor
 
 
 def _scale(sx: float, sy: float) -> tuple[float, float]:
@@ -776,15 +811,16 @@ class Collector:
         if h.anchor > A_C:
             raise HudError(f"{e.path}: anchor {h.anchor}")
         for off, role in UNHI_STATICS:
-            h.elems.append(self._element(b + off, role, h.anchor))
+            h.elems.append(self._element(b + off, role, element_anchor(role, h.anchor)))
         for off, role in UNHI_METERS:
             h.meters.append(self._meter(b + off, role, h.anchor))
-        # motion sensor centre: header only (offset of the radar centre inside its background)
+        # motion sensor centre: header only; x, y = the radar centre on screen (offset counted inward from the bottom-left
+        # anchor, the corner the sensor image is drawn from)
         offx, offy, sx, sy, scaling = r.u("<hhffH", b + UNHI_CENTRE)
         sc = _scale(sx, sy)
-        x, y = resolve_position(h.anchor, offx, offy, 0, 0)
+        x, y = corner_point(A_BL, offx, offy)
         h.elems.append(Elem(R_MOTION_CENTER, NO_STATE, 0, 0, NONE16, 0, 0, x, y, 0, 0, offx, offy, sc[0], sc[1], scaling,
-                            h.anchor))
+                            A_BL))
         n, o = r.reflexive(b + UNHI_SOUNDS, SOUND_TAG_SIZE, 64)
         for i in range(n):
             q = o + i * SOUND_TAG_SIZE
@@ -1131,6 +1167,14 @@ def collect_map(m: texconv.MapData, name: str) -> HudSet:
     for tid in {t for _o, _k, t, _i in links} | ({g.default_weapon_hud} - {0}):
         if tid not in hud_ids:
             c.problems.append(f"HUD tag {tid:#x} referenced but not converted")
+    # motion sensor blip: sequence 0 of the BLIP_BITMAP_PATH bitmap (looked up by path: no tag references it), last sprite
+    for e in _find_all(m, "bitm"):
+        if e.path == BLIP_BITMAP_PATH:
+            g.blip_tag = e.tag_id
+            g.blip_sprite = c.sprites.lookup(e.tag_id, 0)[0]
+            break
+    if g.blip_sprite == NONE16:
+        c.problems.append(f"no motion sensor blip bitmap ({BLIP_BITMAP_PATH})")
     # font atlases (after the bitmap textures so the sprite indices stay small)
     for f in fonts:
         pack_font_atlas(f, c.tex)
@@ -1215,7 +1259,7 @@ def build_hud0(hs: HudSet) -> bytes:
                        g.font_mp, g.item_scale[0], g.item_scale[1], g.text_colour_a, g.text_colour_b, g.default_weapon_hud,
                        g.item_strings, g.icon_strings, g.messages_tag, g.level_messages_tag, g.icon_bitmap, g.digit_tag, *g.motion,
                        g.damage_sprite, g.damage_mp_sprite, g.damage_colour, g.digit_first, g.digit_count, *g.digit_widths,
-                       len(g.icons), 0).ljust(GLOBALS_REC, b"\0")
+                       len(g.icons), g.blip_sprite, 0).ljust(GLOBALS_REC, b"\0")
     # section: header, globals, then tables
     body = bytearray()
     offs = {}
@@ -1237,7 +1281,7 @@ def build_hud0(hs: HudSet) -> bytes:
     table("links", links)
     _align(body)
     total = HUD0_HEADER + len(body)
-    head = struct.pack("<4sHHIIIIIIIIIIII", HUD0_MAGIC, VERSION, 0, total, len(hs.huds), len(elems), len(meters),
+    head = struct.pack("<4sHHIIIIIIIIIIII", HUD0_MAGIC, HUD0_VERSION, 0, total, len(hs.huds), len(elems), len(meters),
                        len(numbers), len(crosses), len(sounds), len(hs.sprites), len(g.icons), len(hs.links), 0,
                        offs["globals"])
     head += struct.pack("<IIIIIIIII", offs["huds"], offs["elems"], offs["meters"], offs["numbers"], offs["crosses"],
@@ -1338,7 +1382,7 @@ def parse_hud0(data: bytes) -> dict:
         raise HudError("not a HUD0 section")
     (_m, ver, _r, total, nh, ne, nm, nn, nc, ns, nsp, ni, nl, _z, og) = _u(data, "<4sHHIIIIIIIIIIII", 0)
     oh, oe, om, on, oc, os_, osp, oi, ol = _u(data, "<IIIIIIIII", 0x38)
-    if ver != VERSION or total != len(data):
+    if ver != HUD0_VERSION or total != len(data):
         raise HudError("bad HUD0 header")
     tabs = {"huds": (oh, nh, HUD_REC), "elems": (oe, ne, ELEM_REC), "meters": (om, nm, METER_REC),
             "numbers": (on, nn, NUMBER_REC), "crosses": (oc, nc, CROSS_REC), "sounds": (os_, ns, SOUND_REC),
@@ -1382,7 +1426,7 @@ def parse_hud0(data: bytes) -> dict:
           "item_scale_y", "text_colour_a", "text_colour_b", "default_weapon_hud", "item_strings", "icon_strings",
           "messages", "level_messages", "icon_bitmap", "digit_tag", "motion_range", "motion_velocity", "motion_scale",
           "damage_sprite", "damage_mp_sprite", "damage_colour", "digit_first", "digit_count", "dw0", "dw1", "dw2", "dw3",
-          "dw4", "dw5", "icon_count", "pad3")
+          "dw4", "dw5", "icon_count", "blip_sprite", "pad3")
     out["globals"] = dict(zip(gk, _u(data, GLOBALS_FMT, og)))
     return out
 
@@ -1439,6 +1483,12 @@ def parse_strs(data: bytes) -> dict:
 
 
 # ---- verification -----------------------------------------------------------------------------------------------------
+def on_screen(x: int, y: int, w: int, h: int) -> bool:
+    """The whole drawn rectangle lies on the 640 x 480 screen (the anchor rule is checked with this on every element,
+    meter and number of all ten maps: none is clipped)."""
+    return 0 <= x and 0 <= y and x + w <= VIRT_W and y + h <= VIRT_H
+
+
 def verify(hs: HudSet) -> list[str]:
     """Range / consistency checks of a converted map; returns problems (empty on retail maps)."""
     bad: list[str] = list(hs.problems)
@@ -1459,6 +1509,14 @@ def verify(hs: HudSet) -> list[str]:
                 bad.append(f"{h.path}: element sprite {e.sprite}+{e.frames} of {ns}")
             if not -VIRT_W <= e.x <= 2 * VIRT_W or not -VIRT_H <= e.y <= 2 * VIRT_H:
                 bad.append(f"{h.path}: element at {e.x},{e.y} far outside the screen")
+            if e.sprite != NONE16 and not on_screen(e.x, e.y, e.w, e.h):
+                bad.append(f"{h.path}: element {e.role} drawn outside the screen ({e.x},{e.y} {e.w}x{e.h})")
+        for mt in h.meters:
+            if mt.sprite != NONE16 and not on_screen(mt.x, mt.y, mt.w, mt.h):
+                bad.append(f"{h.path}: meter {mt.role} drawn outside the screen ({mt.x},{mt.y} {mt.w}x{mt.h})")
+        for nb in h.numbers:
+            if not on_screen(nb.x, nb.y, nb.w, nb.h):
+                bad.append(f"{h.path}: number drawn outside the screen ({nb.x},{nb.y} {nb.w}x{nb.h})")
             if not (0.05 <= e.sx <= 16 and 0.05 <= e.sy <= 16):
                 bad.append(f"{h.path}: element scale {e.sx} {e.sy}")
         for mt in h.meters:
@@ -1482,6 +1540,8 @@ def verify(hs: HudSet) -> list[str]:
     g = hs.globals
     if g.digit_first == NONE16 or g.digit_count < 13:
         bad.append("hud_number digit sprites missing")
+    if g.blip_sprite != NONE16 and g.blip_sprite >= ns:
+        bad.append("blip sprite out of range")
     if not hs.fonts:
         bad.append("no fonts")
     for f in hs.fonts:
