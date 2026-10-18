@@ -49,3 +49,9 @@ float lodctl_particle_scale(const lodctl_t *c)
 	static const float k[LODCTL_MAX_LEVEL + 1] = { 1.0f, 1.0f, 0.75f, 0.5f, 0.25f };
 	return k[c->level];
 }
+
+unsigned lodctl_batch_cap(const lodctl_t *c, unsigned cap)
+{
+	static const unsigned k[LODCTL_MAX_LEVEL + 1] = { 100, 100, 100, 85, 60 };
+	return cap * k[c->level] / 100u;
+}

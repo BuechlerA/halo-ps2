@@ -523,6 +523,21 @@ void units_teleport(units_t *s, game_t *g, int unit, const float pos[3], float y
 	sync_object(u, o);
 }
 
+void units_pin(units_t *s, game_t *g, int unit, const float pos[3], float yaw)
+{
+	unit_t *u = U(s, unit);
+	object_t *o;
+	if (!u || !pos || !(o = OBJ(g, u))) return;
+	u->body.pos[0] = pos[0]; u->body.pos[1] = pos[1]; u->body.pos[2] = pos[2];
+	u->body.vel[0] = u->body.vel[1] = u->body.vel[2] = 0.0f;
+	u->body.yaw = wrap_pi(yaw); u->ctl.aim_yaw = u->body.yaw;
+	if (!u->body.on_ground) {                                                 /* stands where it was put: no fall, and the physics may rest */
+		u->body.on_ground = 1;
+		u->body.ground_normal[0] = u->body.ground_normal[1] = 0.0f; u->body.ground_normal[2] = 1.0f;
+	}
+	sync_object(u, o);
+}
+
 void units_give_weapon(units_t *s, game_t *g, int unit, uint32_t weapon_tag)
 {
 	unit_t *u = U(s, unit);
@@ -848,6 +863,9 @@ static int no_sweep(void *u, const float a[3], const float b[3], float r, phys_h
 static const phys_world k_empty_world = { NULL, no_ray, no_sweep, NULL };
 
 /* the physics step of a living or dying body: turn towards the aim, then player_tick with the throttle as a stick */
+static unsigned s_sweeps;                                           /* player_tick calls since the last units_take_sweeps (diagnostics) */
+unsigned units_take_sweeps(void) { unsigned n = s_sweeps; s_sweeps = 0; return n; }
+
 static void step_body(unit_t *u, const game_t *g, int turn, float throttle_scale, int mul, float *turn_left)
 {
 	player_cmd_t cmd;
@@ -875,6 +893,7 @@ static void step_body(unit_t *u, const game_t *g, int turn, float throttle_scale
 	if (mul == 0) return;                                                 /* distance LOD: the other tick of the pair */
 	u->settle = 0;
 	u->body.landed_speed = 0.0f;
+	s_sweeps++;
 	player_tick(&u->body, &u->pp, (g->has_phys && g->phys.sweep) ? &g->phys : &k_empty_world, &cmd, DT * (float)mul);
 }
 
@@ -900,14 +919,17 @@ static void landed(units_t *s, unit_t *u, game_t *g)
 	}
 }
 
-/* Distance LOD: a unit farther than `lod_distance` from the player integrates its body every other tick over a double step (staggered by
+/* Distance LOD (or every unit while `lod_all` is set, in a cinematic): a unit farther than `lod_distance` from the player integrates its body every other tick over a double step (staggered by
  * unit index), halving the sweeps of the crowd that nobody looks at. Returns 1 full rate, 2 the double step, 0 skip this tick. */
 static int phys_divider(const units_t *s, const unit_t *u, const game_t *g)
 {
 	float dx, dy, dz;
-	if (!(s->lod_distance > 0.0f) || (u->ctl.flags & UC_JUMP)) return 1;
-	dx = u->body.pos[0] - g->player.pos[0]; dy = u->body.pos[1] - g->player.pos[1]; dz = u->body.pos[2] - g->player.pos[2];
-	if (dx * dx + dy * dy + dz * dz <= s->lod_distance * s->lod_distance) return 1;
+	if (u->ctl.flags & UC_JUMP) return 1;
+	if (!s->lod_all) {
+		if (!(s->lod_distance > 0.0f)) return 1;
+		dx = u->body.pos[0] - g->player.pos[0]; dy = u->body.pos[1] - g->player.pos[1]; dz = u->body.pos[2] - g->player.pos[2];
+		if (dx * dx + dy * dy + dz * dz <= s->lod_distance * s->lod_distance) return 1;
+	}
 	return ((g->tick + (uint32_t)(u - s->u)) & 1u) ? 0 : 2;
 }
 

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from halo2ps2 import aiconv, animconv, ansmconv, devconv, cinconv, fxconv, hp2, modelconv, scenconv, skyconv, unitconv, weapconv  # noqa: E402
+from halo2ps2 import aiconv, animconv, ansmconv, chgconv, devconv, cinconv, fxconv, hp2, modelconv, scenconv, skyconv, unitconv, weapconv  # noqa: E402
 
 
 def build(map_path: Path) -> tuple[bytes, dict]:
@@ -30,11 +30,11 @@ def build(map_path: Path) -> tuple[bytes, dict]:
         model_tags |= set(mod.referenced_models(map_path))
     for mod in (unitconv, weapconv, ansmconv, aiconv, devconv, cinconv):
         anim_tags |= set(mod.referenced_anims(map_path))
-    if sky and sky["model_tag"]:
-        model_tags.add(sky["model_tag"])               # the sky model is drawn by the engine's sky pass
+    if sky:
+        model_tags |= {t for t in (sky["model_tag"], sky["model_tag2"]) if t}      # the sky models are drawn by the engine's sky pass
     model_sections = modelconv.build_sections(map_path, sorted(model_tags))
     anim = animconv.build_section(map_path, sorted(anim_tags))
-    sections = [("SCEN", scen), ("SKY0", skyconv.build_section(map_path))] + list(model_sections) + [("ANIM", anim)]
+    sections = [("SCEN", scen), ("SKY0", skyconv.build_section(map_path)), ("CCHG", chgconv.build_section(map_path, model_tags))] + list(model_sections) + [("ANIM", anim)]
     info = {"models": len(model_tags), "graphs": len(anim_tags), "seconds": time.time() - t0,
             "sizes": {tag: len(blob) for tag, blob in sections}, "counts": getattr(objs, "counts", {})}
     return hp2.build(map_path.stem, sections), info

@@ -97,6 +97,7 @@ void vis_run(vis_t *v, const bsp_section *s, const camera_t *cam, const frustum_
 	v->batch_count = v->cluster_count = 0;
 	v->triangles = v->batches_tested = v->batches_culled = v->portals_tested = v->portals_passed = 0;
 	v->sky_visible = 0;
+	v->sky_index = 0;
 	v->camera_cluster = cam_cluster;
 	v->stamp++;
 	if (v->stamp == 0) { memset(v->batch_stamp, 0, sizeof(uint32_t) * (s->batch_count + 1)); v->stamp = 1; }
@@ -141,7 +142,7 @@ void vis_run(vis_t *v, const bsp_section *s, const camera_t *cam, const frustum_
 			}
 		}
 		for (i = 0; i < s->cluster_count; i++) if (!win_empty(win(v, i))) add_cluster(v, i);
-	} else {
+	} else if (!v->skip_outside || cam_cluster >= 0) {
 		for (i = 0; i < s->cluster_count; i++) {
 			bsp_cluster cl = bsp_get_cluster(s, i);
 			if (frustum_aabb(fr, cl.bounds_min, cl.bounds_max)) {
@@ -155,7 +156,10 @@ void vis_run(vis_t *v, const bsp_section *s, const camera_t *cam, const frustum_
 		unsigned c = v->clusters[i];
 		bsp_cluster cl = bsp_get_cluster(s, c);
 		const float *w = win(v, c);
-		if (cl.flags & BSP_CLUSTER_SKY) v->sky_visible = 1;
+		if (cl.flags & BSP_CLUSTER_SKY) {
+			if (!v->sky_visible || (int)c == cam_cluster) v->sky_index = cl.sky > 0 ? cl.sky : 0;   /* the camera's own cluster wins */
+			v->sky_visible = 1;
+		}
 		if (!frustum_aabb(fr, cl.bounds_min, cl.bounds_max)) continue;
 		for (k = 0; k < cl.batch_count; k++) {
 			uint32_t bi = bsp_cluster_batch(s, &cl, k);

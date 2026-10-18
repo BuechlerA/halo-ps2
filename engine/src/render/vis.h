@@ -20,7 +20,9 @@ typedef struct {
 	uint32_t  cluster_count;
 	int       camera_cluster;    /* -1: outside the map */
 	int       sky_visible;
+	int       sky_index;         /* sky palette entry of the camera cluster (else of the first visible cluster with a sky); 0 when none */
 	int       force_all;         /* debug: skip portal traversal, test every cluster against the frustum */
+	int       skip_outside;      /* a camera in no cluster draws no world (the player is out of the world); otherwise every cluster in the frustum (free camera) */
 	/* statistics */
 	uint32_t  triangles, batches_tested, batches_culled, portals_tested, portals_passed;
 	/* internal */

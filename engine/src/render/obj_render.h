@@ -7,6 +7,7 @@
 #include "sim/fpview.h"
 #include "sim/objects.h"
 #include "world/bsp.h"
+#include "world/cchg.h"
 
 typedef struct {
 	const object_table_t *table;
@@ -20,7 +21,9 @@ typedef struct {
 	unsigned              max_batches;   /* per-frame cap */
 	int                   draw_objects, draw_fp;
 	int                   hide_fp;             /* this frame: a cinematic runs or a script camera renders (set by main) */
+	const cchg_t         *cchg;          /* colour change records (NULL: none) */
 	int                   sky_model;     /* MODL index of the sky model, -1 = none */
+	int                   sky_model2;    /* the scenario's second sky (a cluster with sky index 1 draws it), -1 = none */
 	float                 sky_ms;        /* EE time of the sky pass */
 	/* statistics of the last pass, copied into render_stats by the caller */
 	float                 st_ms;         /* EE time of the pass */

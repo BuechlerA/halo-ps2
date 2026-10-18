@@ -134,6 +134,8 @@ static void apply_options(void)
 	bsp_render_set_options(&o);
 }
 
+#define FALL_KILL_MARGIN 30.0f      /* wu below the BSP's lowest vertex at which an airborne player counts as out of the world */
+
 static void setup_camera(void)
 {
 	float f[5];
@@ -208,6 +210,16 @@ static int do_revert(void)
 	} else ok = checkpoint_revert(&s_ckpt, &s_game, &s_objects, &s_fp, s_fx.def ? &s_fx : NULL);
 	if (ok) { hud_message(&s_hs, "Reverted to the last checkpoint", 90); printf("[game] reverted to the checkpoint of tick %u\n", s_game.tick); }
 	return ok;
+}
+
+/* `prof2 1`: ms spent in each part of the 30 Hz tick, summed per 60-frame window (the zones are exclusive; P2_N must match the names in the prof2 print) */
+enum { P2_MAPP, P2_SERVE, P2_BSPSW, P2_STREAM, P2_FX, P2_AUDIO, P2_HUD, P2_N };
+static float s_p2_ms[P2_N], s_p2_peak[P2_N];
+static void p2_add(int zone, u32 t0)
+{
+	float ms = timer_ms(t0, timer_cycles());
+	s_p2_ms[zone] += ms;
+	if (ms > s_p2_peak[zone]) s_p2_peak[zone] = ms;
 }
 
 /* the mission asks for things the platform must do between ticks */
@@ -368,9 +380,12 @@ int main(int argc, char *argv[])
 			s_objr.max_batches = (unsigned)cfg_int(&s_cfg, "objcap", 900);
 			s_objr.draw_objects = (int)cfg_int(&s_cfg, "objects", 1);
 			s_objr.draw_fp = (int)cfg_int(&s_cfg, "fp", 1);
+			s_objr.cchg = &s_world.cchg;
 			s_objr.sky_model = -1;
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
-			printf("[obj] sky model: %s\n", s_objr.sky_model >= 0 ? "drawn" : "none");
+			s_objr.sky_model2 = -1;
+			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag2) s_objr.sky_model2 = model_find(&s_world.models, s_world.sky.model_tag2);
+			printf("[obj] sky model: %s, second %s\n", s_objr.sky_model >= 0 ? "drawn" : "none", s_objr.sky_model2 >= 0 ? "drawn" : "none");
 			s_have_objects = 1;
 		}
 	}
@@ -480,7 +495,7 @@ int main(int argc, char *argv[])
 
 	limit = (u32)cfg_int(&s_cfg, "frames", 0);
 	for (;;) {
-		u32 t0 = timer_cycles(), t1, t2;
+		u32 t0 = timer_cycles(), t1, t2, tsim, tobj, tp, tw1, tw2;
 		fly_input in;
 		unsigned down = pad_poll(&in);
 
@@ -498,12 +513,23 @@ int main(int argc, char *argv[])
 					if (s_game.dead_ticks > 90) printf("[game] dead for 3 s at %.1f %.1f %.1f (bsp %d, hp %.0f/%.0f): reverting\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_game.vitals.health, (double)s_game.vitals.shield);
 					if (do_revert()) { gin.held = gin.pressed = 0; } else s_game.dead_ticks = 0;
 				}
+				if (!vitals_dead(&s_game.vitals) && !s_game.player.on_ground && s_game.player.pos[2] < s_world.bsp.bounds[2] - FALL_KILL_MARGIN) {
+					/* out of the world (ADR-062): the loaded BSP has no floor down here, and with no cluster around the camera the renderer draws everything in view */
+					printf("[game] fell out of the world at %.1f %.1f %.1f (bsp %d, floor of the map %.1f): killed\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_world.bsp.bounds[2]);
+					vitals_damage(&s_game.vitals, 1.0e6f, 1.0f, 1.0f, 1.0f);
+				}
 				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
-				if (mapp_active()) { mapp_tick(&gin); serve_mission(); } else game_tick(&s_game, &gin);
+				tp = timer_cycles();
+				if (mapp_active()) { mapp_tick(&gin); p2_add(P2_MAPP, tp); tp = timer_cycles(); serve_mission(); p2_add(P2_SERVE, tp); } else { game_tick(&s_game, &gin); p2_add(P2_MAPP, tp); }
+				tp = timer_cycles();
 				check_bsp_switch();
 				s_tick++;
 				s_hudr.tick = s_tick;
+				p2_add(P2_BSPSW, tp);
+				tp = timer_cycles();
 				if (s_stream_on) stream_ee_tick(&s_see);
+				p2_add(P2_STREAM, tp);
+				tp = timer_cycles();
 				if (s_fx.def) {
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -529,7 +555,11 @@ int main(int argc, char *argv[])
 					}
 					fx_tick(&s_fx);
 				}
+				p2_add(P2_FX, tp);
+				tp = timer_cycles();
 				if (s_ga.snd) { camera_t ac; game_camera(&s_game, &ac); gameaudio_events(&s_ga, &s_game, &ac); }
+				p2_add(P2_AUDIO, tp);
+				tp = timer_cycles();
 				{
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -553,11 +583,49 @@ int main(int argc, char *argv[])
 						}
 					}
 				}
+				p2_add(P2_HUD, tp);
 				if (cfg_int(&s_cfg, "gamelog", 0)) {
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
 					for (ei = 0; ei < ec; ei++)
 						printf("[ev] t%u type %u tag %08x arg %u obj %d val %.1f\n", s_tick, ev[ei].type, (unsigned)ev[ei].tag, ev[ei].arg, ev[ei].obj, ev[ei].value);
+				}
+				if ((s_tick % 15) == 0 && mapp_active() && cfg_int(&s_cfg, "cinelog", 0)) {
+					const cine_state *cs = mapp_mission()->cine;
+					cine_pose cp = cine_cam_pose(&cs->cam);
+					printf("[cin] t%u bsp %d cin %d ctl %d mode %d cam %.2f %.2f %.2f yaw %.0f pit %.0f roll %.0f fov %.0f nc %.2f lb %.2f fade %.2f (%.2f %.2f %.2f)\n", s_tick, s_world.bsp_index, cs->screen.cinematic,
+					       cs->cam.control, cs->cam.mode, (double)cp.pos[0], (double)cp.pos[1], (double)cp.pos[2], (double)(cp.yaw * 57.29578f), (double)(cp.pitch * 57.29578f),
+					       (double)(cp.roll * 57.29578f), (double)(cp.fov * 57.29578f), (double)cs->cam.near_clip, (double)cs->screen.letterbox, (double)cs->screen.fade_alpha,
+					       (double)cs->screen.fade_rgb[0], (double)cs->screen.fade_rgb[1], (double)cs->screen.fade_rgb[2]);
+					if (s_have_objects && cfg_str(&s_cfg, "cinetrack", NULL)) {                 /* position of the objects whose definition name contains the string */
+						unsigned oi;
+						for (oi = 0; oi < s_objects.count; oi++) {
+							const object_t *ob = &s_objects.obj[oi];
+							scen_def d;
+							if (ob->model < 0) continue;
+							d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
+							if (strstr(d.name, cfg_str(&s_cfg, "cinetrack", ""))) printf("[cin]   #%u %s at %.2f %.2f %.2f anim %u frame %.1f flags %02x\n", oi, d.name, (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (unsigned)ob->anim, (double)ob->frame, ob->flags);
+						}
+					}
+				}
+				if (s_have_objects && mapp_active() && cfg_int(&s_cfg, "nearlog", 0) && s_tick == (uint32_t)cfg_int(&s_cfg, "nearlog", 0)) {   /* objects around the cinematic camera */
+					const cine_state *cs = mapp_mission()->cine;
+					cine_pose cp = cine_cam_pose(&cs->cam);
+					unsigned oi;
+					for (oi = 0; oi < s_objects.count; oi++) {
+						const object_t *ob = &s_objects.obj[oi];
+						float dx = ob->pos[0] - cp.pos[0], dy = ob->pos[1] - cp.pos[1], dz = ob->pos[2] - cp.pos[2];
+						scen_def d;
+						if (ob->model < 0 || dx * dx + dy * dy + dz * dz > (float)cfg_int(&s_cfg, "nearrad", 10) * (float)cfg_int(&s_cfg, "nearrad", 10)) continue;
+						d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
+						printf("[near] #%u %s type %u model %d graph %d anim %u frame %.1f flags %02x at %.2f %.2f %.2f (d %.2f)\n", oi, d.name, ob->type, ob->model, ob->graph, (unsigned)ob->anim, (double)ob->frame, ob->flags,
+						       (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (double)sqrtf(dx * dx + dy * dy + dz * dz));
+						if (cfg_int(&s_cfg, "nearnodes", 0) && ob->type == 1) {
+							static object_nodes_t nn;
+							unsigned ni, nc = objects_pose(ob, &s_objr.world, &nn);
+							for (ni = 0; ni < nc && ni < 12; ni++) printf("[near]    node %u world %.2f %.2f %.2f\n", ni, (double)nn.world[ni].m[3][0], (double)nn.world[ni].m[3][1], (double)nn.world[ni].m[3][2]);
+						}
+					}
 				}
 				if ((s_tick % 30) == 0 && cfg_int(&s_cfg, "gamestat", 1))
 					printf("[game] t=%us pos %.1f %.1f %.1f hp %.0f sh %.0f shots %u proj %u hits %u kills %u\n", s_tick / 30, s_game.player.pos[0], s_game.player.pos[1],
@@ -574,12 +642,15 @@ int main(int argc, char *argv[])
 				if (cs && cs->cam.control && cs->cam.mode == CINE_CAM_POSE) {
 					cine_pose cp = cine_cam_pose(&cs->cam);
 					cine_pose_to_camera(&cp, &s_cam);
-					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip;
+					/* The intro asks for near 0.01 (and 0.0625 -> 0.01 in the bridge); the VU1 object program drops every object below about 0.04 (a
+					 * captain 0.27 away vanishes, found against the Xbox intro), so the script's value is raised to the engine's default. */
+					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip > CAMERA_NEAR_DEFAULT ? cs->cam.near_clip : CAMERA_NEAR_DEFAULT;
 				}
 			}
 		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
 		else flycam_update(&s_cam, &in, (float)s_vblanks * VBLANK_S);
 
+		tsim = timer_cycles();
 		if (s_have_objects) {
 			if ((s_vblanks == 2 || (frame & 1) == 0) && !s_paused) {         /* the 30 Hz tick: every frame at 30 fps, every other at 60 */
 				objects_tick(&s_objects, &s_objr.world);
@@ -587,23 +658,59 @@ int main(int argc, char *argv[])
 			}
 			fpview_place(&s_fp, &s_objr.world, &s_cam);
 		}
+		tobj = timer_cycles();
 		if ((frame % 6) == 0) profiler_overlay(&s_prof, &s_text);   /* a few updates a second: float formatting is slow */
+		{                                                  /* the player is in the air with no floor under them: out of the world, draw no world around that camera (ADR-062) */
+			int in_void = 0;
+			if (s_game_on && !s_game.player.on_ground && s_game.has_phys) {
+				phys_hit ph;
+				float dn[3] = { s_game.player.pos[0], s_game.player.pos[1], s_game.player.pos[2] - 80.0f };
+				in_void = !s_game.phys.ray(s_game.phys.user, s_game.player.pos, dn, &ph);
+			}
+			bsp_render_set_void_view(in_void);
+		}
 		bsp_render_build(frame, &s_cam, &s_text);          /* overlaps the GS drawing frame-1 */
 		t1 = timer_cycles();
+		{                                                  /* `prof2 1`: where the EE prep time goes (sim tick / object animation / render build), averaged per 60 frames */
+			static float acc[3]; static unsigned n; static int on = -1;
+			if (on < 0) on = (int)cfg_int(&s_cfg, "prof2", 0);
+			if (on) {
+				acc[0] += timer_ms(t0, tsim); acc[1] += timer_ms(tsim, tobj); acc[2] += timer_ms(tobj, t1);
+				if (++n == 60) { {
+					unsigned z;
+					static const char *const zn[P2_N] = { "mapp", "serve", "bspsw", "stream", "fx", "audio", "hud" };
+					printf("[prof2] frame %u sim %.2f objects %.2f build %.2f ms; sim parts avg/peak:", (unsigned)frame, acc[0] / 60.0f, acc[1] / 60.0f, acc[2] / 60.0f);
+					for (z = 0; z < P2_N; z++) { printf(" %s %.2f/%.1f", zn[z], s_p2_ms[z] / 60.0f, s_p2_peak[z]); s_p2_ms[z] = s_p2_peak[z] = 0.0f; }
+					printf("\n");
+				}
+				acc[0] = acc[1] = acc[2] = 0.0f; n = 0; }
+			}
+		}
 		if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }      /* FINISH seen: burning vsyncs below clears the flag */
 		s_gpu_idle = 0;
+		tw1 = timer_cycles();
 		{
 			/* Present exactly s_vblanks vblanks after the previous flip (30 fps: 2). flip() itself waits for the next
 			 * vsync; if the build finished before the vsync that is already (s_vblanks - 1) vblanks after the last
 			 * flip, burn the vsyncs that have not happened yet. A build that ran long just lands on a later vsync. */
-			int passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS), v;
-			for (v = passed; v < s_vblanks - 1; v++) { if (s_stream_on) stream_ee_pump(&s_see); graph_wait_vsync(); }
+			int passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS);
+			while (passed < s_vblanks - 1) {
+				int now_passed;
+				if (s_stream_on) stream_ee_pump(&s_see);
+				/* the pump takes time: when it ran across the vsync we were about to wait for, that vsync is gone and waiting for "the next" one would
+				 * burn a whole extra frame (ADR-063: this alone made every frame whose EE work ended within a pump of the vblank 3 vblanks long) */
+				now_passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS);
+				if (now_passed > passed) { passed = now_passed; continue; }
+				graph_wait_vsync();
+				passed++;
+			}
 		}
+		tw2 = timer_cycles();
 		video_present(&s_video);                           /* vsync + display */
 		t2 = timer_cycles();
 
 		profiler_frame(&s_prof, timer_ms(t0, t1), timer_ms(t1, t2), bsp_render_stats(), t2);
-		if (frame > 0 && s_prof.last_interval > s_prof.drop_ms) printf("[prof] DROP frame %u interval %.1f ms (ee %.1f ms)\n", (unsigned)frame, s_prof.last_interval, timer_ms(t0, t1));
+		if (frame > 0 && s_prof.last_interval > s_prof.drop_ms) printf("[prof] DROP frame %u interval %.1f ms (ee %.1f ms; gpu wait %.1f, vsync burn %.1f, present %.1f)\n", (unsigned)frame, s_prof.last_interval, timer_ms(t0, t1), timer_ms(t1, tw1), timer_ms(tw1, tw2), timer_ms(tw2, t2));
 		if (s_have_objects) {
 			s_prof.obj_visible = s_objr.st_visible; s_prof.obj_culled = s_objr.st_culled;
 			s_prof.obj_batches = s_objr.st_batches; s_prof.obj_tris = s_objr.st_triangles; s_prof.lod_level = (unsigned)s_lod.level;

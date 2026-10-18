@@ -47,6 +47,9 @@ static int src_binding(void *user, uint32_t shader_id, mat_binding_t *out)
 	out->flags = 0;
 	if (b.flags & TEX_B_ALPHA_TEST) out->flags |= MAT_ALPHA_TEST;
 	if (b.blend >= TEX_BLEND_ALPHA) out->flags |= MAT_BLEND;
+	out->add = b.blend == TEX_BLEND_ADD;
+	out->cc = (uint8_t)b.change;
+	out->tex2 = b.texture2 == TEX_NONE ? (int16_t)-1 : (int16_t)b.texture2;
 	if (b.flags & TEX_B_TWO_SIDED) out->flags |= MAT_TWO_SIDED;
 	out->uv_scale[0] = b.uv_scale[0];
 	out->uv_scale[1] = b.uv_scale[1];
@@ -186,6 +189,9 @@ int world_load_objects(world_t *w, arena_t *a, const char *obj_path)
 		printf("[obj] %s OTEX: %u textures, %u bindings, %u KB\n", obj_path, (unsigned)w->obj_tex.tex.texture_count,
 		       (unsigned)w->obj_tex.tex.binding_count, (unsigned)(raw / 1024));
 	}
+	sec = world_load_section(a, obj_path, "CCHG", &raw, 1);
+	if (!sec || cchg_open(&w->cchg, sec, raw) != 0) memset(&w->cchg, 0, sizeof w->cchg);
+	else printf("[obj] %s CCHG: %u models with colour change\n", obj_path, (unsigned)w->cchg.count);
 	memset(&w->sky, 0, sizeof w->sky);
 	sec = world_load_section(a, obj_path, "SKY0", &raw, 1);
 	if (sec && raw >= 64 && memcmp(sec, "SKYS", 4) == 0) {
@@ -196,11 +202,12 @@ int world_load_objects(world_t *w, arena_t *a, const char *obj_path)
 		memcpy(f, q + 4, sizeof f);                     /* little-endian host data, like the pack */
 		w->sky.valid = 1;
 		w->sky.model_tag = tag;
+		memcpy(&w->sky.model_tag2, sec + 60, 4);
 		memcpy(w->sky.fog_rgb, f, 12);
 		w->sky.fog_near = f[3]; w->sky.fog_far = f[4]; w->sky.fog_density = f[5];
 		memcpy(w->sky.outdoor, f + 6, 12);
 		memcpy(w->sky.indoor, f + 9, 12);
-		printf("[obj] SKY0: model tag %08x, fog near %.0f far %.0f density %.2f\n", (unsigned)tag, w->sky.fog_near, w->sky.fog_far, w->sky.fog_density);
+		printf("[obj] SKY0: model tags %08x %08x, fog near %.0f far %.0f density %.2f\n", (unsigned)tag, (unsigned)w->sky.model_tag2, w->sky.fog_near, w->sky.fog_far, w->sky.fog_density);
 	}
 	memset(&w->obj_source, 0, sizeof w->obj_source);
 	w->obj_source.binding = src_binding;

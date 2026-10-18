@@ -476,7 +476,7 @@ static void update_attachments(mission_t *M)
 		if (marker_world(M, po, at.marker, &w)) {
 			float pos[3] = { w.m[3][0], w.m[3][1], w.m[3][2] };
 			int ui = unit_of(M, at.child);
-			if (ui >= 0 && M->game) units_teleport(M->units, M->game, ui, pos, atan2f(w.m[0][1], w.m[0][0]));
+			if (ui >= 0 && M->game) units_pin(M->units, M->game, ui, pos, atan2f(w.m[0][1], w.m[0][0]));      /* carried: no body integration, nothing to fall */
 			else if (is_player(M, at.child) && M->game) { game_teleport(M->game, pos, atan2f(w.m[0][1], w.m[0][0])); }
 			co->pos[0] = pos[0]; co->pos[1] = pos[1]; co->pos[2] = pos[2];
 			co->root = w;
@@ -1382,7 +1382,7 @@ void hs_host_obj_post(mission_t *M)
 		object_t *o = obj_of(M, h->suspend[i].obj);
 		int ui = unit_of(M, h->suspend[i].obj);
 		if (!o) continue;
-		if (ui >= 0 && M->game) { units_teleport(M->units, M->game, ui, h->suspend[i].pos, M->units->u[ui].body.yaw); }
+		if (ui >= 0 && M->game) units_pin(M->units, M->game, ui, h->suspend[i].pos, M->units->u[ui].body.yaw);
 		o->pos[0] = h->suspend[i].pos[0]; o->pos[1] = h->suspend[i].pos[1]; o->pos[2] = h->suspend[i].pos[2];
 	}
 	for (slot = 0; M->objects && slot < (int)M->objects->count; slot++) {          /* custom animations that have run out hand the graph back */

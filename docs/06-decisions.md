@@ -534,5 +534,64 @@ corrected layout lands within 2 px of it. **Consequences**: `HUD0` stays version
 (`hudconv.py` per map). Meters clip by width, not by the Xbox's per-pixel luminance threshold (partial segments show, the ammo bar empties right to left rather than
 row by row); meter translucency / opacity and the grenade type of the panel colour are not modelled. Details: docs/20-hud-section.md.
 
+## ADR-062 Falling out of the world kills the player; the bot holds floorless hops and is rescued; the world is not drawn around a void camera
+**Decision**: (1) `main.c` kills an airborne player who is more than 30 wu below the loaded BSP's lowest vertex (`FALL_KILL_MARGIN`); the existing death path reverts to the last checkpoint after 3 s.
+(2) While the player is airborne with no floor within 80 wu below, a camera that lies in no BSP cluster draws no world (`bsp_render_set_void_view`, `vis_t.skip_outside`); the free camera (no game) still draws every cluster in view.
+(3) The mission bot's assisted hop onto a volume with no floor under it (volumes of the next BSP lie in its space, beyond the loaded BSP's collision) holds the player there for 20 ticks so the scripts can poll the volume,
+then puts the player back on the last standing position (`rescues`, counted as assists); a volume that three hops in a row do not satisfy is set aside for 60 s; three awaited volumes in a row that are off the navigation mesh
+make the bot hop onto the current one; the ignore list holds 16 volumes and the shun list 12 hostiles (4 slots were overwritten before they expired). **Why**: the a10 mission run (2026-10-18) spent about 100 s of
+its 750 s with the player falling forever after a hop onto such a volume (BSP 0's floor ends at x = -33.1, volume 91 lies at x = -29.4): the renderer found no cluster and drew every cluster in view (up to 55k triangles,
+2441 batches, EE 35-50 ms), 1635 of 20749 frames (7.88 %) were late, and the scripts only advanced because the falling player happened to cross the next volumes. **Consequences**: the same run now
+wins at 773 s with 60 assists (24 of them rescues), no fall, no void frame, 712 of 24256 frames late (2.94 %); a human who clips out of the map dies instead of falling for ever. The remaining late frames are real scene load, not
+the bot: the BSP 6 finale (EE 29-52 ms, 173 consecutive frames) and the crowd scenes of BSP 0 / 8 (EE 16.5 ms but the GS finishes late: 21k object triangles, 964 batches). Diagnostics added: `[bot]` lines for every assist
+and rescue (target, floor below, awaited volumes), `prof2 1` (EE prep split into sim / object animation / render build per 60 frames), unit body integrations and airborne units in the mission status line.
+
+## ADR-063 Frame pacing no longer loses a vblank to the stream pump; carried units are pinned, not integrated; objects draw nearest first under a batch cap that follows the LOD level
+**Decision**: (1) The vsync burn before the flip (`main.c`) recomputes the elapsed vblanks after `stream_ee_pump` and only then waits for a vsync; a pump that ran across the vblank it was about to wait for used to make `graph_wait_vsync` catch the *next* one, so the frame landed three vblanks (50 ms) after the last flip instead of two.
+(2) `units_pin` holds a unit that a script suspended (`unit_suspended`) or an attachment carries (`objects_attach`): position and yaw are set, velocity zeroed, `on_ground` kept at 1 and the settle count kept, so `step_body` skips the capsule sweeps (they used `units_teleport` every tick, which cleared `on_ground`, so every carried unit swept for nothing and ran the airborne action).
+(3) `mission_sync_devices` decodes each device's placement and animation once (static table) instead of every tick. (4) The object pass culls first, ranks by nearest surface, poses and draws nearest first and stops at the batch cap (objects beyond it cost no pose, light or model walk), and the cap is
+900 x 100/100/100/85/60 % at the LOD controller's levels 0-4 (`lodctl_batch_cap`). (5) Two options, both **off by default** because they change the simulation: `unitlod <wu>` (bodies farther than that from the player integrate every other tick, the existing distance LOD that nothing enabled) and `cinelod 1`
+(all bodies integrate every other tick while a cinematic runs). (6) Diagnostics: `prof2 1` splits the sim tick (mapp, serve, bspsw, stream, fx, audio, hud: avg/peak per 60 frames), `[prof] DROP` lines carry the EE time, the GPU wait, the vsync burn and the present time, `airlog 1` lists units that are not on the ground.
+**Why**: measured on the a10mission run (2026-10-18), not guessed. The "crowd scenes of BSP 0 / 8" were not GS-bound: their drop lines read EE 16.6 ms, GPU wait 0.0, burn 16.8, present 16.7, i.e. the pacing race above (EE work ends within a pump of the vblank); 470 of the 703 late frames were of this kind. The BSP 6 finale
+(EE 29-52 ms) was EE-bound: sim 11-17 ms of which `units` 5 ms (18 body integrations per tick at about 0.27 ms each, mostly carried or cutscene units), `ai` 1.5, `post` 1.2, devices 1.2 (the per-tick decode), `stream` 1.4; render build 15-28 ms with the object pass at its 900-batch cap after posing every visible object.
+**Consequences**: the same run (same seed, same bot) now ends with identical simulation results - `game_won` at tick 23210, 60 assists of which 24 rescues, 24256 frames - and **90 of 24256 frames late (0.37 %, was 703 = 2.90 %)** on the recompiler at normal speed; `a10game` 0 of 1081. 60 of the 90 are still the finale (EE 34-41 ms: sim 9-15 ms, build 15-20 ms), 14 more the BSP 6 load (one 2.4 s stall per BSP switch, 8 for BSP 0 / 7), the rest single stalls. Budget decision for the finale: it stays over budget by 1-8 ms for about 2 s
+at the top LOD level; the way to buy that back is `cinelod 1` (about 2.5 ms of `units`), but a run with it (and with `unitlod 20`) takes a different path through the mission (win at tick 24201-24600, 73-89 assists instead of 60, 0.7-0.9 % late), so the Gate M4 numbers are quoted without them until the bot's route is stable against sim changes.
+`vis` in the profiler now counts drawn objects only (objects past the cap are in `skip`). Carried and suspended units now play the ground idle animation instead of the airborne one.
+
+## ADR-064 Intro parity with the Xbox: sky node pose and palette, additive blends, lightmap tone curve and chroma, cinematic near plane
+**Decision**: (1) `obj_render_sky` skins the sky model with the bind-pose inverse of its node (a sky has no animation, so Halo poses its nodes with the identity and
+the skin matrix `world(pose) * inverse(world(default))` reduces to the inverse); a10's `sky_x10`/`space` node is yawed 90 degrees by default, which turns the dome, galaxy and
+planets by -90 degrees: without it the intro's planet stood behind the camera. (2) `SKY0` carries the model of the scenario's second sky (u32 at +60, was padding); the sky pass
+draws the palette entry of the camera's cluster (`vis_t.sky_index`, the camera cluster's `sky` field, else the first visible cluster with a sky): a10's exterior BSP 7 (the intro's
+space shots) has one cluster with sky 1, the nebula sky; every window onto space elsewhere is sky 0. (3) A sky dome whose chicago shader stacks maps (nebula + stars) is converted
+as one part per additive map (`modelconv.add_sky_layers`, pseudo shader ids `objtex.layer_shader_id`). (4) `mat_binding_t.add`: additive materials (shader blend 3) draw as
+`Cs + Cd` in the BSP (doubled: the exhaust map is a 104 grey), object and sky passes; every other blend still draws as alpha. (5) Lightmap luminance goes through a tone curve
+(`texconv.lightmap_curve`: white point 249 -> 127 x gain, exponent 0.5, gain 1.7) instead of the linear gain 1.5, and the vertex chroma is pulled 60 % towards neutral
+(`CHROMA_STRENGTH` 0.4). (6) The cinematic near plane is never below the engine default 0.05: the VU1 object program drops every object nearer than about 0.04 (the captain 0.27 away
+in the bridge vanished at the script's 0.01).
+**Why**: frame-by-frame comparison of the PS2 intro with the Xbox intro video at the same times (`scripts/cmp-intro.sh`, 2026-10-18): black sky with a teal smear, no planet, yellow-green
+bridge, white hangar floors, no Keyes in the bridge's long shot. The lightmap pages of a10 are bimodal and amber (BSP 1: a quarter of the texels at 170..249, mean colour 120 / 90 / 51),
+so linear gain and full chroma doubled every lit surface to white and tinted it yellow, while the mean brightness of the intro matched the Xbox within 15 %.
+**Consequences**: object packs (`objpack.py`: SKY0, sky layers, a30/a50 second skies) and TEX/BSP packs (`texconv.py`, `bspconv.py`: tone curve, chroma) must be rebuilt
+(`scripts/build-world.sh`); a30 now draws its cluster-selected sky (unverified against the Xbox). Not fixed, found by the same comparison: colour-change tints (crew jumpsuits are red / yellow /
+orange on the Xbox, near-black here; Keyes' uniform and the marines too), Cortana's purple hologram (multi-stage `sotr` colours), screen effects (desaturation, convolution), the
+exhaust and galaxy glow (additive sprites / bloom), the halo ring in the first shot (edge-on here), marines' rifles, and the intro's pacing at the end of the bridge (about 4 s early: `sound_impulse_time`).
+
+## ADR-065 Colour change (`CCHG`, a second pass per part), object lighting on the BSP's tone curve, XBE analysis
+**Decision**: (1) Object tags carry up to four change colours (object tag +0x164, each with up to eight permutations of cumulative weight and a lower / upper rgb bound); a `shader_model`
+with a colour change source a..d (+0x4C) and a multipurpose map (+0xBC, blue channel = mask) gets a second texture in its `OTEX` binding (the base map with the mask as alpha,
+`tex_binding.change` / `texture2`, the 16-bit field that was reserved at +10 and the first of the free bytes at +24), and `objpack.py` writes a `CCHG` section (`chgconv.py`,
+`world/cchg.[ch]`). The object pass draws such a part a second time over the first, alpha blended at the same depth, with the ambient and sun colours multiplied by the object's
+change colour (picked by a seed from the object index and definition), so where the mask is 1 the result is base x tint x light. Keyes' uniform keeps only its grey permutation
+(`chgconv.GREY_ONLY`; the Xbox intro shows grey). The first-person arms pick with seed 1. (2) The object lighting probes (`scenconv.cluster_lights`) use the BSP's tone curve and chroma
+strength (`texconv.lightmap_tone_rgb`) with a gain of 1.7 x 1.8: the linear gain 1.0 they used left characters about 2.5 times darker than the walls they stand against.
+(3) `default.xbe` was analysed (docs/36-xbe-analysis.md, `tools/xbe/`).
+**Why**: the Xbox intro shows red / yellow / orange / purple crew jumpsuits, khaki-free skin tones and a captain as bright as the bulkheads; here they were black, pink and charcoal.
+The tag data answered colour change completely; the executable showed that Halo assembles its combiner programs at runtime and that its environment pass adds the lightmap to a vertex term instead
+of doubling it.
+**Consequences**: object packs must be rebuilt (`objpack.py` / `build-world.sh`; the `OTEX` and `SCEN` sections change, a `CCHG` section is new, a pack without it still loads with no tints);
+models are not duplicated (the second pass reuses the part's batches), the cost is one more draw of the tinted parts (crew, marines' faces, props with a change colour) and ~0.4 MiB of `OTEX` on a10.
+Marine armour, rifles, Cortana's hologram colour and the screen filters are still open (ADR-064).
+
 ## Open decisions
 None.

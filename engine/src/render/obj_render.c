@@ -146,8 +146,22 @@ static unsigned pick_lod(const model_section *ms, const model_info *mi, const ui
 }
 
 /* Draw one model with the given node matrices. Returns the number of batches emitted. */
+/* Change colours of an object: tint[c] (rgb 0..255) is valid when has[c] (c = 0..3 for change colour a..d). */
+typedef struct { uint8_t rgb[CCHG_MAX_CHANGE][3]; uint8_t has[CCHG_MAX_CHANGE]; } cc_tints;
+
+static void cc_pick(const obj_render_t *o, int model, uint32_t seed, cc_tints *t)
+{
+	const uint8_t *rec;
+	unsigned c;
+	memset(t, 0, sizeof *t);
+	if (!o->cchg || !o->world.models || model < 0) return;
+	rec = cchg_find(o->cchg, model_get(o->world.models, (uint32_t)model).tag_id);
+	if (!rec) return;
+	for (c = 0; c < CCHG_MAX_CHANGE; c++) t->has[c] = (uint8_t)cchg_tint(rec, c + 1, seed, t->rgb[c]);
+}
+
 static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, const uint16_t *perm, unsigned regions,
-                           const object_nodes_t *nodes, unsigned lod, const scen_light *light, unsigned budget)
+                           const object_nodes_t *nodes, unsigned lod, const scen_light *light, unsigned budget, const cc_tints *cc)
 {
 	const model_section *ms = o->world.models;
 	model_info mi = model_get(ms, (uint32_t)model);
@@ -160,7 +174,7 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 		model_part_range pr = model_parts(ms, &mi, perm[r], lod);
 		for (p = 0; p < pr.part_count; p++) {
 			model_part part = model_get_part(ms, (uint32_t)pr.first_part + p);
-			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f } };
+			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f }, 0, -1 };
 			gs_ad ad[7];
 			unsigned n = 0;
 			u64 tex0 = 0;
@@ -178,7 +192,7 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 				ad[n].data = GS_TEX1(1, 0, 1, 1, 0, 0, 0);  ad[n++].addr = GS_A_TEX1_1;
 				ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);    ad[n++].addr = GS_A_CLAMP_1;
 			}
-			ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);           ad[n++].addr = GS_A_ALPHA_1;
+			ad[n].data = mb.add ? GS_ALPHA(0, 2, 2, 1, 0x80) : GS_ALPHA(0, 1, 0, 1, 0); ad[n++].addr = GS_A_ALPHA_1;
 			ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 2); ad[n++].addr = GS_A_TEST_1;
 			ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, 0); ad[n++].addr = GS_A_ZBUF_1;
 			emit_part_state(rc->chain, ad, n, mb.uv_scale[0] / (float)(1u << part.uv_shift), mb.uv_scale[1] / (float)(1u << part.uv_shift),
@@ -189,6 +203,37 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 				o->st_triangles += b.triangles;
 			}
 			emitted += part.batch_count;
+			if (mb.cc && mb.tex2 >= 0 && cc && mb.cc <= CCHG_MAX_CHANGE && cc->has[mb.cc - 1] && rc->opt->textures && o->textures && o->textures->texture
+			    && emitted + part.batch_count <= budget) {
+				/* colour change: the part again, its base map with the mask as alpha, alpha blended over the first pass (same depth) and lit with the
+				 * object's change colour: where the mask is 1 the result is base x tint x light, elsewhere the first pass stays */
+				tex_image_t img2;
+				scen_light tl = *light;
+				unsigned k;
+				if (o->textures->texture(o->textures->user, mb.tex2, &img2) == 0) {
+					for (k = 0; k < 3; k++) {
+						tl.ambient[k] = (uint8_t)((unsigned)light->ambient[k] * cc->rgb[mb.cc - 1][k] / 255u);
+						tl.sun[k] = (uint8_t)((unsigned)light->sun[k] * cc->rgb[mb.cc - 1][k] / 255u);
+					}
+					emit_light(rc->chain, &tl);
+					n = 0;
+					ad[n].data = rb_object_tex0((unsigned)mb.tex2, &img2, 0);   ad[n++].addr = GS_A_TEX0_1;
+					ad[n].data = GS_TEX1(1, 0, 1, 1, 0, 0, 0);  ad[n++].addr = GS_A_TEX1_1;
+					ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);    ad[n++].addr = GS_A_CLAMP_1;
+					ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);       ad[n++].addr = GS_A_ALPHA_1;
+					ad[n].data = GS_TEST(0, 6, 0x40, 0, 0, 0, 1, 2); ad[n++].addr = GS_A_TEST_1;
+					ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, 0); ad[n++].addr = GS_A_ZBUF_1;
+					emit_part_state(rc->chain, ad, n, mb.uv_scale[0] / (float)(1u << part.uv_shift), mb.uv_scale[1] / (float)(1u << part.uv_shift),
+					                GS_PRIM(GSX_PRIM_TRIANGLE, 1, 1, rc->opt->fog, 1, 0, 0, 0, 0));
+					for (bi = 0; bi < part.batch_count; bi++) {
+						model_batch b2 = model_get_batch(ms, (uint32_t)part.first_batch + bi);
+						emit_batch(rc->chain, rc, ms, &b2);
+						o->st_triangles += b2.triangles;
+					}
+					emitted += part.batch_count;
+					emit_light(rc->chain, light);
+				}
+			}
 		}
 	}
 	o->st_batches += emitted;
@@ -211,33 +256,56 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	int bias = o->lod ? lodctl_lod_bias(o->lod) : 0;
 	unsigned i, budget = o->max_batches;
 	float right[3], up[3], fwd[3];
+	cc_tints cc;
 	u32 t0 = timer_cycles();
 	o->st_visible = o->st_culled = o->st_batches = o->st_triangles = o->st_skipped = 0;
 	if (!o->world.models || !o->world.scen) return;
 	camera_basis(cam, right, up, fwd);
 	emit_model_setup(rc->chain, rc);
 
-	for (i = 0; o->draw_objects && o->table && i < o->table->count; i++) {
-		const object_t *ob = &o->table->obj[i];
-		model_info mi;
-		if (ob->model < 0 || (ob->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
-		mi = model_get(o->world.models, (uint32_t)ob->model);
-		float c[3], d[3], dist, w, diameter;
-		scen_light light;
-		unsigned lod;
-		mat4_transform_point(&ob->root, mi.centre, c);
-		d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
-		dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-		w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
-		if (dist - ob->radius > maxd || !frustum_sphere(rc->frustum, c, ob->radius)) { o->st_culled++; continue; }
-		diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
-		if (diameter < 3.0f && dist > ob->radius * 2.0f) { o->st_culled++; continue; }   /* sub-pixel clutter */
-		lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
-		if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { o->st_culled++; continue; }
-		light_at(o, c, &light);
-		o->st_visible++;
-		if (draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget > o->st_batches ? budget - o->st_batches : 0) == 0
-		    && o->st_batches >= budget) { o->st_skipped++; }
+	/* pass 1: cull and rank by distance; pass 2: pose and draw nearest first until the batch cap is spent, so the cap drops the far clutter
+	 * (not whatever comes last in the table) and the objects it drops cost no pose, lighting or model walk at all (ADR-063) */
+	{
+		static struct { float dist; uint16_t index; } cand[OBJ_MAX];
+		unsigned n = 0, k;
+		if (o->lod) budget = lodctl_batch_cap(o->lod, budget);
+		for (i = 0; o->draw_objects && o->table && i < o->table->count && i < OBJ_MAX; i++) {
+			const object_t *ob = &o->table->obj[i];
+			model_info mi;
+			float c[3], d[3], dist, w, diameter, key;
+			if (ob->model < 0 || (ob->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
+			mi = model_get(o->world.models, (uint32_t)ob->model);
+			mat4_transform_point(&ob->root, mi.centre, c);
+			d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
+			dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+			w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+			if (dist - ob->radius > maxd || !frustum_sphere(rc->frustum, c, ob->radius)) { o->st_culled++; continue; }
+			diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
+			if (diameter < 3.0f && dist > ob->radius * 2.0f) { o->st_culled++; continue; }   /* sub-pixel clutter */
+			key = dist - ob->radius;                                                          /* the nearest surface, so a big object close by is not ranked behind a small one */
+			for (k = n; k > 0 && cand[k - 1].dist > key; k--) cand[k] = cand[k - 1];          /* insertion sort: n is a few dozen */
+			cand[k].dist = key; cand[k].index = (uint16_t)i;
+			n++;
+		}
+		for (k = 0; k < n; k++) {
+			const object_t *ob = &o->table->obj[cand[k].index];
+			model_info mi;
+			float c[3], d[3], w, diameter;
+			scen_light light;
+			unsigned lod;
+			if (o->st_batches >= budget) { o->st_skipped += n - k; break; }
+			mi = model_get(o->world.models, (uint32_t)ob->model);
+			mat4_transform_point(&ob->root, mi.centre, c);
+			d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
+			w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+			diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
+			lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
+			if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { o->st_culled++; continue; }
+			light_at(o, c, &light);
+			o->st_visible++;
+			cc_pick(o, ob->model, (uint32_t)cand[k].index * 2654435761u + (uint32_t)ob->def * 40503u, &cc);
+			if (draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget - o->st_batches, &cc) == 0 && o->st_batches >= budget) o->st_skipped++;
+		}
 	}
 
 	if (o->draw_fp && !o->hide_fp && o->fp && o->fp->active) {
@@ -255,15 +323,16 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 		mi = model_get(o->world.models, (uint32_t)f->arms_model);
 		model_select_permutations(o->world.models, &mi, NULL, perm);
 		for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
+		cc_pick(o, f->arms_model, 1u, &cc);
 		draw_model(o, rc, f->arms_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS,
-		           &f->arms_nodes, 0, &light, 400);
+		           &f->arms_nodes, 0, &light, 400, &cc);
 		if (f->weapon_model >= 0) {
 			object_nodes_t wn;
 			mi = model_get(o->world.models, (uint32_t)f->weapon_model);
 			model_select_permutations(o->world.models, &mi, NULL, perm);
 			for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
 			if (objects_pose_model(&o->world, f->weapon_model, f->weapon_graph, f->weapon_anim, f->weapon_frame, &f->weapon_root, &wn))
-				draw_model(o, rc, f->weapon_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS, &wn, 0, &light, 400);
+				draw_model(o, rc, f->weapon_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS, &wn, 0, &light, 400, NULL);
 		}
 	}
 	o->st_ms = timer_ms(t0, timer_cycles());
@@ -295,6 +364,22 @@ static void sky_emit_polys(chain_t *c, const cvert *poly, const unsigned *counts
 	}
 }
 
+/* Bind-pose inverse of a node: the inverse of its world matrix in the model's default pose (chain of the nodes' own translation / rotation). */
+static void node_bind_inverse(const model_section *ms, const model_info *mi, int node, mat4 *out)
+{
+	int chain[16], n = 0, i;
+	mat4 w, l;
+	for (; node >= 0 && node < (int)mi->node_count && n < 16; node = model_get_node(ms, mi, (uint32_t)node).parent) chain[n++] = node;
+	memset(&w, 0, sizeof w);
+	w.m[0][0] = w.m[1][1] = w.m[2][2] = w.m[3][3] = 1.0f;
+	for (i = n - 1; i >= 0; i--) {                       /* root first: world = local * parent world */
+		model_node nd = model_get_node(ms, mi, (uint32_t)chain[i]);
+		mat4_from_trs(&l, nd.rotation, nd.translation, nd.scale > 0.0f ? nd.scale : 1.0f);
+		mat4_mul(&w, &l, &w);
+	}
+	mat4_rigid_inverse(out, &w);
+}
+
 void obj_render_sky(void *user, render_ctx_t *rc)
 {
 	obj_render_t *o = user;
@@ -304,9 +389,11 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 	clip_gs g;
 	unsigned r, p, bi, t, k, j;
 	u32 t0 = timer_cycles();
+	int sky = o->sky_model;
 	o->sky_ms = 0.0f;
-	if (o->sky_model < 0 || !ms || !rc->sky_visible) return;        /* no visible cluster sees the sky: nothing to draw */
-	mi = model_get(ms, (uint32_t)o->sky_model);
+	if (rc->sky_index == 1 && o->sky_model2 >= 0) sky = o->sky_model2;       /* palette entry 1: a10's exterior (the intro's space shots) */
+	if (sky < 0 || !ms || !rc->sky_visible) return;                 /* no visible cluster sees the sky: nothing to draw */
+	mi = model_get(ms, (uint32_t)sky);
 	model_select_permutations(ms, &mi, NULL, perm);
 	g.near_z = rc->cam->near_z; g.zmax = 16777215.0f;
 	g.sx = (float)VIDEO_WIDTH * 0.5f; g.sy = (float)VIDEO_HEIGHT * 0.5f; g.ox = 2048.0f; g.oy = 2048.0f;
@@ -320,12 +407,17 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 		pr = model_parts(ms, &mi, perm[r], lod);
 		for (p = 0; p < pr.part_count; p++) {
 			model_part part = model_get_part(ms, (uint32_t)pr.first_part + p);
-			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f } };
+			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f }, 0, -1 };
 			gs_ad ad[7];
 			unsigned n = 0;
 			u64 tex0 = 0, prim;
 			float su, sv;
 			int blend, atest;
+			mat4 nw;
+			/* A sky model has no animation: its nodes are posed with the identity, so the skin matrix world(pose) * inverse(world(default)) leaves
+			 * the bind-pose inverse. a10's sky node is yawed by 90 degrees by default, which turns the dome, planet and galaxy by -90: only then
+			 * the intro's planet stands left of the Autumn as on the Xbox. */
+			node_bind_inverse(ms, &mi, part.rigid_node, &nw);
 			if (o->textures && o->textures->binding && o->textures->binding(o->textures->user, part.shader_id, &mb) != 0) mb.tex = -1;
 			blend = (mb.flags & MAT_BLEND) != 0 || (part.flags & 2);
 			atest = (mb.flags & MAT_ALPHA_TEST) != 0 || (part.flags & 1);
@@ -338,7 +430,7 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 				ad[n].data = GS_TEX1(1, 0, 1, 1, 0, 0, 0);  ad[n++].addr = GS_A_TEX1_1;
 				ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);    ad[n++].addr = GS_A_CLAMP_1;
 			}
-			ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);           ad[n++].addr = GS_A_ALPHA_1;
+			ad[n].data = mb.add ? GS_ALPHA(0, 2, 2, 1, 0x80) : GS_ALPHA(0, 1, 0, 1, 0); ad[n++].addr = GS_A_ALPHA_1;
 			ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 1); ad[n++].addr = GS_A_TEST_1;     /* Z test always */
 			ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, 1); ad[n++].addr = GS_A_ZBUF_1;                  /* no Z write */
 			emit_gs_state(rc->chain, ad, n);               /* never emit_part_state here: it would overwrite the BSP clip matrix */
@@ -358,9 +450,11 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 					cvert tri[3], out[CLIP_MAX_VERTS];
 					unsigned cnt;
 					for (k = 0; k < 3; k++) {
-						float wp[3];
+						float wp[3], lp[3];
 						const int16_t *q = pos + 4 * (3 * t + k), *uvk = uv + 4 * (3 * t + k);
-						for (j = 0; j < 3; j++) wp[j] = rc->cam->pos[j] + hdr[j] + (float)q[j] * hdr[3];     /* sky follows the camera */
+						for (j = 0; j < 3; j++) lp[j] = hdr[j] + (float)q[j] * hdr[3];
+						mat4_transform_point(&nw, lp, wp);
+						for (j = 0; j < 3; j++) wp[j] += rc->cam->pos[j];                                    /* sky follows the camera */
 						clip_project(rc->clip, wp, &tri[k]);
 						memset(tri[k].a, 0, sizeof tri[k].a);
 						tri[k].a[0] = (float)uvk[0] * su; tri[k].a[1] = (float)uvk[1] * sv;

@@ -152,6 +152,8 @@ void bsp_render_options(render_options_t *o)
 }
 
 void bsp_render_set_options(const render_options_t *o) { s_opt = *o; }
+static int s_void_view;
+void bsp_render_set_void_view(int on) { s_void_view = on; }
 
 int bsp_render_init(const video_t *v)
 {
@@ -213,7 +215,7 @@ int bsp_render_set_world(arena_t *a, const bsp_section *s, const tex_source_t *s
 		unsigned bound = 0, flat = 0;
 		for (i = 0; i < s->material_count; i++) {
 			bsp_material m = bsp_get_material(s, i);
-			mat_binding_t b = { -1, 0, 0, { 1.0f, 1.0f } };
+			mat_binding_t b = { -1, 0, 0, { 1.0f, 1.0f }, 0, -1 };
 			if (src->binding && src->binding(src->user, m.shader_id, &b) == 0 && b.tex >= 0) bound++; else { b.tex = -1; flat++; }
 			s_bind[i] = b;
 		}
@@ -557,6 +559,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		s_horizon_y = hy < 0.0f ? 0 : hy > (float)VIDEO_HEIGHT ? VIDEO_HEIGHT : (int)hy;
 	}
 	s_vis.force_all = (s_opt.debug & 64) != 0;
+	s_vis.skip_outside = s_void_view;
 	vis_run(&s_vis, s_bsp, cam, &fr, clip);
 	if (s_opt.only_batch >= 0) {
 		u32 k, keep = 0, n = s_vis.batch_count;
@@ -595,7 +598,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 
 	if (s_sky_pass) {
 		render_ctx_t rc;
-		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible; rc.sky_index = s_vis.sky_index;
 		s_sky_pass(s_sky_user, &rc);
 	}
 
@@ -621,7 +624,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 			 * flat grey over what is behind it; drawing nothing is closer to the reference than the wash. */
 			if (blend) continue;
 		}
-		ad[n].data = GS_ALPHA(0, 1, 0, 1, 0);      ad[n++].addr = GS_A_ALPHA_1;
+		ad[n].data = mb->add ? GS_ALPHA(0, 2, 2, 1, 0xFF) : GS_ALPHA(0, 1, 0, 1, 0); ad[n++].addr = GS_A_ALPHA_1;   /* glow materials add, doubled: the Xbox exhaust is white-hot, its map a 104 grey */
 		ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 2); ad[n++].addr = GS_A_TEST_1;
 		ad[n].data = GS_ZBUF(s_zbuf_page, GS_PSMZ24, 0); ad[n++].addr = GS_A_ZBUF_1;
 		emit_state(c, ad, n, scale * mb->uv_scale[0], scale * mb->uv_scale[1],
@@ -671,12 +674,12 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 
 	if (s_obj_pass) {
 		render_ctx_t rc;
-		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible; rc.sky_index = s_vis.sky_index;
 		s_obj_pass(s_obj_user, &rc);
 	}
 	if (s_overlay_pass) {
 		render_ctx_t rc;
-		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible;
+		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible; rc.sky_index = s_vis.sky_index;
 		s_overlay_pass(s_overlay_user, &rc);
 	}
 

@@ -53,8 +53,10 @@ typedef struct {
 	uint32_t shader_id;
 	uint16_t texture, flags;       /* texture index or TEX_NONE; TEX_B_* */
 	uint8_t  blend, group;         /* TEX_BLEND_*, TEX_GROUP_* */
+	uint16_t change;               /* colour change: 1..4 = change colour a..d tints a second pass of the part (objects, ADR-065), 0 = none */
 	float    uv_scale[2];          /* multiply the baked texture uv */
 	uint32_t flat_rgba;            /* average colour (flat grey when untextured) */
+	uint16_t texture2;             /* the colour change pass's texture (base map with the mask as alpha), TEX_NONE = none */
 } tex_binding;
 
 typedef struct {

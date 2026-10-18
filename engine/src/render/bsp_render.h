@@ -20,8 +20,10 @@
 typedef struct {
 	int16_t  tex;               /* texture index, -1 = untextured (flat) */
 	uint8_t  flags;             /* MAT_* */
-	uint8_t  pad;
+	uint8_t  add;               /* 1: additive blend (colour + framebuffer); the other blends all draw as alpha blends */
 	float    uv_scale[2];       /* multiplies the material's baked uv (shader tiling) */
+	uint8_t  cc;                /* colour change 1..4 (objects only): a second pass with `tex2` and the object's change colour */
+	int16_t  tex2;              /* that pass's texture (base map with the mask as alpha), -1 = none */
 } mat_binding_t;
 
 /* A texture or lightmap page ready for upload. `pixels` and `clut` must be flushed from the
@@ -73,6 +75,8 @@ int  bsp_render_init(const video_t *v);
 int  bsp_render_set_world(arena_t *a, const bsp_section *s, const tex_source_t *src);
 void bsp_render_options(render_options_t *o);                    /* defaults */
 void bsp_render_set_options(const render_options_t *o);
+/* While set, a camera that lies in no BSP cluster draws no world instead of every cluster in view (the player fell out of the map: ADR-062). */
+void bsp_render_set_void_view(int on);
 /* Builds frame `frame` into the idle chain. `overlay` may be NULL. */
 void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overlay);
 /* Sends env + clear + uploads + the geometry chain; returns immediately after starting VIF1. */
