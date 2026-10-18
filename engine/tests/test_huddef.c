@@ -106,7 +106,7 @@ static void walk_strings(const huddef_strings *st)
 {
 	uint32_t acc = 0, l, i, k, m;
 	uint16_t buf[8], big[64];
-	for (l = 0; l < (uint32_t)st->list_count + 1u; l++) {
+	for (l = 0; l < st->list_count + 1; l++) {
 		uint32_t n = huddef_list_size(st, l);
 		for (i = 0; i < n + 1; i++) {
 			uint32_t len = huddef_get_string(st, l, i, buf, 8);
@@ -117,7 +117,7 @@ static void walk_strings(const huddef_strings *st)
 			acc += huddef_get_string(st, l, i, NULL, 0) == len ? 1u : 0u;
 		}
 	}
-	for (l = 0; l < (uint32_t)st->set_count + 1u; l++)
+	for (l = 0; l < st->set_count + 1; l++)
 		for (m = 0; m < huddef_set_size(st, l) + 1; m++) {
 			uint32_t n = huddef_segment_count(st, l, m);
 			for (k = 0; k < n + 1; k++) {

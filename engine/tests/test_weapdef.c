@@ -915,7 +915,7 @@ static int check_real_weapon(const weap_section *s, const weap_weapon *w, int ta
 
 	if (table) {
 		const weap_trigger *tr = nfire ? &w->trigger[list[0]] : (w->trigger_count ? &w->trigger[0] : NULL);
-		char rate[64] = "-", mag[24] = "-", rel[16] = "-", spd[16] = "-", dmg[64] = "-";
+		char rate[40] = "-", mag[24] = "-", rel[16] = "-", spd[16] = "-", dmg[64] = "-";
 		weap_projectile p;
 		weap_damage d;
 		int pi;
