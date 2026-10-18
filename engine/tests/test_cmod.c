@@ -81,7 +81,7 @@ static void walk(const cmod_section *s, unsigned rays)
 			}
 		}
 		for (j = 0; j < (uint32_t)m.node_count + 1u; j++) { cmod_node n = cmod_get_node(&m, j); acc += (uint32_t)(n.region + 2) + (uint32_t)(n.parent + 2); }
-		for (j = 0; j < m.shape_count + 1; j++) {
+		for (j = 0; j < (uint32_t)m.shape_count + 1u; j++) {
 			cmod_shape sh = cmod_get_shape(&m, j);
 			if (j < m.shape_count && (sh.node >= m.node_count || sh.region >= m.region_count || sh.material >= m.material_count)) abort();
 			acc += sh.node + sh.region;
@@ -101,7 +101,7 @@ static void walk(const cmod_section *s, unsigned rays)
 			acc += cmod_sphere(&m, poses, c, frand(0.0f, 1.0f), j & 1 ? sel : NULL, &mask);
 		}
 	}
-	for (i = 0; i < s->object_count + 1; i++) {
+	for (i = 0; i < (uint32_t)s->object_count + 1u; i++) {
 		cmod_object o;
 		cmod_model m;
 		if (cmod_get_object(s, i, &o)) {
