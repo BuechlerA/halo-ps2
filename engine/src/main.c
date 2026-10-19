@@ -57,7 +57,7 @@ static float s_cine_light[3] = { 1.0f, 1.0f, 1.0f }, s_cine_amb = 1.0f;     /* c
 static obj_render_t s_objr;
 static hires_t s_hires;
 static int s_hires_open;
-static float s_cine_fxadd = 1.0f;
+static float s_cine_fxadd = 1.0f, s_cine_halo = 0.0f;
 static uint32_t s_hires_loads = 1;
 static float s_hires_px;
 static char s_hires_path[160];
@@ -537,7 +537,7 @@ int main(int argc, char *argv[])
 				s_fx.dbg = (int)cfg_int(&s_cfg, "fxdbg", 0);
 				s_fxr.fx = &s_fx; s_fxr.tex = &s_gd.fx_source;
 				s_fxr.key_base = bsp_render_reserve_keys(s_gd.fx_tex.tex.texture_count);
-				s_cine_fxadd = 0.55f; cfg_floats(&s_cfg, "fxadd", &s_cine_fxadd, 1);          /* additive particles in a cinematic: the engine bells saturate to white at 1.0 where the video keeps a blue tint (ADR-074) */
+				s_cine_fxadd = 0.55f; cfg_floats(&s_cfg, "fxadd", &s_cine_fxadd, 1); s_cine_halo = 0.5f; cfg_floats(&s_cfg, "fxhalo", &s_cine_halo, 1);          /* additive particles in a cinematic: the engine bells saturate to white at 1.0 where the video keeps a blue tint (ADR-074) */
 				s_fxr.add_gain = 1.0f; s_fxr.add_size = 1.0f; cfg_floats(&s_cfg, "fxaddsize", &s_fxr.add_size, 1);
 				s_fxr.enabled = (int)cfg_int(&s_cfg, "fx", 1); s_fxr.decals = (int)cfg_int(&s_cfg, "fxdecals", 1); s_fxr.particles = (int)cfg_int(&s_cfg, "fxparticles", 1);
 			}
@@ -749,6 +749,7 @@ int main(int argc, char *argv[])
 				for (lk = 0; lk < 3; lk++) s_objr.light_gain[lk] = cin ? s_cine_light[lk] : 1.0f;
 				s_objr.amb_gain = cin ? s_cine_amb : 1.0f;
 				s_fxr.add_gain = cin ? s_cine_fxadd : 1.0f;
+				s_fxr.halo = cin ? s_cine_halo : 0.0f;
 			}
 			if (cfg_int(&s_cfg, "widescreen", 0) == 2) {              /* debug: the horizontal field of view kept (70 degrees across the 16:9 picture) */
 				rcam.aspect = 16.0f / 9.0f;

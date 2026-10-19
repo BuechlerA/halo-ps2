@@ -112,6 +112,12 @@ void fx_render_pass(void *user, render_ctx_t *rc)
 		if (!tex0) { r->st_skipped++; continue; }
 		if (z > 0xFFFFFFu) z = 0xFFFFFFu;
 		spr_state(&spr, tex0, it->blend, 1);
+		if (r->halo > 0.0f && it->blend == SPR_BLEND_ADD && it->half >= 16.0f && !it->decal) {      /* the bloom: a wider, bluer, fainter copy under the sprite */
+			float h = it->half * 2.2f;
+			unsigned c0 = (unsigned)((float)(it->rgba & 0xFFu) * 0.35f * r->halo), c1 = (unsigned)((float)((it->rgba >> 8) & 0xFFu) * 0.65f * r->halo), c2 = (unsigned)((float)((it->rgba >> 16) & 0xFFu) * r->halo);
+			uint32_t hc = (c0 > 255u ? 255u : c0) | (c1 > 255u ? 255u : c1) << 8 | (c2 > 255u ? 255u : c2) << 16 | (it->rgba & 0xFF000000u);
+			spr_quad(&spr, it->cx - h, it->cy - h, it->cx + h, it->cy + h, it->u0 * (float)img.w, it->v0 * (float)img.h, it->u1 * (float)img.w, it->v1 * (float)img.h, z, hc);
+		}
 		spr_quad(&spr, it->cx - it->half, it->cy - it->half, it->cx + it->half, it->cy + it->half,
 		         it->u0 * (float)img.w, it->v0 * (float)img.h, it->u1 * (float)img.w, it->v1 * (float)img.h, z, it->rgba);
 		if (it->decal) r->st_decals++; else r->st_particles++;

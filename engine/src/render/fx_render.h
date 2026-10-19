@@ -13,6 +13,7 @@ typedef struct {
 	int                 enabled, decals, particles;
 	unsigned            st_particles, st_decals, st_skipped;
 	float               st_ms;
+	float               halo;                 /* big additive sprites get a wider blue copy of themselves at this strength (the Xbox bloom pass; cfg fxhalo, cinematics only) */
 	float               add_gain, add_size;   /* additive particles: colour and size multipliers (cfg fxadd, fxaddsize; 1.0) */
 } fx_render_t;
 
