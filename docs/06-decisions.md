@@ -589,5 +589,20 @@ the farthest batches in the busiest hangar frames (about 100 of 209 at tick 4980
 and forearm skin (the Xbox adds an environment reflection we do not draw), the random pick of crew jumpsuit colours (the Xbox's random numbers are not reproduced), the bloom of the engine exhaust, the glow of the
 planet at the bridge window, the bridge's cool colour cast.
 
+## ADR-065 Cut timing measured on the Xbox video, object draw order and Z, back faces of near surfaces, cube map layers, animation root motion
+**Decision**: (1) `camera_set` durations (`hs_host_misc.c camera_ticks`): the Xbox's director counts its remaining time down by speed x dt per update (XBE 0x120a90; `camera_time` = remaining x 30,
+0xed5e0), and the transitions the scripts wait for with `camera_time` last 200 -> 180, 300 -> 270, 180 -> 180 ticks in the bridge and cryo bay but 300 -> 295, 500 -> 481 in the hangar (BSP 8) in the
+Xbox video (ratio 0.90 light, 0.96 .. 0.98 heavy scenes: probably its frame time); other lengths take 0.9 (0.97 in the hangar). `sound_impulse_time` is the remaining time of the sound (XBE 0xef0a0): already so.
+With that every cut of the intro lies within a few ticks of the video's from tick 690 to 6980 (`scripts/paths/a10intro.cfg`, difficulty 3: the hangar and cryo scripts differ per difficulty and the video's cut times
+match the legendary branch). (2) Objects: visible objects are drawn nearest first (the batch budget runs out in busy scenes and must cost the far ones, not the highest indices), blended parts (alpha / additive,
+not alpha tested) never write Z and are drawn in a second pass far to near (`draw_model` pass 0 / 1): the command display's glass wrote Z in front of Keyes and hid him for 12 seconds. (3) The EE clip path drops
+the back faces of single-sided surfaces (`cull_sign`, orientation of the (x, y, w) rows, valid behind the eye; cfg `cullsign 0` turns it off): a camera inside a beam or wall (the hangar fly-in, the bridge window shot)
+saw its inside as a black screen. The VU1 path still draws back faces of triangles that need no clipping. (4) A transparent shader whose map is a cube map (cryo glass) is drawn as nothing (`texconv.blank_texture`)
+instead of flat white. (5) A scripted animation moves its unit by the animation's root motion (frame info dx, dy, dyaw; vertical motion ignored): `units.c custom_root_motion`.
+**Why**: the cut times drifted 20 .. 90 ticks over the intro against the video; Keyes was missing in the hologram briefing; two shots were black.
+**Consequences**: rebuild `a10.obj.hp2` / `a10.tex.hp2`. UNVERIFIED: the dependence of the camera ratio on the scene (three light and two heavy measurements), the cull sign on maps other than a10, root motion of
+non-unit objects (not done). Still different in the intro comparison: crew jumpsuit colours (random on the Xbox), the red alert lighting of the bridge (dynamic lights are not modelled), marine armour and skin, the
+hologram's cyan overlay on Keyes, steam and engine particle systems and light attachments (object attachments are not created), planet glow at the windows.
+
 ## Open decisions
 None.
