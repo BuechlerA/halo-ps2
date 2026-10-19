@@ -237,8 +237,44 @@ unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsig
 	return objects_pose_model_face(w, model, graph, anim, frame, root, out, NULL);
 }
 
+/* inverse(bind-pose world) of every node of a model, direct mapped by model index (BIND_CACHE entries, 64 nodes each): recomputing the bind chain and one inverse per node for every posed
+ * object was most of the cost of a pose. An entry is valid for one opening of the model section (its generation) and one model index; a colliding model replaces it. */
+#define BIND_CACHE 24
+static struct { uint32_t generation; int model; unsigned n; mat4 inv[SKEL_MAX_NODES]; } s_bind[BIND_CACHE];
+
+static const mat4 *bind_inverse(const object_world_t *w, int model, const model_info *mi, const int16_t *parent, unsigned n)
+{
+	unsigned i, e = (unsigned)model % BIND_CACHE;
+	if (s_bind[e].generation == w->models->generation && s_bind[e].model == model && s_bind[e].n == n) return s_bind[e].inv;
+	{
+		skel_xform bind[SKEL_MAX_NODES];
+		static mat4 def[SKEL_MAX_NODES];
+		mat4 ident;
+		for (i = 0; i < n; i++) {
+			model_node nd = model_get_node(w->models, mi, i);
+			memcpy(bind[i].rot, nd.rotation, sizeof bind[i].rot);
+			memcpy(bind[i].trans, nd.translation, sizeof bind[i].trans);
+			bind[i].scale = nd.scale;
+		}
+		mat4_identity(&ident);
+		if (skel_world(def, bind, parent, n, &ident) != 0) return NULL;
+		for (i = 0; i < n; i++) mat4_rigid_inverse(&s_bind[e].inv[i], &def[i]);
+		s_bind[e].generation = w->models->generation; s_bind[e].model = model; s_bind[e].n = n;
+	}
+	return s_bind[e].inv;
+}
+
+static unsigned pose_impl(const object_world_t *w, int model, int graph, unsigned anim, float frame,
+                          const mat4 *root, object_nodes_t *out, const object_face *face, int skin);
+
 unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, unsigned anim, float frame,
                                  const mat4 *root, object_nodes_t *out, const object_face *face)
+{
+	return pose_impl(w, model, graph, anim, frame, root, out, face, 1);
+}
+
+static unsigned pose_impl(const object_world_t *w, int model, int graph, unsigned anim, float frame,
+                          const mat4 *root, object_nodes_t *out, const object_face *face, int skin)
 {
 	model_info mi;
 	skel_xform local[SKEL_MAX_NODES];
@@ -274,23 +310,11 @@ unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, 
 	if (face && (face->emotion || face->talk)) apply_face(w, &mi, model, local, n, face);
 	if (n == 0) { out->count = 0; return 0; }
 	if (skel_world(out->world, local, parent, n, root) != 0) { out->count = 0; return 0; }
-	{
-		/* skinning matrices: vertices are stored in bind-pose model space (docs/11) */
-		skel_xform bind[SKEL_MAX_NODES];
-		static mat4 def[SKEL_MAX_NODES];
-		mat4 ident, inv;
-		for (i = 0; i < n; i++) {
-			model_node nd = model_get_node(w->models, &mi, i);
-			memcpy(bind[i].rot, nd.rotation, sizeof bind[i].rot);
-			memcpy(bind[i].trans, nd.translation, sizeof bind[i].trans);
-			bind[i].scale = nd.scale;
-		}
-		mat4_identity(&ident);
-		if (skel_world(def, bind, parent, n, &ident) != 0) { out->count = 0; return 0; }
-		for (i = 0; i < n; i++) {
-			mat4_rigid_inverse(&inv, &def[i]);
-			mat4_mul(&out->skin[i], &inv, &out->world[i]);
-		}
+	if (skin) {
+		/* skinning matrices: vertices are stored in bind-pose model space (docs/11); inverse(bind world) is constant per model, so it is kept (bind_inverse) */
+		const mat4 *inv = bind_inverse(w, model, &mi, parent, n);
+		if (!inv) { out->count = 0; return 0; }
+		for (i = 0; i < n; i++) mat4_mul(&out->skin[i], &inv[i], &out->world[i]);
 	}
 	out->count = n;
 	return n;
@@ -299,6 +323,11 @@ unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, 
 unsigned objects_pose(const object_t *o, const object_world_t *w, object_nodes_t *out)
 {
 	return objects_pose_model_face(w, o->model, o->graph, o->anim, o->frame, &o->root, out, &o->face);
+}
+
+unsigned objects_pose_world(const object_t *o, const object_world_t *w, object_nodes_t *out)
+{
+	return pose_impl(w, o->model, o->graph, o->anim, o->frame, &o->root, out, &o->face, 0);
 }
 
 unsigned objects_pose_static(const object_t *o, const object_world_t *w, object_nodes_t *out)

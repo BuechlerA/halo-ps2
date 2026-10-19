@@ -101,6 +101,8 @@ ignored unless the config had one).
 | `objanim 0/1`, `fpanim 0/1` | play idle animations on placed objects / on the first-person arms | 1, 1 |
 | `objhidden 1` | also spawn the placements scripts would create later (stress population) | 0 |
 | `objdist <wu>`, `objcap <n>` | object draw distance (units) and per-frame batch cap | 200, 900 |
+| `objfarpx <px>` | objects past `objdist` are still drawn when at least this many px across; none is cut by distance in a cinematic (ADR-077) | 20 |
+| `objtrace <first> <last> <step>` | debug: log every live object's cull inputs (`[obj] f ...`) for frames [first, last) every step frames | off |
 | `sky3d 0/1`, `skyfog 0/1` | draw the sky model from the object pack's `SKY0` section / take the world fog from the sky tag (ADR-029) | 1, 0 |
 | `game <prefix>` | gameplay mode: loads `<prefix>.{coll,cmod,unit,weap,ansm,hud,snd,fx}.hp2` (needs `obj`); the player replaces the free-fly camera | none |
 | `player x y z yaw` | player start (feet position, yaw in degrees); default: the `camera` pose lowered by the eye height | camera |

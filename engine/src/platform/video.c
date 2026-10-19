@@ -49,6 +49,13 @@ void video_add_setup_env(video_t *v, packet2_t *p)
 {
 	packet2_update(p, draw_setup_environment(p->next, 0, &v->fb[v->back], &v->z));
 	packet2_update(p, draw_primitive_xyoffset(p->next, 0, 2048 - VIDEO_WIDTH / 2, 2048 - VIDEO_HEIGHT / 2));
+	/* The colour buffer is 16 bit (5-5-5): ordered dithering (DTHE + the 4x4 matrix) turns the steps of a dark gradient (the space sky, fog, lightmaps) into fine noise.
+	 * Free on the GS: the dither is applied in the pixel pipeline when the 8-bit result is truncated. */
+	{
+		static const char matrix[16] = { -4, 2, -3, 3,   0, -2, 1, -1,   -3, 3, -4, 2,   1, -1, 0, -2 };
+		packet2_update(p, draw_dither_matrix(p->next, (char *)matrix));
+		packet2_update(p, draw_dithering(p->next, 1));
+	}
 }
 
 void video_add_clear(video_t *v, packet2_t *p, u8 r, u8 g, u8 b)

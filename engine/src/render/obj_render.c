@@ -347,6 +347,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	emit_model_setup(rc->chain, rc);
 	if (o->hires) hires_begin_frame(o->hires);
 	o->want_hi = 0;
+	o->frame_no++;
 
 	/* Visible objects are drawn nearest first: the batch budget runs out in busy scenes (the bridge sees 80 objects, the hangar's crowd among them) and the
 	 * objects that go missing must be the far ones, not the ones with the highest index (Keyes, index 508, vanished in the hologram shot). */
@@ -366,9 +367,16 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 			d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
 			dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
 			w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+			if (o->trace_hi > o->trace_lo && o->frame_no >= o->trace_lo && o->frame_no < o->trace_hi && (o->frame_no % o->trace_step) == 0 && dist < 3000.0f) {   /* cfg objtrace "first last step": every live object's cull inputs, to chase pop-in */
+				float dm = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
+				printf("[obj] f %u #%u def %d model %d type %d r %.2f dist %.1f w %.1f diam %.1f frustum %d\n", o->frame_no, i, (int)ob->def, (int)ob->model, (int)ob->type, (double)ob->radius, (double)dist, (double)w, (double)dm, frustum_sphere(rc->frustum, c, ob->radius));
+			}
 			if (o->dbg_obj == (int)i) printf("[dbg] obj %u dist %.2f radius %.2f w %.2f maxd %.1f frustum %d\n", i, (double)dist, (double)ob->radius, (double)w, (double)maxd, frustum_sphere(rc->frustum, c, ob->radius));
-			if (dist - ob->radius > maxd || !frustum_sphere(rc->frustum, c, ob->radius)) { o->st_culled++; continue; }
+			if (!frustum_sphere(rc->frustum, c, ob->radius)) { o->st_culled++; continue; }
 			diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
+			/* The draw distance only thins out small far objects: a big one (the Pelicans escorting the Pillar of Autumn: radius 12 at 100 .. 570 units, 20 .. 85 px) must not
+			 * blink out when its distance crosses `objdist`, and a cinematic camera has no draw distance at all (ADR-066). */
+			if (dist - ob->radius > maxd && diameter < o->far_px && !o->hide_fp) { o->st_culled++; continue; }
 			if (diameter < 3.0f && dist > ob->radius * 2.0f) { o->st_culled++; continue; }   /* sub-pixel clutter */
 			{
 				float key = dist - ob->radius;

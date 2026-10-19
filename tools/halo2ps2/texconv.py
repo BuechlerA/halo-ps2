@@ -86,7 +86,15 @@ MAX_TEX, MIN_TEX, MAX_MIPS = 256, 8, 4
 MAX_TEX_FORMAT = 512       # the TEXS format allows 512 on a side; the converter's default cap is MAX_TEX, only HERO_BITMAPS go above it (ADR-073)
 # Bitmaps (tag paths) of surfaces a cinematic shows large that a half resolution strip would smear: the a10 command wall's monitors (1024 x 256, three screens side by side)
 # get 512 x 128 instead of 256 x 64.
-HERO_BITMAPS = {"levels\\a10\\bitmaps\\monitors": 512}
+HERO_BITMAPS = {"levels\\a10\\bitmaps\\monitors": 512,
+                "scenery\\vehicles\\poa\\bitmaps\\poa-registry": 512}       # the Pillar of Autumn's name on its hull (1024 x 128): readable in the intro's flyby
+# Bitmaps (tag path prefixes) whose environment shader's bump map (a p8-bump height field) is baked into the colour map as fixed-light relief shading: the Xbox lights the
+# Pillar's hull plates through the bump map (dot3), which is what gives them their edges; here the lightmap is all there is, and a source that is a soft mottle magnified
+# looks like noise. BUMP_LIGHT = the direction the relief is lit from (texture space, towards the light), BUMP_STRENGTH how many source levels of height change one 1.0 of shade.
+BUMP_BAKE = ("scenery\\vehicles\\poa\\bitmaps\\",)
+BUMP_STRENGTH = 1.1
+BUMP_KEY = 1 << 41
+SENV_BUMP_MAP, SENV_BUMP_SCALE = 0x128, 0x124
 LM_BUDGET_BYTES = 512 * 1024         # per BSP, after conversion (see docs/09-tex-section.md)
 LM_DEFAULT_GAIN = 1.0
 CHROMA_STRENGTH = 0.4                # how much of the lightmap colour reaches the vertices and the object lighting (1.0 = all of it)
@@ -168,6 +176,7 @@ class ShaderInfo:
     change_source: int = 0               # colour change (objtex.py): 1..4 = the object's change colour a..d tints a second pass of the part
     mask_bitmap: int | None = None       # its mask: the blue channel of this bitmap becomes the alpha of the base map in that pass
     texture2: int = 0xFFFF               # the second pass's texture: the base map with the mask as alpha (NO_TEXTURE: none)
+    bump_bitmap_id: int | None = None    # an environment shader's bump map (a p8-bump height field), baked into the colour map for BUMP_BAKE bitmaps
     texture: int = NO_TEXTURE            # filled when the texture table is built
     tint: tuple = ()                     # objtex.TINT: rgb multiplier baked into the colour map
     reflect: tuple = ()                  # objtex.soso_reflect: (mask bitmap tag id, (r, g, b) added where the mask is 1): the environment reflection baked into the base map
@@ -229,6 +238,7 @@ def resolve_shader(m: MapData, shader_id: int) -> ShaderInfo:
                 info.flags |= BF_BLENDED_BASE
             info.blend = BLEND_ALPHA_TEST if info.alpha_test else BLEND_OPAQUE
             info.bitmap_id = _bitmap_ref(m, block, SENV_BASE_MAP)
+            info.bump_bitmap_id = _bitmap_ref(m, block, SENV_BUMP_MAP)
         elif e.group in ("sotr", "schi"):
             flags = _read(m.region, block + TRANSPARENT_FLAGS, "<B")[0]
             blend = _read(m.region, block + TRANSPARENT_BLEND, "<H")[0]
@@ -394,10 +404,13 @@ def alpha_class(rgba: bytes) -> int:
 # Colour reduction before the histogram: 5/6/5 bits of RGB (what DXT and R5G6B5 sources carry),
 # 4 bits of alpha when alpha is quantised too.
 MASK_RGB, MASK_RGBA = 0x00F8FCF8, 0xF0F8FCF8
+MASK_RGB8 = 0x00FFFFFF          # full precision: dark gradients (the space sky) band visibly when reduced to 5-6-5 first
 
 
-def _expand(key: int) -> tuple[int, int, int, int]:
-    """Reduced key -> 8-bit channels by bit replication (0xF8 -> 0xFF, so white stays white)."""
+def _expand(key: int, full: bool = False) -> tuple[int, int, int, int]:
+    """Reduced key -> 8-bit channels by bit replication (0xF8 -> 0xFF, so white stays white); a full precision key is the colour itself."""
+    if full:
+        return key & 0xFF, key >> 8 & 0xFF, key >> 16 & 0xFF, 255
     r, g, b, a = key & 0xF8, key >> 8 & 0xFC, key >> 16 & 0xF8, key >> 24 & 0xF0
     return r | r >> 5, g | g >> 6, b | b >> 5, a | a >> 4
 
@@ -412,9 +425,10 @@ class Quantiser:
     def __init__(self, hist: Counter, ncolours: int, mask: int):
         self.mask = mask
         self.use_alpha = mask == MASK_RGBA
+        self.full = mask == MASK_RGB8
         nch = 4 if self.use_alpha else 3
         self._nch = nch
-        boxes: dict[int, list] = {0: [(*_expand(k), n, k) for k, n in sorted(hist.items())]}
+        boxes: dict[int, list] = {0: [(*_expand(k, self.full), n, k) for k, n in sorted(hist.items())]}
         scores: dict[int, tuple[float, int]] = {}
 
         def rate(bid: int) -> None:
@@ -472,12 +486,41 @@ class Quantiser:
         self.rms = (sq / (tot * nch)) ** 0.5 if tot else 0.0
 
     def _classify(self, key: int) -> int:
-        c = _expand(key)
+        return self._classify_rgb(_expand(key, self.full))
+
+    def _classify_rgb(self, c) -> int:
         node = 0
         while node in self._cuts:
             ch, thr, lo, hi = self._cuts[node]
             node = lo if c[ch] < thr else hi
         return self._leaf[node]
+
+    def dithered(self, rgba: bytes, w: int, h: int) -> bytes:
+        """Floyd-Steinberg error diffusion of an opaque image onto the palette: the cut tree picks each texel's entry, the error against the
+        entry's colour goes to the neighbours (serpentine scan). Smooth gradients keep their tone instead of stepping between two entries."""
+        pal = self.palette
+        err = [[0.0] * (3 * w + 6), [0.0] * (3 * w + 6)]
+        out = bytearray(w * h)
+        for y in range(h):
+            cur, nxt = err[y & 1], err[(y + 1) & 1]
+            for i in range(len(nxt)):
+                nxt[i] = 0.0
+            xs = range(w) if y % 2 == 0 else range(w - 1, -1, -1)
+            d = 1 if y % 2 == 0 else -1
+            for x in xs:
+                o = 4 * (y * w + x)
+                e = 3 * x + 3
+                c = [min(255.0, max(0.0, rgba[o + k] + cur[e + k])) for k in range(3)]
+                idx = self._classify_rgb((int(c[0] + 0.5), int(c[1] + 0.5), int(c[2] + 0.5), 255))
+                out[y * w + x] = idx
+                p = pal[idx]
+                for k in range(3):
+                    q = c[k] - p[k]
+                    cur[e + 3 * d + k] += q * (7.0 / 16.0)
+                    nxt[e - 3 * d + k] += q * (3.0 / 16.0)
+                    nxt[e + k] += q * (5.0 / 16.0)
+                    nxt[e + 3 * d + k] += q * (1.0 / 16.0)
+        return bytes(out)
 
     def indices(self, keys: list[int]) -> bytes:
         cache = self._cache
@@ -619,7 +662,9 @@ def alpha_threshold(alphas: bytes) -> int:
     return max(16, min(128, best_t))
 
 
-def _level_indices(q: Quantiser, rgba: bytes, klass: int, alpha_ref: int) -> bytes:
+def _level_indices(q: Quantiser, rgba: bytes, klass: int, alpha_ref: int, dim: tuple | None = None) -> bytes:
+    if dim is not None:
+        return q.dithered(rgba, dim[0], dim[1])
     px = _to_px(rgba)
     idx = q.indices([p & q.mask for p in px])
     if klass == CLASS_PUNCH:             # index 0 is the transparent entry
@@ -628,14 +673,16 @@ def _level_indices(q: Quantiser, rgba: bytes, klass: int, alpha_ref: int) -> byt
 
 
 def convert_rgba(source_id: int, rgba: bytes, w: int, h: int, klass: int, force_bits: int = 0,
-                 alpha_ref: int = 128) -> Ps2Texture:
+                 alpha_ref: int = 128, smooth: bool = False) -> Ps2Texture:
     """RGBA8 image already at its target size -> PS2 texture. ``klass`` is CLASS_*;
     ``force_bits`` 0 picks PSMT8 or PSMT4 by error, 4 / 8 force it; ``alpha_ref`` is the
-    punch-through threshold (texels with alpha below it become the transparent entry)."""
+    punch-through threshold (texels with alpha below it become the transparent entry). ``smooth`` (opaque images only): the palette is built at
+    full colour precision and the indices are error diffused (sky gradients)."""
     if klass == CLASS_OPAQUE:
         rgba = _opaque(rgba)
     levels = mip_chain(rgba, w, h, klass != CLASS_OPAQUE)
-    mask = MASK_RGBA if klass == CLASS_BLEND else MASK_RGB
+    smooth = smooth and klass == CLASS_OPAQUE
+    mask = MASK_RGBA if klass == CLASS_BLEND else MASK_RGB8 if smooth else MASK_RGB
     px = _to_px(levels[0][2])
     hist = Counter(p & mask for p in px if klass != CLASS_PUNCH or p >> 24 >= alpha_ref)
     if not hist:                                         # fully transparent punch-through image
@@ -656,8 +703,8 @@ def convert_rgba(source_id: int, rgba: bytes, w: int, h: int, klass: int, force_
         avg = tuple(sum(c[i] for c in pal) // n for i in range(3))
         pal.insert(0, (*avg, 0))
     mips = []
-    for _lw, _lh, lrgba in levels:
-        idx = _level_indices(q, lrgba, klass, alpha_ref)
+    for lw, lh, lrgba in levels:
+        idx = _level_indices(q, lrgba, klass, alpha_ref, (lw, lh) if smooth else None)
         mips.append(_pad16(pack_nibbles(idx) if use4 else idx))
     entries = 16 if use4 else 256
     flags = {CLASS_PUNCH: TF_PUNCH, CLASS_BLEND: TF_BLEND}.get(klass, 0)
@@ -694,21 +741,53 @@ def colour_key_opaque(rgba: bytes, w: int, h: int) -> bytes:
     return bytes(out)
 
 
+def bump_img(m: MapData, s: "ShaderInfo") -> bitmaps.BitmapImage | None:
+    """The bump map of an environment shader whose base bitmap is in BUMP_BAKE, when it decodes."""
+    if s.group != "senv" or s.bump_bitmap_id is None or s.bitmap_id is None or not m.by_id[s.bitmap_id].path.startswith(BUMP_BAKE):
+        return None
+    try:
+        imgs = m.images(s.bump_bitmap_id)
+    except bitmaps.BitmapError:
+        return None
+    return imgs[0] if imgs and imgs[0].decodable else None
+
+
+def bake_relief(rgba: bytes, w: int, h: int, height: bytes, strength: float = BUMP_STRENGTH) -> bytes:
+    """Colour map x relief shade of a height field (one byte per texel, same size): the shade is 1 + strength x (height up-left - height down-right) / 255, so a plate edge
+    facing the light (up-left) brightens and the opposite edge darkens; clamped to 0.5 .. 1.7. Edges of the image clamp."""
+    out = bytearray(rgba)
+    for y in range(h):
+        ya, yb = max(0, y - 1) * w, min(h - 1, y + 1) * w
+        for x in range(w):
+            xa, xb = max(0, x - 1), min(w - 1, x + 1)
+            sh = 1.0 + strength * (height[ya + xa] - height[yb + xb]) / 255.0
+            sh = 0.5 if sh < 0.5 else 1.7 if sh > 1.7 else sh
+            o = 4 * (y * w + x)
+            for c in range(3):
+                v = int(out[o + c] * sh + 0.5)
+                out[o + c] = 255 if v > 255 else v
+    return bytes(out)
+
+
 def convert_texture(m: MapData, img: bitmaps.BitmapImage, source_id: int, klass_cap: int,
-                    force_bits: int = 0, key_opaque: bool = False) -> Ps2Texture:
+                    force_bits: int = 0, key_opaque: bool = False, bump: bitmaps.BitmapImage | None = None) -> Ps2Texture:
     """Decode, shrink and quantise one bitmap image. ``klass_cap`` is the strongest alpha class the
     shader allows: CLASS_OPAQUE drops alpha, CLASS_PUNCH thresholds it, CLASS_BLEND keeps it; the
     class actually used is the lesser of that and what the pixels contain."""
     tw, th = target_size(img.width, img.height, HERO_BITMAPS.get(m.by_id[source_id].path, MAX_TEX))
-    level = 1 if img.mip_count >= 1 and img.width >> 1 >= tw and img.height >> 1 >= th else 0
+    level = 1 if img.mip_count >= 1 and img.width >> 1 >= tw and img.height >> 1 >= th and bump is None else 0
     w, h, rgba = bitmaps.decode_level(img, m.pixels(img), level)
     if key_opaque and klass_cap == CLASS_PUNCH:
         rgba = colour_key_opaque(rgba, w, h)
+    if bump is not None:                                  # relief baked at the source resolution, then shrunk with the colour
+        bw, bh, brgba = bitmaps.decode_level(bump, m.pixels(bump), 0)
+        height = resample_plane(bytes(brgba[0::4]), bw, bh, w, h) if (bw, bh) != (w, h) else bytes(brgba[0::4])
+        rgba = bake_relief(bytes(rgba), w, h, height)
     found = alpha_class(rgba)
     klass = min(klass_cap, found)
     alpha_ref = alpha_threshold(rgba[3::4]) if klass == CLASS_PUNCH and found == CLASS_BLEND else 128
     rgba = resample_rgba(rgba, w, h, tw, th, klass != CLASS_OPAQUE)
-    tex = convert_rgba(source_id, rgba, tw, th, klass, force_bits, alpha_ref)
+    tex = convert_rgba(source_id, rgba, tw, th, klass, 8 if bump is not None else force_bits, alpha_ref, smooth=bump is not None)
     if img.width < MIN_TEX or img.height < MIN_TEX:
         tex.flags |= TF_UPSCALED
     return tex
@@ -1134,7 +1213,10 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
             continue
         cap = klass_cap_for(s)
         prod = sotr_product(m, s.shader_id)
+        bump = bump_img(m, s) if not prod else None
         key = (s.bitmap_id, cap) if not prod else (PRODUCT_KEY | prod[-1], cap)
+        if bump is not None:
+            key = (s.bitmap_id | BUMP_KEY, cap)
         if key not in seen:
             try:
                 if prod:
@@ -1142,7 +1224,7 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
                     tw, th = target_size(max(i.width for i in pimgs), max(i.height for i in pimgs))
                     tex = product_texture(m, pimgs, s.bitmap_id, max(tw, 32), max(th, 32))
                 else:
-                    tex = convert_texture(m, images[0], s.bitmap_id, cap, key_opaque=s.alpha_test)
+                    tex = convert_texture(m, images[0], s.bitmap_id, cap, key_opaque=s.alpha_test, bump=bump)
             except bitmaps.BitmapError as exc:
                 s.bitmap_id, s.flags, s.note = None, s.flags | BF_UNTEXTURED, f"base map failed to decode: {exc}"
                 reasons["base map failed to decode"] += 1

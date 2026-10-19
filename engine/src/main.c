@@ -420,6 +420,7 @@ int main(int argc, char *argv[])
 			s_objr.lod = &s_lod;
 			if (!cfg_int(&s_cfg, "objanim", 1)) { unsigned oi; for (oi = 0; oi < s_objects.count; oi++) s_objects.obj[oi].flags &= ~OBJ_F_ANIMATED; }
 			s_objr.max_distance = (float)cfg_int(&s_cfg, "objdist", 200);
+			s_objr.far_px = (float)cfg_int(&s_cfg, "objfarpx", 20);
 			s_objr.max_batches = (unsigned)cfg_int(&s_cfg, "objcap", 900);
 			s_objr.draw_objects = (int)cfg_int(&s_cfg, "objects", 1);
 			s_objr.draw_fp = (int)cfg_int(&s_cfg, "fp", 1);
@@ -428,6 +429,7 @@ int main(int argc, char *argv[])
 			s_objr.sky_model = -1;
 			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
+			{ float tr[3]; s_objr.trace_lo = s_objr.trace_hi = 0; s_objr.trace_step = 1; if (cfg_floats(&s_cfg, "objtrace", tr, 3) == 3 && tr[2] >= 1.0f) { s_objr.trace_lo = (unsigned)tr[0]; s_objr.trace_hi = (unsigned)tr[1]; s_objr.trace_step = (unsigned)tr[2]; } }
 			s_objr.unlit_add = (int)cfg_int(&s_cfg, "unlitadd", 1);
 			{
 				float v[3] = { 1.0f, 1.0f, 1.0f };

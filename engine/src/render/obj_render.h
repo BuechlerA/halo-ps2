@@ -20,6 +20,7 @@ typedef struct {
 	fpview_t             *fp;            /* first-person view (NULL: none) */
 	lodctl_t             *lod;           /* dynamic LOD controller (NULL: fixed quality) */
 	float                 max_distance;  /* draw distance in world units at quality level 0 */
+	float                 far_px;        /* objects past the draw distance are still drawn when they are at least this many pixels across (640 px scale; cfg objfarpx) */
 	unsigned              max_batches;   /* per-frame cap */
 	int                   draw_objects, draw_fp;
 	int                   hide_fp;             /* this frame: a cinematic runs or a script camera renders (set by main) */
@@ -29,6 +30,7 @@ typedef struct {
 	float                 sky_ms;        /* EE time of the sky pass */
 	float                 sky_rot[3];    /* extra sky rotation yaw, pitch, roll in radians (debug / calibration: config key skyrot) */
 	float                 sky_yaw0;                           /* extra yaw (radians) of the palette-0 sky only: cfg skyyaw in degrees */
+	unsigned              frame_no, trace_lo, trace_hi, trace_step;   /* cfg objtrace: log every object's cull inputs for frames [lo, hi) every `step` frames */
 	int                   dbg_obj;                           /* debug (cfg objdbg): log the visibility test of this object index each frame (-1 none) */
 	float                 sky_planet_gain;                   /* colour gain (1 .. 1.99) of the sky's non-additive parts (the planet): cfg skyplanet */
 	uint8_t               cc_perm[1280];                      /* per object index: the permutation of change colour a (0xFF = pick from the seed): cfg ccperm "obj:perm ..." */

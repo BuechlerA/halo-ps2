@@ -416,7 +416,7 @@ static int marker_world(const mission_t *M, const object_t *o, int marker, mat4 
 	{
 		model_info mi = model_get(M->ow.models, (uint32_t)o->model);
 		model_marker mk;
-		unsigned cnt = objects_pose(o, &M->ow, &nodes);
+		unsigned cnt = objects_pose_world(o, &M->ow, &nodes);
 		mat4 local;
 		if ((unsigned)marker >= mi.marker_count) return 0;
 		mk = model_get_marker(M->ow.models, &mi, (uint32_t)marker);
@@ -473,6 +473,11 @@ static int marker_by_names(const mission_t *M, const object_t *o, const char *a,
 	return mk >= 0 || !b ? mk : marker_index(M, o, b);
 }
 
+/* What a held weapon needs per tick, kept across ticks: the marker indices (a string search each) and, for a weapon with no animation of its own, the inverse of its grip
+ * marker in its own pose (a constant). Rebuilt when the unit's weapon slot or either model changes. */
+typedef struct { int slot; int32_t pmodel, cmodel; uint32_t serial; int pm, cm, have_inv; mat4 inv; } held_cache_t;
+static held_cache_t s_held_cache[UNIT_MAX];
+
 static void update_held_weapons(mission_t *M)
 {
 	mission_hostobj *h = &M->hobj;
@@ -483,8 +488,8 @@ static void update_held_weapons(mission_t *M)
 		int slot = h->held[ui] - 1;
 		object_t *po, *co;
 		weap_weapon wd;
-		mat4 hand, grip, inv, out;
-		int pm, cm;
+		mat4 hand, out;
+		held_cache_t *hc = &s_held_cache[ui];
 		if (!u->active || u->weapon < 0 || u->obj < 0 || is_player(M, u->obj) || !(po = obj_of(M, u->obj)) || po->model < 0
 		    || !weap_get_weapon(M->game->weap, (uint32_t)u->weapon, &wd)) {
 			if (slot >= 0 && mission_object_live(M, slot)) { M->objects->obj[slot].flags |= OBJ_F_HIDDEN; objects_destroy(M->objects, (unsigned)slot); }
@@ -501,15 +506,24 @@ static void update_held_weapons(mission_t *M)
 		}
 		co = &M->objects->obj[slot];
 		if (M->game->unit_state[u->obj].dead || (po->flags & OBJ_F_HIDDEN)) co->flags |= OBJ_F_HIDDEN; else co->flags &= ~OBJ_F_HIDDEN;
-		pm = marker_by_names(M, po, "right hand", NULL);
-		if (pm < 0 || !marker_world(M, po, pm, &hand)) continue;
-		cm = marker_by_names(M, co, "right hand", "primary trigger");
-		if (cm >= 0 && marker_world(M, co, cm, &grip)) {            /* the weapon's grip marker (in its own pose) lands on the hand */
+		if (hc->slot != slot + 1 || hc->pmodel != po->model || hc->cmodel != co->model || hc->serial != co->serial) {
+			hc->slot = slot + 1; hc->pmodel = po->model; hc->cmodel = co->model; hc->serial = co->serial;
+			hc->pm = marker_by_names(M, po, "right hand", NULL);
+			hc->cm = marker_by_names(M, co, "right hand", "primary trigger");
+			hc->have_inv = 0;
+			if (hc->cm >= 0 && !(co->flags & (OBJ_F_ANIMATED | OBJ_F_POSED))) {
+				mat4 gl;
+				co->root = (mat4){ { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } } };
+				if (marker_world(M, co, hc->cm, &gl)) { mat4_rigid_inverse(&hc->inv, &gl); hc->have_inv = 1; }
+			}
+		}
+		if (hc->pm < 0 || !marker_world(M, po, hc->pm, &hand)) continue;
+		if (hc->have_inv) {
+			mat4_mul(&out, &hc->inv, &hand);
+		} else if (hc->cm >= 0) {                                    /* the weapon's grip marker (in its own pose) lands on the hand */
 			mat4 gl;
 			co->root = (mat4){ { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } } };
-			marker_world(M, co, cm, &gl);
-			mat4_rigid_inverse(&inv, &gl);
-			mat4_mul(&out, &inv, &hand);
+			if (marker_world(M, co, hc->cm, &gl)) { mat4 inv; mat4_rigid_inverse(&inv, &gl); mat4_mul(&out, &inv, &hand); } else out = hand;
 		} else out = hand;
 		co->root = out;
 		co->pos[0] = out.m[3][0]; co->pos[1] = out.m[3][1]; co->pos[2] = out.m[3][2];

@@ -792,5 +792,29 @@ flagged objects) against the BSP from the object's position, takes the hit trian
 under it, not from a per cluster average. Not decoded: the scale of A (the lightmap's HDR range), the pixel / vertex shader that consumes the record, and `FUN_000523d0`'s ray set. Our probes (scenconv `cluster_lights`) average the cluster's lightmap; the cinematic gain of ADR-074 (2.5 / 2.3 / 2.6, ambient x 1.3) stays a fit
 for the missing HDR range; a faithful version would sample the lightmap under each object at run time (a downward ray into the BSP's lightmap pages, which the EE has) and apply 0.4 A + 0.03.
 
+## ADR-077 Intro fixes: size-aware draw distance (escorts blinked out), dithered sky and framebuffer, relief-baked Pillar hull, cheaper object posing
+(Numbered 077 because another branch already uses 076.)
+**Decision**: (1) `obj_render_pass` no longer culls an object only for being past `objdist` (200 units x the LOD controller's scale): the distance cut applies to objects smaller than
+`objfarpx` (20 px across on the 640 px scale) and not at all while a cinematic camera runs (`hide_fp`); the frustum test stays first and the sub-pixel test (3 px) stays. (2) The colour
+buffer is CT16S, so `video_add_setup_env` turns the GS dithering on (`DTHE`, 4x4 matrix); sky bitmaps (`objtex.convert_object_texture`) are quantised at full colour precision
+(`MASK_RGB8`, no 5-6-5 reduction before the median cut) and mapped with Floyd-Steinberg error diffusion (`Quantiser.dithered`, `texconv.convert_rgba(smooth=True)`). (3) The Pillar of
+Autumn's hull is BSP geometry of the `poa-*` environment shaders (512 x 512 sources, base map only; the Xbox lights them through their bump map, a p8-bump height field): for
+bitmaps under `texconv.BUMP_BAKE` the height field is baked into the colour map as fixed-light relief shading (`bake_relief`, light from the upper left, strength 1.1) at source
+resolution before the shrink, and the result is a 256 colour dithered texture; `poa-registry` (the ship's name, 1024 x 128) is a hero bitmap at 512 x 64. (4) `objects_pose_world` poses
+the node world matrices only; marker lookups (`marker_world`: held weapons, attachments, fx) and the collision poses (`game.c`) use it, and the skinning matrices of `objects_pose` use a
+per model cache of inverse bind matrices (`bind_inverse`, 24 entries, keyed by `model_section.generation`) instead of rebuilding the bind chain for every posed object. (5) `update_held_weapons`
+keeps the marker indices (a string search each) and, for a weapon with no animation of its own, the inverse grip matrix; the unused first grip pose is gone.
+**Why**: (1) trace of the intro (`objtrace "first last step"`, new): the three escort Pelicans (objects 499 .. 505, radius 12) sit 100 .. 570 units from the camera and cover 20 .. 110 px,
+so each blinked out whenever its distance crossed about 210 (only one of the three drew at tick 820); the same cut hid distant debris, ships and engines everywhere in cinematics
+(visible objects at ticks 600 .. 1100: 3 .. 11 before, 15 .. 25 after). (2) the nebula (128 x 128 source, magnified) showed large flat patches: a 5-bit framebuffer plus a 5-6-5 reduced palette
+turned a dark gradient into a few levels. (3) the hull textures are dark blocky mottle; the Xbox's crisp plate pattern is the bump map. (4)/(5) the mission tick's post hook cost 11.7 ms
+of every 33.3 ms frame (the bridge crew: 3 skeleton poses per armed unit, each with bind chain and an inverse per node).
+**Measured** (a10 mission, PCSX2 recompiler at SPEED=8, EE ms are the engine's own timers and only comparable run to run): post hook 11.67 -> 4.11 ms per tick; EE prep at frame 420 22.1 -> 14.2 ms,
+at 660 24.5 -> 16.7 ms (with the escorts and far objects drawn again: objects 5.6 ms at ticks 900 .. 960 against 4.4 before). GS cost of the dithering and of the 256 colour hull textures is
+unmeasured (PCSX2 does not model it; ADR-022). `a10.tex.hp2` grows 1.5 -> 1.8 MiB (hull textures PSMT8, registry 512 wide).
+**Consequences**: TEX and OBJ packs must be rebuilt (`scripts/build-world.sh a10`; sky textures are 256 colours with dithering, `a10.tex` has the baked hull). Other bump maps are not baked
+(`BUMP_BAKE` lists prefixes). New debug keys: `objtrace "first last step"` (every live object's cull inputs, `[obj]` lines), `objfarpx`.
+Still open: the hull is lit brighter and greener than the video's; the relief light direction is a guess (one fixed direction), the Xbox's dot3 follows the lightmap.
+
 ## Open decisions
 None.

@@ -84,6 +84,8 @@ void objects_tick(object_table_t *t, const object_world_t *w);
  * the matrix that takes bind-pose model-space vertices of node n to the world (what the palette uses). */
 typedef struct { mat4 world[SKEL_MAX_NODES]; mat4 skin[SKEL_MAX_NODES]; unsigned count; } object_nodes_t;
 unsigned objects_pose(const object_t *o, const object_world_t *w, object_nodes_t *out);
+/* The node world matrices only (out->skin is NOT filled): what marker lookups and collision poses need; skips the bind-pose chain and one inverse and one multiply per node. */
+unsigned objects_pose_world(const object_t *o, const object_world_t *w, object_nodes_t *out);
 /* Same for an arbitrary model/animation with an explicit root (first-person arms, weapons). */
 /* Model node i is driven by the graph node of the same NAME (ANIM v2 names); a model whose node order equals the
  * graph's maps 1:1, a node the graph does not name keeps its bind pose. The map is cached per (model, graph). */

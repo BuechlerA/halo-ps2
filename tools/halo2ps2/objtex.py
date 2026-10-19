@@ -402,7 +402,7 @@ def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_
     gain = SKY_GAIN.get(m.by_id[source_id].path)
     if gain:
         rgba = bytes(min(255, int(v * gain + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
-    tex = texconv.convert_rgba(source_id, rgba, tw, th, klass, 8 if sky or reflect else bits, alpha_ref)
+    tex = texconv.convert_rgba(source_id, rgba, tw, th, klass, 8 if sky or reflect else bits, alpha_ref, smooth=sky)
     if img.width < texconv.MIN_TEX or img.height < texconv.MIN_TEX:
         tex.flags |= texconv.TF_UPSCALED
     return tex

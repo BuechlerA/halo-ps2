@@ -37,6 +37,7 @@ typedef struct {
 	uint32_t       model_count, part_count, batch_count;
 	const uint8_t *models, *parts, *batches, *vif, *nodes, *markers, *ranges;
 	size_t         vif_size;
+	uint32_t       generation;                  /* counts model_open calls: caches keyed on a section (the bind-pose inverses) drop when it is reopened */
 } model_section;
 
 typedef struct {

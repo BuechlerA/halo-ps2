@@ -71,9 +71,11 @@ static int name_ok(const uint8_t *p) { return p[MODEL_NAME_LEN - 1] == 0; }
 
 model_status model_open(model_section *s, const uint8_t *d, size_t size)
 {
+	static uint32_t s_generation;
 	const uint8_t *tab[T_COUNT];
 	uint32_t cnt[T_COUNT];
 	memset(s, 0, sizeof *s);
+	s->generation = ++s_generation;
 	if (size < HEADER_SIZE) return MODEL_ERR_TRUNCATED;
 	if (memcmp(d, "MODL", 4) != 0) return MODEL_ERR_MAGIC;
 	if (rd16(d + 4) != 1) return MODEL_ERR_VERSION;

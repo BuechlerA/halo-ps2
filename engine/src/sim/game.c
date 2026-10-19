@@ -178,7 +178,7 @@ static const game_unit_t *unit_of(const game_t *g, int obj) { return (obj >= 0 &
 static int pose_object(const game_t *g, const object_t *o, const cmod_model *m, mat4 *out, unsigned max_nodes)
 {
 	object_nodes_t nodes;
-	unsigned n = objects_pose(o, &g->ow, &nodes), i;
+	unsigned n = objects_pose_world(o, &g->ow, &nodes), i;
 	for (i = 0; i < m->node_count && i < max_nodes; i++) out[i] = i < n ? nodes.world[i] : o->root;
 	return 1;
 }
