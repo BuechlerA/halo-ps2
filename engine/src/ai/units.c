@@ -259,6 +259,28 @@ static void play_anim(const game_t *g, unit_t *u, object_t *o, const ansm_graph 
 }
 
 /* ---- body, object sync ----------------------------------------------------------------------------------------------------- */
+/* A scripted animation moves its unit by the animation's own root motion (the tag's frame info, per frame, in the unit's frame): Halo's cinematic actors
+ * walk across the set that way (Keyes steps up to the hologram table in "well_thats_it_then"). The frames since the last tick are applied. */
+static void custom_root_motion(unit_t *u, const object_t *o, game_t *g)
+{
+	anim_graph ag;
+	int gi = o->graph, cur;
+	if (u->custom_anim < 0 || !g->ow.anims || gi < 0 || (unsigned)gi >= g->ow.anims->graph_count) return;
+	ag = anim_get_graph(g->ow.anims, (uint32_t)gi);
+	if ((unsigned)u->custom_anim >= ag.anim_count) return;
+	cur = (int)o->frame;
+	while (u->rm_frame < cur && u->rm_frame < 30000) {
+		float d[4], cy, sy;
+		u->rm_frame++;
+		anim_root_motion(g->ow.anims, &ag, (uint32_t)u->custom_anim, (uint32_t)u->rm_frame, d);
+		cy = cosf(u->body.yaw); sy = sinf(u->body.yaw);
+		u->body.pos[0] += cy * d[0] - sy * d[1];
+		u->body.pos[1] += sy * d[0] + cy * d[1];
+		u->body.pos[2] += d[2];
+		u->body.yaw += d[3];
+	}
+}
+
 static void sync_object(const unit_t *u, object_t *o)
 {
 	o->pos[0] = u->body.pos[0]; o->pos[1] = u->body.pos[1]; o->pos[2] = u->body.pos[2];
@@ -1061,6 +1083,7 @@ static void tick_unit(units_t *s, unit_t *u, game_t *g, object_t *o)
 			o->frame += u->custom_frame_scale - 1.0f;
 			if (o->frame < 0.0f) o->frame = 0.0f;
 		}
+		custom_root_motion(u, o, g);
 	} else anim_update(u, o, g, spd, turn_left);
 
 	u->prev_flags = c->flags;
@@ -1117,6 +1140,7 @@ unsigned units_custom_animation(units_t *s, game_t *g, int unit, int graph, int 
 	u->custom_graph = (int16_t)(gi == u->base_graph ? -1 : gi);
 	u->custom_anim = (int16_t)anim;
 	u->custom_frame_scale = frame_scale;
+	u->rm_frame = 0;
 	u->action = UA_CUSTOM;
 	u->action_ticks = hold ? HOLD_TICKS : (uint16_t)ticks;
 	u->event_at = 0; u->fire_hold = 0;

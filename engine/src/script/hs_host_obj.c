@@ -974,6 +974,7 @@ static int start_custom(mission_t *M, int slot, uint32_t graph_tag, const char *
 			unit_t *u = &M->units->u[ui];
 			unsigned skip = (unsigned)((float)frame / tps);
 			o->frame = (float)frame;
+			u->rm_frame = (int16_t)frame;                 /* the skipped frames do not move the unit */
 			u->action_ticks = (uint16_t)(skip < t ? t - skip : 1u);
 		}
 		return 1;

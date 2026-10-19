@@ -372,6 +372,7 @@ int main(int argc, char *argv[])
 			{ float sr[3]; if (cfg_floats(&s_cfg, "skyrot", sr, 3) == 3) { s_objr.sky_rot[0] = sr[0] * 0.01745329f; s_objr.sky_rot[1] = sr[1] * 0.01745329f; s_objr.sky_rot[2] = sr[2] * 0.01745329f; } }
 			s_objr.sky_model = -1;
 			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
+			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
 			{ float yv; s_objr.sky_yaw0 = cfg_floats(&s_cfg, "skyyaw", &yv, 1) == 1 ? yv * 0.01745329f : 0.0f; }
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
 			s_objr.sky_model2 = -1;
@@ -646,6 +647,25 @@ int main(int argc, char *argv[])
 			if (cfg_int(&s_cfg, "widescreen", 1)) {                 /* the Xbox renders 16:9 with the 4:3 vertical field of view kept: hfov grows (70 -> 86 degrees), the 512x448 buffer is anamorphic */
 				rcam.hfov = 2.0f * atanf(tanf(s_cam.hfov * 0.5f) * ((16.0f / 9.0f) / s_cam.aspect));
 				rcam.aspect = 16.0f / 9.0f;
+			}
+			if (s_have_objects && cfg_int(&s_cfg, "objlabel", 0)) {   /* debug: the index of every unit (type 1, 5, 2) at its projected position, to read colour-change picks off a frame */
+				float m[4][4];
+				unsigned oi;
+				text_batch_clear(&s_text);
+				camera_clip_matrix(&rcam, m);
+				for (oi = 0; oi < s_objects.count; oi++) {
+					const object_t *ob = &s_objects.obj[oi];
+					float c[4], x = ob->pos[0], y = ob->pos[1], z = ob->pos[2] + 0.8f;
+					char buf[12];
+					int k, sx, sy;
+					if (ob->model < 0 || ob->type != 1 || (ob->flags & (OBJ_F_FREE | OBJ_F_HIDDEN | OBJ_F_INACTIVE))) continue;
+					for (k = 0; k < 4; k++) c[k] = m[0][k] * x + m[1][k] * y + m[2][k] * z + m[3][k];
+					if (c[3] < 0.1f) continue;
+					sx = 256 + (int)(256.0f * c[0] / c[3]); sy = 224 - (int)(224.0f * c[1] / c[3]);
+					if (sx < 0 || sx > 500 || sy < 0 || sy > 440) continue;
+					snprintf(buf, sizeof buf, "%u", oi);
+					text_batch_print(&s_text, sx, sy, 0xFFFF00, buf);
+				}
 			}
 			bsp_render_build(frame, &rcam, &s_text);           /* overlaps the GS drawing frame-1 */
 		}
