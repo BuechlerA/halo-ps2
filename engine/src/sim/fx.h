@@ -35,12 +35,12 @@ typedef struct {
 } fx_decal;
 
 /* An object's attached particle system or looping effect (FXAT rows: object tag, attached tag, kind, marker). One instance per (object, row). */
-enum { FX_ATT_PCTL = 1, FX_ATT_EFFE = 2 };
+enum { FX_ATT_PCTL = 1, FX_ATT_EFFE = 2, FX_ATT_LIGH = 3 };
 typedef struct { uint32_t object_tag, tag; uint8_t kind; char marker[20]; } fx_attach_row;
 typedef struct {
 	uint8_t  active, seen, kind, init;
 	int16_t  key;                    /* object slot * 8 + row within the object */
-	uint16_t pctl;                   /* fxdef pctl index */
+	uint16_t pctl;                   /* fxdef pctl index (a light's table index for FX_ATT_LIGH) */
 	uint32_t tag;                    /* effect tag (FX_ATT_EFFE) */
 	uint8_t  state[FX_SYS_TYPES];
 	float    timer[FX_SYS_TYPES], acc[FX_SYS_TYPES];
@@ -53,6 +53,9 @@ typedef struct {
 	fx_decal    d[FX_MAX_DECALS];
 	fx_system   sys[FX_MAX_SYSTEMS];
 	const uint8_t *attach; uint32_t attach_count;      /* FXAT rows (32 bytes each) */
+	int         dbg;                 /* debug (cfg fxdbg 1): log light glows */
+	float       cam[3];              /* camera position of the last frame: light glows keep a minimum apparent size */
+	uint32_t    glow_tag;            /* tag id of the soft disc bitmap light attachments are drawn with (0xFFFFFFFF none) */
 	uint32_t    rng, next_decal;
 	unsigned    st_effects, st_particles, st_decals, st_dropped;
 	float       gravity;             /* world gravity, units/s^2 */
@@ -62,7 +65,7 @@ void fx_init(fx_t *f, const fxdef_section *def, float gravity_per_s2, uint32_t s
 /* Creates effect `tag` at `pos`; `dir` is the effect's forward axis (the surface normal for impacts, the firing direction for muzzle effects),
  * `surface` = 1 allows decals. Unknown tags are ignored. Returns the number of particles + decals created. */
 unsigned fx_spawn(fx_t *f, uint32_t effect_tag, const float pos[3], const float dir[3], int surface);
-/* FXAT section: 'FXAT', u32 version, u32 count, rows sorted by object tag. Returns 0 when it is malformed (no attachments then). */
+/* FXAT section: 'FXAT', u32 version 2, u32 count, u32 glow bitmap tag, rows sorted by object tag. Returns 0 when it is malformed (no attachments then). */
 int fx_set_attachments(fx_t *f, const uint8_t *data, size_t size);
 /* Attachments of an object tag: returns how many and the index of the first row. */
 unsigned fx_attachments_of(const fx_t *f, uint32_t object_tag, uint32_t *first);

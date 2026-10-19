@@ -163,11 +163,11 @@ static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] 
 int fx_set_attachments(fx_t *f, const uint8_t *data, size_t size)
 {
 	uint32_t n;
-	f->attach = NULL; f->attach_count = 0;
-	if (!data || size < 12 || memcmp(data, "FXAT", 4) != 0 || rd32(data + 4) != 1u) return 0;
+	f->attach = NULL; f->attach_count = 0; f->glow_tag = 0xFFFFFFFFu;
+	if (!data || size < 16 || memcmp(data, "FXAT", 4) != 0 || rd32(data + 4) != 2u) return 0;
 	n = rd32(data + 8);
-	if ((size - 12) / 32u < n) return 0;
-	f->attach = data + 12; f->attach_count = n;
+	if ((size - 16) / 32u < n) return 0;
+	f->attach = data + 16; f->attach_count = n; f->glow_tag = rd32(data + 12);
 	return 1;
 }
 
@@ -270,9 +270,43 @@ void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const 
 			int pi = fxdef_find_pctl(f->def, r.tag);
 			if (pi < 0) { s->active = 0; return; }
 			s->pctl = (uint16_t)pi;
+		} else if (r.kind == FX_ATT_LIGH) {
+			int li = fxdef_find_light(f->def, r.tag);
+			if (li < 0) { s->active = 0; return; }
+			s->pctl = (uint16_t)li;
 		}
 	}
 	s->seen = 1;
+	if (s->kind == FX_ATT_LIGH) {                          /* a light has no geometry: its glow is a soft additive disc at the marker (the Xbox adds a bloom pass) */
+		fxd_light L = fxdef_get_light(f->def, s->pctl);
+		fx_particle *p;
+		int gb = f->glow_tag != 0xFFFFFFFFu ? fxdef_find_bitmap(f->def, f->glow_tag) : -1;
+		float c[3], size;
+		unsigned i;
+		if (gb < 0 || !(p = alloc_particle(f))) return;
+		for (i = 0; i < 3; i++) c[i] = 0.55f * L.color_hi[1 + i] + 0.45f;           /* a bright light blooms towards white */
+		size = L.radius > 0.0f ? L.radius : 1.0f;
+		size = 0.12f * (size > 8.0f ? 8.0f : size) + 0.05f;       /* world units of half size: the light's radius is the reach of its light, the bloom is a small part of it */
+		{                                                          /* a bloom is a screen space effect: at a distance it keeps an apparent size (about 3 % of the distance, times the light's reach) */
+			float dx = pos[0] - f->cam[0], dy = pos[1] - f->cam[1], dz = pos[2] - f->cam[2], dist = sqrtf(dx * dx + dy * dy + dz * dz);
+			float apparent = 0.09f * dist * (0.6f + 0.4f * (L.radius > 4.0f ? 4.0f : L.radius));
+			if (apparent > size) size = apparent;
+			if (size > 90.0f) size = 90.0f;
+		}
+		memset(p, 0, sizeof *p);
+		p->active = 1; p->life = 2; p->age = 0;
+		{                                                          /* in front of the fixture by its own size, or the glow is half inside the nozzle's depth */
+			float dx = f->cam[0] - pos[0], dy = f->cam[1] - pos[1], dz = f->cam[2] - pos[2], dl = sqrtf(dx * dx + dy * dy + dz * dz), sh = size < 0.5f * dl ? size : 0.5f * dl;
+			float inv = dl > 1e-4f ? sh / dl : 0.0f;
+			p->pos[0] = pos[0] + dx * inv; p->pos[1] = pos[1] + dy * inv; p->pos[2] = pos[2] + dz * inv;
+		}
+		for (i = 0; i < 3; i++) { p->rgba[i] = (uint8_t)colour_byte(c[i] * 0.9f); p->rgba_end[i] = p->rgba[i]; }
+		p->rgba[3] = p->rgba_end[3] = f->dbg == 2 ? 0x80 : 0x70;
+		if (f->dbg == 2) { p->rgba[0] = p->rgba[1] = p->rgba[2] = 0x80; size = 20.0f; }
+		p->size0 = p->size1 = size;
+		p->bitmap = (uint16_t)gb; p->seq = 0; p->blend = 3;
+		return;
+	}
 	if (s->kind == FX_ATT_EFFE) {
 		if (s->cool > 0) s->cool--;
 		else { fx_spawn(f, s->tag, pos, dir, 0); s->cool = 75; }

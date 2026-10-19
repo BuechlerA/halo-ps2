@@ -580,9 +580,11 @@ class TagMemory:
 # object attachments (FXAT): the object tag's attachments block (+0x140 reflexive, 72 B each: +0x00 tag reference (group, path ptr, len, id), +0x10 char[32]
 # marker name, then the primary / secondary scale functions) [verified on a10 a30 b30: every reference resolves to a tag of its group on the 258 attachments;
 # groups ligh 144, lsnd 77, cont 28, effe 24, pctl 4, mgs2 1]. Kept: particle systems and effects (what the engine can draw).
-ATT_PCTL, ATT_EFFE = 1, 2
+ATT_PCTL, ATT_EFFE, ATT_LIGH = 1, 2, 3
+GLOW_BITMAP = "effects\\decals\\bullet holes\\bitmaps\\plasma burn outer glow"      # the soft disc the engine draws light attachments with
 OBJECT_GROUPS = ("scen", "vehi", "bipd", "mach", "ctrl", "lifi", "eqip", "weap", "garb", "proj", "ssce", "plac")
 ATTACH_OFF, ATTACH_SIZE = 0x140, 72
+STATIC_LIGHT_GROUPS = ("scen", "mach", "ctrl", "lifi", "ssce", "plac")
 
 
 def read_attachments(m: texconv.MapData) -> list[tuple[int, int, int, str]]:
@@ -600,9 +602,11 @@ def read_attachments(m: texconv.MapData) -> list[tuple[int, int, int, str]]:
             raw = m.region[a - m.base + k * ATTACH_SIZE:a - m.base + (k + 1) * ATTACH_SIZE]
             grp, tid = raw[:4][::-1].decode("latin1"), struct.unpack_from("<I", raw, 12)[0]
             t = m.by_id.get(tid)
-            if t is None or t.group != grp or grp not in ("pctl", "effe"):
+            if t is None or t.group != grp or grp not in ("pctl", "effe", "ligh"):
                 continue
-            out.append((e.tag_id, ATT_PCTL if grp == "pctl" else ATT_EFFE, tid, raw[0x10:0x30].split(b"\0")[0].decode("latin1")))
+            if grp == "ligh" and e.group not in STATIC_LIGHT_GROUPS:
+                continue                         # weapon / projectile / vehicle / unit lights are driven by functions (firing, headlights switch): not always on
+            out.append((e.tag_id, {"pctl": ATT_PCTL, "effe": ATT_EFFE, "ligh": ATT_LIGH}[grp], tid, raw[0x10:0x30].split(b"\0")[0].decode("latin1")))
     return sorted(out)
 
 
@@ -980,6 +984,12 @@ def collect(m: texconv.MapData, all_effects: bool = False) -> FxSet:
                     want_physics(pd.physics_tag)
     attach = read_attachments(m)
     for _o, kind, tid, _mk in attach:
+        if kind == ATT_LIGH:
+            if tid not in lights:
+                lights[tid] = parse_light(r, m.by_id[tid], problems, stats)
+            for e in m.index.entries:
+                if e.group == "bitm" and e.path == GLOW_BITMAP:
+                    want_bitmap(e.tag_id)
         if kind == ATT_PCTL and tid not in pctls:
             pc = parse_pctl(r, m.by_id[tid], problems, stats)
             pctls[tid] = pc
@@ -1437,12 +1447,17 @@ FXAT_MAGIC, FXAT_REC = b"FXAT", 32
 
 
 def build_attachments(fx: FxSet) -> bytes:
-    """FXAT: 'FXAT', u32 version 1, u32 count, then count x { u32 object tag, u32 attached tag, u8 kind, 3 pad, char[20] marker }, sorted by object tag.
+    """FXAT: 'FXAT', u32 version 2, u32 count, u32 tag id of the glow bitmap (0xFFFFFFFF none), then count x { u32 object tag, u32 attached tag, u8 kind, 3 pad, char[20] marker }, sorted by object tag.
     Only attachments whose tag is in the FXD0 (an effect or particle system that was converted) are kept."""
     have_e = {e.tag_id for e in fx.effects}
     have_p = {p.tag_id for p in fx.pctl}
-    rows = [a for a in fx.attach if (a[1] == ATT_PCTL and a[2] in have_p) or (a[1] == ATT_EFFE and a[2] in have_e)]
-    out = bytearray(FXAT_MAGIC + struct.pack("<II", 1, len(rows)))
+    have_l = {p.tag_id for p in fx.lights}
+    rows = [a for a in fx.attach if (a[1] == ATT_PCTL and a[2] in have_p) or (a[1] == ATT_EFFE and a[2] in have_e) or (a[1] == ATT_LIGH and a[2] in have_l)]
+    glow = NULL_ID
+    for b in fx.bitmaps:
+        if b.path == GLOW_BITMAP:
+            glow = b.tag_id
+    out = bytearray(FXAT_MAGIC + struct.pack("<III", 2, len(rows), glow))
     for obj, kind, tid, marker in rows:
         out += struct.pack("<IIB3x20s", obj, tid, kind, marker.encode("latin1")[:19])
     return bytes(out)

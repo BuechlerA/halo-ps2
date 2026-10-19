@@ -54,6 +54,7 @@ void fx_render_pass(void *user, render_ctx_t *rc)
 		if (!project(rc, p->pos, size, &it->cx, &it->cy, &it->half, &it->depth) || it->depth < 0.35f) continue;
 		if (it->half < 0.75f) it->half = 0.75f;
 		if (it->half > 40.0f) it->half = 40.0f;             /* effects are tuned for a third-person-ish camera: cap the near-camera blow-up */
+		if (it->cx + it->half < 0.0f || it->cx - it->half > (float)VIDEO_WIDTH || it->cy + it->half < 0.0f || it->cy - it->half > (float)VIDEO_HEIGHT) continue;   /* off screen: far coordinates wrap in the GS */
 		if (!fxdef_sprite(fx->def, p->bitmap, p->seq, (uint32_t)((float)p->age * p->anim_rate), &sp) || sp.texture == 0xFFFFu) continue;
 		it->sprite_tex = sp.texture; it->u0 = sp.u0; it->v0 = sp.v0; it->u1 = sp.u1; it->v1 = sp.v1;
 		it->rgba = (uint32_t)p->rgba[0] | (uint32_t)p->rgba[1] << 8 | (uint32_t)p->rgba[2] << 16 | (uint32_t)a << 24;
