@@ -288,7 +288,7 @@ def target_size(w: int, h: int, max_dim: int) -> tuple[int, int]:
 CORTANA_LAYER_SHADER = "characters\\cortana\\shaders\\cortana_body"
 CORTANA_LAYERS = (2, 3)
 STREAM_TINT = (3.0, 2.0, 3.0)
-HOLOGRAM_FILL = {"characters\\cortana\\bitmaps\\cortana_body": (14, 3, 34)}
+HOLOGRAM_FILL = {"characters\\cortana\\bitmaps\\cortana_body": (0, 0, 8)}
 BITMAP_OVERRIDE = {"characters\\cortana\\shaders\\cortana_body": "characters\\cortana\\bitmaps\\cortana_body",
                    "characters\\cortana\\shaders\\cortana_hair": "characters\\cortana\\bitmaps\\cortana_hair"}
 TINT = {"characters\\cortana\\shaders\\cortana_body": (1.63, 1.53, 1.80), "characters\\cortana\\shaders\\cortana_hair": (1.63, 1.53, 1.80)}
