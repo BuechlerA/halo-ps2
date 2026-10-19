@@ -1,4 +1,4 @@
-# `ANIM` section: converted `model_animations`, format version 1
+# `ANIM` section: converted `model_animations`, format version 2
 
 Converter `tools/halo2ps2/animconv.py` (writer, reference sampler), reader and sampler
 `engine/src/world/anim.c` (header `engine/src/world/anim.h`), tests `tools/tests/test_animconv.py` and
@@ -53,10 +53,11 @@ Full layouts are in the docstring of `tools/halo2ps2/animconv.py`. Summary:
 ## 4. Section layout
 
 ```
-0      header (64 B)   "ANIM" | u16 version = 1 | u16 0 | u32 graph_count | u32 anim_count | u32 graphs_off (64) |
+0      header (64 B)   "ANIM" | u16 version = 2 | u16 0 | u32 graph_count | u32 anim_count | u32 graphs_off (64) |
                        u32 anims_off | u32 pool_off (16-aligned) | u32 total size | zero
 64     graph  x G (32 B)   u32 tag_id | u16 node_count | u16 anim_count | u32 first_anim | u32 default_off |
-                       u32 model_tag (the model the rest pose came from, 0 = derived from the animations) | zero
+                       u32 model_tag (the model the rest pose came from, 0 = derived from the animations) |
+                       u32 names_off (version 2: node_count x 32 B node names in the pool, section 8) | zero
        anim   x A (96 B)   char[48] name | u16 type | u16 frame_count | u16 loop_frame | u16 flags | u16 node_count |
                        u16 root_type | u16 graph_nodes | 2 pad | f32 fps | u32 data_off | u32 data_bytes |
                        u32 root_off | u32 default_off | zero
@@ -166,7 +167,39 @@ at the end of `anim_info` and the function `anim_root_motion` (frame info is the
 animation; the Xbox stores it separately from the node tracks). Nothing else was changed. The hp2 section tag
 table in [07-hp2-format.md](07-hp2-format.md) should list `ANIM`.
 
-## 8. Verification
+## 8. Version 2: graph node names and the model-to-graph node map
+
+Version 1 assumed graph node i = model node i. That holds for every graph that has a model with the same node-list checksum
+(bipeds, vehicles, devices, scenery), but the first-person weapon graphs are assembled at runtime from the hands model and the
+weapon's first-person model, ordered breadth-first over the combined rig: the rifle graph (42 nodes) keeps the five gun nodes at
+indices 7, 18, 24, 25 and 31 between the hand nodes. Playing it with the version-1 rule gave every hand bone another bone's
+transform (the 2026-10-17 playtest review). Version 2 therefore stores the graph's node names: the graph record's bytes 20..23
+hold `names_off`, a pool offset of `node_count` x 32 B NUL-terminated names in graph order (graphs without a node block write
+empty names). The reader exposes `anim_node_name` / `anim_find_node`; `sim/objects.c` maps a model's nodes onto a graph by name
+once per (model, graph) pair (a 32-entry cache; a graph without names, or one whose order equals the model's, maps 1:1; a model
+node the graph does not name keeps its bind pose). The first-person weapon hangs from the hand node the graph names as the gun
+root's parent. Cost: about 60 KB more ANIM data on a10. ADR-056.
+
+## 9a. Face overlays (`stand emotions`, `stand talk`) and the MOUT section
+
+A talking unit's face is not in the cinematic animations (Keyes' `well_thats_it_then` animates 18 body nodes; its 16 `frame ...` face nodes are static at the rest pose): it is two OVERLAY animations (type 1) of the unit's own graph,
+played at run time by the Xbox. Verified on `characters\captain\captain` (34 nodes):
+* `stand emotions` (6 frames): the tag flags only the channels it drives as animated: rotation of the four eyelids and the jaw, translation of the brows, eyelids, lips and mouth corners; every other channel is the authoring pose and is not
+  the overlay's. The values are DELTAS (brow translations of 0 .. 4 mm, eyelid rotations of 0 .. 41 degrees about the node's local x, frame 0 = neutral). `unit_set_emotion unit n` (XBE 0x220df0: "-1 is none, other values depend on unit") is the frame index.
+  The a10 intro sets Keyes' emotion 3, then 5 (heavy lids: the stern stare of the briefing) and back to 3.
+* `stand talk` (1 frame): only the jaw rotation (6.5 degrees about the jaw's local z) is driven; the speaking unit scales it by the loudness of the line, one byte (0..255) per 30 Hz tick: the `snd!` permutation's MOUTH DATA (tag-data
+  reference at permutation +0x54; 293 bytes for the 9.76 s line `cor05b`, values in steps of 5).
+* Composition (VERIFIED by eye against the video, frames 2830 .. 2910 of the a10 intro): the overlay rotation multiplies the base rotation on the right (`base * overlay`, the overlay turns in the bone's own frame: the jaw opens, the lids drop);
+  `overlay * base` twists the lips sideways. Translations add. Nodes the overlay does not drive are untouched.
+
+`animconv.encode_animation(..., overlay=True)` (for `is_face_overlay`: type 1 named `stand emotions` / `stand talk`) writes only the driven channels (a single-frame channel as a static one, never the rest shortcut) and leaves every other channel
+mode 0 (default); `anim_overlay_modes()` reads the channel modes back as the mask (`ANIM_OV_ROT`, `ANIM_OV_TRANS`). Other type 1 animations (aim-still, device position, vehicle functions) are converted as before.
+`sim/objects.c objects_pose_model_face` composes the overlays onto the posed skeleton for objects whose `object_t.face` is set (`objects_set_face_graph` at `units_attach`: the graph has an emotions and/or a talk animation).
+
+MOUT (object pack, `tools/halo2ps2/mouthconv.py`, `engine/src/world/mouth.c`): `"MOUT"`, u16 version 1, u16 0, u32 count, u32 pool offset; count x (u32 snd! tag id, u16 variant, u16 length, u32 offset); the bytes. `variant` is the STRM variant
+(`streamconv`: one per chain head of each pitch range). `sound_impulse_start` with a unit as the source records the take and the start tick; `misc_tick` sets the unit's `face.talk` to byte `tick - start` every tick (0 when the line is over).
+
+## 9. Verification
 
 * `python3 -I tools/tests/test_animconv.py`: the compressed quaternion bit layout, quantisers, key reduction, a
   synthetic map (uncompressed and compressed animations, hinge/static/animated/scale channels, a node-less device

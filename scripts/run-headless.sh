@@ -35,6 +35,9 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/data/PCSX2/inis" "$WORK/run"
 cp "$DATA/inis/PCSX2.ini" "$WORK/data/PCSX2/inis/PCSX2.ini"
 sed -i '' -E 's/^HostFs = false/HostFs = true/' "$WORK/data/PCSX2/inis/PCSX2.ini"
+if [ -n "${SPEED:-}" ]; then          # development only: emulator speed scalar (timing statistics are then meaningless)
+	sed -i '' -E "s/^NominalScalar = .*/NominalScalar = $SPEED/" "$WORK/data/PCSX2/inis/PCSX2.ini"
+fi
 if [ "$INTERP" = 1 ]; then
 	sed -i '' -E '/^\[EmuCore\/CPU\/Recompiler\]/,/^\[/ s/^(Enable(EE|IOP|VU0|VU1)) = true/\1 = false/' "$WORK/data/PCSX2/inis/PCSX2.ini"
 fi
@@ -55,5 +58,5 @@ for ((i = 0; i < 20; i++)); do kill -0 "$PID" 2>/dev/null || break; sleep 0.25; 
 kill -9 "$PID" 2>/dev/null || true
 wait "$PID" 2>/dev/null || true
 [ -n "$LOG_OUT" ] && cp "$WORK/emu.log" "$LOG_OUT"
-grep -E 'halo-ps2|\[(prof|video|vu1|bsp|tex|vis|cfg|done|err|warn|pack|cam|mem|dbg|pad|obj)\]' "$WORK/emu.log" || {
+grep -E 'halo-ps2|\[(prof|video|vu1|bsp|tex|vis|cfg|done|err|warn|pack|cam|camset|near|sky|fx|mem|dbg|pad|obj|game|audio|fx|mission|stream|mc|bot)\]' "$WORK/emu.log" || {
 	echo "no engine output; tail of log:" >&2; tail -20 "$WORK/emu.log" >&2; exit 1; }

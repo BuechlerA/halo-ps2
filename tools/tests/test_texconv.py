@@ -70,6 +70,8 @@ def test_sizes() -> None:
         (256, 256), (128, 128), (32, 32), (8, 8), (8, 8), (8, 8)]
     assert tc.target_size(1024, 512) == (256, 128) and tc.target_size(2048, 64) == (256, 8)
     assert tc.target_size(1024, 1024) == (256, 256) and tc.target_size(512, 16) == (256, 8)
+    assert tc.target_size(1024, 256, 512) == (512, 128) and tc.target_size(2048, 256, 512) == (512, 64)    # a hero bitmap (ADR-073): the cap is the argument
+    assert tc.target_size(1024, 256) == (256, 64) and tc.MAX_TEX == 256 and tc.MAX_TEX_FORMAT == 512      # ordinary textures keep the 256 cap
     assert tc.mip_dims(256, 256) == [(256, 256), (128, 128), (64, 64), (32, 32)]       # max 4 levels
     assert tc.mip_dims(64, 64) == [(64, 64), (32, 32), (16, 16), (8, 8)]
     assert tc.mip_dims(128, 8) == [(128, 8)] and tc.mip_dims(16, 16) == [(16, 16), (8, 8)]
@@ -190,43 +192,58 @@ def test_lightmaps() -> None:
     assert tc.lightmap_size(128, 64) == (64, 32) and tc.lightmap_size(16, 8) == (8, 8)
     assert tc.lightmap_size(256, 256, 2) == (32, 32) and tc.lightmap_size(32, 32, 3) == (8, 8)
     page = tc.Rgba(64, 32, rgba_image(64, 32, lambda x, y: (x * 4, x * 4, x * 4, 255)))
-    lp = tc.convert_lightmap_page(3, page, 0, 1.0)      # explicit: the tool's default gain is a tunable
+    lp = tc.convert_lightmap_page(3, page, 0, 1.0, 1.0)      # explicit linear: the tool's default gain and curve are tunables
     assert (lp.index, lp.width, lp.height, lp.src_width) == (3, 32, 16, 64) and len(lp.pixels) == 512
     assert lp.pixels[0] <= 4
     assert lp.pixels[31] >= 240 and lp.pixels[0] < lp.pixels[16] < lp.pixels[31]
     assert lp.avg_luma == sum(lp.pixels) // len(lp.pixels) and lp.avg_rgba >> 24 == 255
-    boosted = tc.convert_lightmap_page(0, page, 0, 2.0)
+    boosted = tc.convert_lightmap_page(0, page, 0, 2.0, 1.0)
     assert abs(boosted.pixels[8] - 2 * lp.pixels[8]) <= 1 and max(boosted.pixels) == 255
-    tiny = tc.convert_lightmap_page(0, tc.Rgba(8, 8, bytes([9, 9, 9, 255]) * 64), 0, 1.0)
+    tiny = tc.convert_lightmap_page(0, tc.Rgba(8, 8, bytes([9, 9, 9, 255]) * 64), 0, 1.0, 1.0)
     assert (tiny.width, tiny.height, len(tiny.pixels)) == (8, 8, 64) and set(tiny.pixels) == {9}
 
 
+def test_lightmap_curve() -> None:
+    assert tc.lightmap_curve(100, 1.0, 1.0) == 100 and tc.lightmap_curve(200, 1.5, 1.0) == 255
+    # the curve: the white point maps to 127 x gain, darker texels follow a power law and stay above the linear ramp at low light
+    assert tc.lightmap_curve(int(tc.LM_WHITE), 1.0) == 127 and tc.lightmap_curve(255, 1.0) == 127
+    assert tc.lightmap_curve(int(tc.LM_WHITE), 1.5) in (190, 191) and tc.lightmap_curve(0, 1.5) == 0
+    quarter = tc.lightmap_curve(int(tc.LM_WHITE / 4), 1.0)
+    assert abs(quarter - 127 * 0.25 ** tc.LM_GAMMA) <= 1 and quarter > 127 // 4
+
+
 def test_vertex_chroma() -> None:
+    full = lambda page, uv: tc.vertex_chroma(page, uv, 1.0)     # strength 1: the exact page chroma
     grey = tc.Rgba(4, 4, bytes([100, 100, 100, 255]) * 16)
-    assert tc.vertex_chroma(grey, (0.3, 0.7)) == (128, 128, 128)
+    assert full(grey, (0.3, 0.7)) == (128, 128, 128)
     red = tc.Rgba(2, 2, bytes([160, 100, 100, 255]) * 4)
-    r, g, b = tc.vertex_chroma(red, (0.5, 0.5))
+    r, g, b = full(red, (0.5, 0.5))
     y = 0.299 * 160 + 0.587 * 100 + 0.114 * 100
     assert all(abs(a - e) <= 1 for a, e in zip((r, g, b), (160 / y * 128, 100 / y * 128, 100 / y * 128)))
     assert r > 128 > g == b
     # the tint is luminance independent: halving the brightness leaves the chroma unchanged
     dark = tc.Rgba(2, 2, bytes([80, 50, 50, 255]) * 4)
-    assert all(abs(a - b) <= 1 for a, b in zip(tc.vertex_chroma(dark, (0.5, 0.5)), (r, g, b)))
+    assert all(abs(a - b) <= 1 for a, b in zip(full(dark, (0.5, 0.5)), (r, g, b)))
     # saturated colours clamp to 255, black is neutral
-    assert tc.vertex_chroma(tc.Rgba(1, 1, bytes([200, 50, 50, 255])), (0.5, 0.5))[0] == 255
+    assert full(tc.Rgba(1, 1, bytes([200, 50, 50, 255])), (0.5, 0.5))[0] == 255
     blue = tc.Rgba(2, 2, bytes([0, 0, 255, 255]) * 4)
-    assert tc.vertex_chroma(blue, (0.5, 0.5)) == (0, 0, 255)
-    assert tc.vertex_chroma(tc.Rgba(2, 2, bytes(16)), (0.5, 0.5)) == (128, 128, 128)
+    assert full(blue, (0.5, 0.5)) == (0, 0, 255)
+    assert full(tc.Rgba(2, 2, bytes(16)), (0.5, 0.5)) == (128, 128, 128)
     # bilinear between a black-free pair of texels, and uv outside 0..1 clamps to the edge texel
     two = tc.Rgba(2, 1, bytes([200, 100, 100, 255, 100, 100, 200, 255]))
-    left, right = tc.vertex_chroma(two, (-5.0, 0.5)), tc.vertex_chroma(two, (9.0, 0.5))
-    assert left[0] > left[2] and right[2] > right[0] and left == tc.vertex_chroma(two, (0.0, 0.0))
-    mid = tc.vertex_chroma(two, (0.5, 0.5))                     # exactly between the texel centres
+    left, right = full(two, (-5.0, 0.5)), full(two, (9.0, 0.5))
+    assert left[0] > left[2] and right[2] > right[0] and left == full(two, (0.0, 0.0))
+    mid = full(two, (0.5, 0.5))                     # exactly between the texel centres
     assert abs(mid[0] - mid[2]) <= 1 and right[2] > mid[2] > left[2] and left[0] > mid[0] > right[0]
-    assert tc.vertex_chroma((2, 2, bytes([90, 90, 90, 255]) * 4), (0.1, 0.9)) == (128, 128, 128)   # plain tuple
+    assert full((2, 2, bytes([90, 90, 90, 255]) * 4), (0.1, 0.9)) == (128, 128, 128)   # plain tuple
 
 
 # ---- sections ------------------------------------------------------------------------------
+    # the default strength pulls the tint towards neutral (the a10 lightmaps are amber, the Xbox walls are not)
+    soft = tc.vertex_chroma(red, (0.5, 0.5))
+    assert 128 < soft[0] < r and g < soft[1] <= 128 and tc.CHROMA_STRENGTH < 1.0
+    assert abs(soft[0] - (128 + tc.CHROMA_STRENGTH * (r - 128))) <= 1
+
 def fixture() -> tuple[bytes, bytes, list[tc.Ps2Texture], list[tc.ShaderInfo], list[tc.LightmapPage]]:
     t0 = tc.convert_rgba(0xE1780001, rgba_image(16, 16, many_colours), 16, 16, tc.CLASS_OPAQUE, 8)
     punch = rgba_image(32, 32, lambda x, y: (0, 0, 0, 0) if x < 16 else (200, 40, 40, 255))
@@ -239,8 +256,8 @@ def fixture() -> tuple[bytes, bytes, list[tc.Ps2Texture], list[tc.ShaderInfo], l
         tc.ShaderInfo(0xE1740002, None, "c", flags=tc.BF_UNTEXTURED),
         tc.ShaderInfo(0xE1740020, "sgla", "d", bitmap_id=0xE1780003, blend=tc.BLEND_ALPHA, texture=2),
     ]
-    pages = [tc.convert_lightmap_page(0, tc.Rgba(64, 32, rgba_image(64, 32, lambda x, y: (x * 4, x * 4, x * 4, 255)))),
-             tc.convert_lightmap_page(2, tc.Rgba(16, 16, bytes([90, 90, 90, 255]) * 256))]
+    pages = [tc.convert_lightmap_page(0, tc.Rgba(64, 32, rgba_image(64, 32, lambda x, y: (x * 4, x * 4, x * 4, 255))), 0, 1.0, 1.0),
+             tc.convert_lightmap_page(2, tc.Rgba(16, 16, bytes([90, 90, 90, 255]) * 256), 0, 1.0, 1.0)]
     return tc.build_texs([t0, t1, t2], shaders), tc.build_lmap(pages, 1.0), [t0, t1, t2], shaders, pages
 
 
@@ -272,7 +289,7 @@ def test_sections() -> None:
     to, bo = tc.HEADER_SIZE, tc.HEADER_SIZE + 3 * tc.TEXTURE_REC
     bad = [blob[:30], blob[:-16], b"NOPE" + blob[4:], flip(4, 2, 2), flip(8, 0x20000, 4), flip(12, 0x20000, 4),
            flip(16, 4, 4), flip(20, 4000, 4), flip(24, 4, 4), flip(28, len(blob) + 16, 4),
-           flip(to + 8, 0x12), flip(to + 4, 17, 2), flip(to + 4, 512, 2), flip(to + 9, 0), flip(to + 9, 5),
+           flip(to + 8, 0x12), flip(to + 4, 17, 2), flip(to + 4, 1024, 2), flip(to + 9, 0), flip(to + 9, 5),
            flip(to + 12, 1024, 4), flip(to + 16, 0, 4), flip(to + 20, len(blob), 4), flip(to + 24, 7, 4),
            flip(bo, 0xE1740030, 4), flip(bo + 32 + 4, 9, 2), flip(bo + 4, 7, 2)]
     for n, b in enumerate(bad):
@@ -308,7 +325,8 @@ def synthetic_map(tmp: Path) -> tuple[tc.MapData, dict[str, int]]:
             ("senv", "levels\\t\\shaders\\selfillum", 836),
             ("sotr", "levels\\t\\shaders\\light", 108 + 100), ("schi", "levels\\t\\shaders\\river", 108 + 220),
             ("sgla", "levels\\t\\shaders\\glass", 480), ("swat", "levels\\t\\shaders\\water", 624),
-            ("smet", "levels\\t\\shaders\\meter", 100), ("sotr", "levels\\t\\shaders\\nomaps", 108)]
+            ("smet", "levels\\t\\shaders\\meter", 100), ("sotr", "levels\\t\\shaders\\nomaps", 108),
+            ("schi", "levels\\t\\shaders\\sky", 108 + 3 * 220), ("schi", "levels\\t\\shaders\\river2", 108 + 2 * 220)]
     region = bytearray(tagindex.TagIndex.build(tags))
     idx = tagindex.TagIndex.parse_region(bytes(region), 0)
     ent = {e.path.split("\\")[-1]: e for e in idx.entries}
@@ -341,6 +359,22 @@ def synthetic_map(tmp: Path) -> tuple[tc.MapData, dict[str, int]]:
     struct.pack_into("<II", region, r + 0x54, 1, ent["river"].data_address + 108)
     struct.pack_into("<ff", region, r + 108 + 0x54, 2.0, 4.0)
     ref(r + 108 + 0x6C, "base")
+    k = off("sky")                         # schi, 3 maps: mask x3 (multiply, alpha current), stars x16x10 (add), backdrop x1
+    struct.pack_into("<BBHH", region, k + 0x28, 0, 0, 0, 0)
+    struct.pack_into("<II", region, k + 0x54, 3, ent["sky"].data_address + 108)
+    for i, (cf, af, su, sv, bm) in enumerate(((2, 0, 3.0, 3.0, "base"), (4, 4, 16.0, 10.0, "cube"), (0, 0, 1.0, 1.0, "base"))):
+        mo = k + 108 + i * 220
+        struct.pack_into("<HH", region, mo + 0x2C, cf, af)
+        struct.pack_into("<ff", region, mo + 0x54, su, sv)
+        ref(mo + 0x6C, bm)
+    r2 = off("river2")                     # schi, 2 maps: colour+alpha mask (multiply, alpha multiply) x1, water x1x4
+    struct.pack_into("<BBHH", region, r2 + 0x28, 0, 0, 0, 0)
+    struct.pack_into("<II", region, r2 + 0x54, 2, ent["river2"].data_address + 108)
+    for i, (cf, af, su, sv, bm) in enumerate(((2, 2, 1.0, 1.0, "cube"), (3, 3, 1.0, 4.0, "base"))):
+        mo = r2 + 108 + i * 220
+        struct.pack_into("<HH", region, mo + 0x2C, cf, af)
+        struct.pack_into("<ff", region, mo + 0x54, su, sv)
+        ref(mo + 0x6C, bm)
     gl = off("glass")
     struct.pack_into("<f", region, gl + 0x154, 6.0)
     ref(gl + 0x158, "base")
@@ -373,6 +407,11 @@ def test_shaders() -> None:
         river = tc.resolve_shader(m, ids["river"])
         assert river.uv_scale == (2.0, 4.0) and river.bitmap_id == ids["base"] and river.blend == tc.BLEND_ALPHA
         assert tc.klass_cap_for(river) == tc.CLASS_BLEND
+        sky = tc.resolve_shader(m, ids["sky"])          # the mask is skipped, the x1 backdrop beats the x16 stars
+        assert sky.bitmap_id == ids["base"] and sky.uv_scale == (1.0, 1.0) and tc.chicago_base_map(m, m.tag_off(m.by_id[ids["sky"]]) + 108, 3) == 2
+        assert tc.chicago_base_map(m, m.tag_off(m.by_id[ids["sky"]]) + 108, 2) == 1        # with only mask + stars: the stars
+        river2 = tc.resolve_shader(m, ids["river2"])    # a modulator that supplies the alpha stays the base
+        assert river2.bitmap_id == ids["cube"] and river2.uv_scale == (1.0, 1.0)
         glass = tc.resolve_shader(m, ids["glass"])
         assert glass.bitmap_id == ids["base"] and glass.uv_scale == (6.0, 6.0) and glass.blend == tc.BLEND_ALPHA
         water = tc.resolve_shader(m, ids["water"])
@@ -474,6 +513,33 @@ def test_real_map() -> None:
     assert tot > 1000 and bad <= tot * 0.01, (bad, tot)
 
 
+def test_wide_texture_format() -> None:
+    """The TEXS format holds textures up to 512 on a side (hero bitmaps, ADR-073); 1024 is refused by the reader."""
+    w, h = 512, 128
+    rgba = bytes(v for y in range(h) for x in range(w) for v in ((x * 7) & 255, (y * 3) & 255, 90, 255))
+    tex = tc.convert_rgba(0x4242, rgba, w, h, tc.CLASS_OPAQUE, 8)
+    assert (tex.width, tex.height, tex.psm) == (512, 128, tc.PSMT8) and len(tex.mips) == 4
+    view = tc.parse_texs(tc.build_texs([tex], []))
+    assert (view.textures[0]["width"], view.textures[0]["height"]) == (512, 128)
+    big = tc.convert_rgba(0x4243, bytes(1024 * 8 * 4), 1024, 8, tc.CLASS_OPAQUE, 8)
+    try:
+        tc.parse_texs(tc.build_texs([big], []))
+    except tc.TexError:
+        pass
+    else:
+        raise AssertionError("a 1024 wide texture was accepted")
+
+
+def test_product() -> None:
+    white, blue = bytes([255, 255, 255, 255] * 4), bytes([0, 0, 128, 255] * 4)
+    out = tc.multiply_normalise([white, white, blue])
+    assert out == bytes([0, 0, 255, 255] * 4), out                 # blue stays blue and is brought to full range
+    half = bytes([128, 128, 128, 7] * 2)
+    out = tc.multiply_normalise([half, half])
+    assert out[:4] == bytes([255, 255, 255, 255]) and len(out) == 8   # 128 * 128 / 255 = 64 -> peak 255, alpha forced opaque
+    assert tc.multiply_normalise([bytes(8)]) == bytes([0, 0, 0, 255] * 2)    # black stays black without dividing by zero
+
+
 def main() -> None:
     test_clut()
     test_sizes()
@@ -481,9 +547,12 @@ def main() -> None:
     test_quantiser()
     test_convert()
     test_lightmaps()
+    test_lightmap_curve()
     test_vertex_chroma()
     test_sections()
     test_shaders()
+    test_product()
+    test_wide_texture_format()
     test_scan_bsp()
     test_real_map()
     print("ok")

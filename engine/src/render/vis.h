@@ -20,6 +20,7 @@ typedef struct {
 	uint32_t  cluster_count;
 	int       camera_cluster;    /* -1: outside the map */
 	int       sky_visible;
+	int       sky_index;         /* sky palette entry of the camera cluster (else of the first visible cluster with a sky); 0 when none */
 	int       force_all;         /* debug: skip portal traversal, test every cluster against the frustum */
 	/* statistics */
 	uint32_t  triangles, batches_tested, batches_culled, portals_tested, portals_passed;

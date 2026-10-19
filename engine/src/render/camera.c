@@ -7,10 +7,10 @@
 void camera_init(camera_t *c)
 {
 	c->pos[0] = c->pos[1] = c->pos[2] = 0.0f;
-	c->yaw = c->pitch = 0.0f;
+	c->yaw = c->pitch = c->roll = 0.0f;
 	c->hfov = 70.0f * PI_F / 180.0f;
 	c->aspect = 4.0f / 3.0f;
-	c->near_z = 0.05f;
+	c->near_z = CAMERA_NEAR_DEFAULT;
 	c->far_z = 2000.0f;
 }
 
@@ -30,6 +30,11 @@ void camera_basis(const camera_t *c, float right[3], float up[3], float fwd[3])
 	fwd[0] = cp * cy;   fwd[1] = cp * sy;   fwd[2] = sp;
 	right[0] = sy;      right[1] = -cy;     right[2] = 0.0f;     /* +y is left in Halo */
 	up[0] = -sp * cy;   up[1] = -sp * sy;   up[2] = cp;
+	if (c->roll != 0.0f) {                                   /* bank about the view axis: Rz(yaw) Ry(-pitch) Rx(roll), x forward */
+		float cr = cosf(c->roll), sr = sinf(c->roll), r0[3] = { right[0], right[1], right[2] };
+		int i;
+		for (i = 0; i < 3; i++) { right[i] = cr * r0[i] - sr * up[i]; up[i] = sr * r0[i] + cr * up[i]; }
+	}
 }
 
 void camera_move(camera_t *c, float forward, float strafe, float rise)

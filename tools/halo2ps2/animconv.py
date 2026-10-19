@@ -117,13 +117,16 @@ because their node list is assembled at runtime / the model is elsewhere). Objec
 model at +0x28 and the graph at +0x38 (tag reference: 4 group, 4 path pointer, 4 length, 4 tag id).
 
 =====================================================================================================
-`ANIM` section format, version 1 (little endian, offsets from the section start; docs/12-anim-section.md)
+`ANIM` section format, version 2 (little endian, offsets from the section start; docs/12-anim-section.md)
 =====================================================================================================
-    header (64 B)  "ANIM", u16 version 1, u16 flags 0, u32 graph_count, u32 anim_count, u32 graphs_off,
+    header (64 B)  "ANIM", u16 version 2, u16 flags 0, u32 graph_count, u32 anim_count, u32 graphs_off,
                    u32 anims_off, u32 pool_off, u32 total size, zero to 64
     graph (32 B)   u32 tag_id, u16 node_count, u16 anim_count, u32 first_anim, u32 default_off (pool
                    offset of node_count x 32 B anim_xform floats: x y z w, tx ty tz, scale), u32 model tag
-                   id the rest pose was read from (0 = none: derived from animation data), zero to 32
+                   id the rest pose was read from (0 = none: derived from animation data), u32 names_off (pool
+                   offset of node_count x 32 B NUL-terminated node names in graph order; version 2: the engine
+                   maps a model's nodes onto a graph by name, so a graph may order nodes differently from the
+                   model, as the first-person weapon graphs do), zero to 32
     anim (96 B)    char[48] name, u16 type, u16 frame_count, u16 loop_frame, u16 flags, u16 node_count,
                    u16 root motion type (0..3 like `frame info type`; 0 = none or all zero), u16 node count of
                    the graph, 2 pad, f32 fps, u32 data_off, u32 data_bytes (pool-relative blob), u32 root_off
@@ -154,6 +157,9 @@ model at +0x28 and the graph at +0x38 (tag reference: 4 group, 4 path pointer, 4
                 sqrt(1 - sum of squares).
     root motion block: f32 scale[4], then frame_count x k x s16 (k = 2, 3, 4 components dx dy [dz] dyaw),
         padded to 4 bytes; component = s16 / 32767 * scale[component]
+    anim flags: 1 loops, 2 world relative, 4 STUB (only with build_section(..., animations_needed=...): the animation
+    keeps its name, frame count and loop flags but has no pose data, every channel is mode 0 = the rest pose; the
+    ASTB section of ansmconv.py references only the animations it names, see docs/19-ansm-section.md)
     Sampling (anim.c / `Section.sample`): frame f in [0, frame_count - 1] is evaluated by locating the key
     segment of each track (dense: floor(f); keyed: binary search) and interpolating linearly (nlerp for
     rotations along the shortest path). Looping animations wrap f >= frame_count to loop_frame +
@@ -175,11 +181,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from halo2ps2 import hp2, mapinfo, tagindex  # noqa: E402
 
 MAGIC = b"ANIM"
-VERSION = 1
+VERSION = 2
 HEADER_SIZE = 64
 GRAPH_REC = 32
 ANIM_REC = 96
 NAME_LEN = 48
+NODE_NAME_LEN = 32                  # per node name slot in the graph's name table (model node names are 32 B too)
 MAX_NODES = 64
 POOL_ALIGN = 16
 
@@ -196,6 +203,7 @@ OBJ_MODEL_AT, OBJ_ANIM_AT = 0x28, 0x38      # tag references in the object base 
 F_COMPRESSED, F_WORLD_RELATIVE, F_PAL = 1, 2, 4
 # ANIM flags (anim.h)
 ANIM_LOOPS, ANIM_WORLD_RELATIVE = 1, 2
+ANIM_STUB = 4                       # animations_needed: name/frames kept, no pose data (anim.h does not define it)
 # channel modes
 M_DEFAULT, M_STATIC, M_ANIMATED = 0, 1, 2
 # track flags
@@ -415,6 +423,8 @@ class Decoded:
     trans: list = field(default_factory=list)
     scale: list = field(default_factory=list)
     frame_info: list = field(default_factory=list)
+    driven_rot: frozenset = frozenset()      # nodes whose rotation / translation channel the tag flags as animated (what an overlay animation drives)
+    driven_trans: frozenset = frozenset()
 
 
 def _bits(mask: int, nn: int) -> list[int]:
@@ -440,6 +450,7 @@ def decode(a: Anim) -> Decoded:
         raise ConvertError(f"{a.name}: frame count {fc}")
     d = Decoded(nn, fc, [None] * nn, [None] * nn, [None] * nn)
     rotn, trn, scn = _bits(a.rot_flags, nn), _bits(a.trans_flags, nn), _bits(a.scale_flags, nn)
+    d.driven_rot, d.driven_trans = frozenset(rotn), frozenset(trn)
     if a.flags & F_COMPRESSED:
         return _decode_compressed(a, d, rotn, trn, scn)
     rs, ts, ss = set(rotn), set(trn), set(scn)
@@ -785,10 +796,23 @@ class ErrStats:
         self.trans_n += other.trans_n
 
 
-def encode_animation(d: Decoded, rest: RestPose) -> tuple[bytes, ErrStats]:
+FACE_OVERLAYS = ("stand emotions", "stand talk")
+
+
+def is_face_overlay(a: Anim) -> bool:
+    """The two overlays a talking unit's face plays (`unit_set_emotion` picks a frame of the first, the sound's mouth data scales the second)."""
+    return a.type == 1 and a.name.strip().lower() in FACE_OVERLAYS
+
+
+def encode_animation(d: Decoded, rest: RestPose, overlay: bool = False) -> tuple[bytes, ErrStats]:
     """The data blob of one animation (see the module docstring). Static values equal to the graph's rest
     pose become mode 0; the error numbers are the keyed tracks' maxima against the source frames (the
-    complete figures come from measure_errors)."""
+    complete figures come from measure_errors).
+
+    `overlay` (an animation of type 1): the tag stores a full pose, but only the channels its flags mark as animated are
+    the overlay's (a face overlay moves the eyelids and the jaw, its other channels are the authoring pose). Those channels
+    are written whatever their value (a single frame is a static channel, never the rest shortcut) and every other channel
+    is mode 0 ("not driven"); anim_overlay_modes() in the engine reads the modes back as the mask."""
     nn, fc = d.nn, d.fc
     modes = bytearray(nn)
     parts: list[bytes] = []
@@ -797,13 +821,15 @@ def encode_animation(d: Decoded, rest: RestPose) -> tuple[bytes, ErrStats]:
         # rotation
         r = d.rot[n]
         tr = encode_rot_track(r, fc) if len(r) > 1 else None
-        if len(r) > 1 and tr is not None:
+        if overlay and n not in d.driven_rot:
+            pass
+        elif len(r) > 1 and tr is not None:
             modes[n] |= M_ANIMATED
             parts.append(tr[0])
             st.rot_max = max(st.rot_max, tr[1])
         else:
             q = r[0]
-            if n < len(rest.rot) and qangle(q, rest.rot[n]) <= ROT_STATIC_DEG:
+            if not overlay and n < len(rest.rot) and qangle(q, rest.rot[n]) <= ROT_STATIC_DEG:
                 pass
             else:
                 modes[n] |= M_STATIC
@@ -811,13 +837,15 @@ def encode_animation(d: Decoded, rest: RestPose) -> tuple[bytes, ErrStats]:
         # translation
         t = d.trans[n]
         tt = encode_trans_track(t, fc) if len(t) > 1 else None
-        if len(t) > 1 and tt is not None:
+        if overlay and n not in d.driven_trans:
+            pass
+        elif len(t) > 1 and tt is not None:
             modes[n] |= M_ANIMATED << 2
             parts.append(tt[0])
             st.trans_max = max(st.trans_max, tt[1] * WU_MM)
         else:
             v = t[0]
-            if n < len(rest.trans) and _dist3(v, rest.trans[n]) <= TRANS_STATIC:
+            if not overlay and n < len(rest.trans) and _dist3(v, rest.trans[n]) <= TRANS_STATIC:
                 pass
             else:
                 modes[n] |= M_STATIC << 2
@@ -825,7 +853,9 @@ def encode_animation(d: Decoded, rest: RestPose) -> tuple[bytes, ErrStats]:
         # scale
         s = d.scale[n]
         ts = encode_scale_track(s, fc) if len(s) > 1 else None
-        if len(s) > 1 and ts is not None:
+        if overlay:
+            pass
+        elif len(s) > 1 and ts is not None:
             modes[n] |= M_ANIMATED << 4
             parts.append(ts[0])
             st.scale_max = max(st.scale_max, ts[1])
@@ -874,6 +904,7 @@ class GraphSource:
     rest: RestPose
     model_tag: int = 0
     problems: list[str] = field(default_factory=list)
+    node_names: list[str] = field(default_factory=list)     # graph order; missing names are written empty
 
 
 @dataclass
@@ -926,8 +957,15 @@ def rest_from_anims(anims: list[Anim], node_count: int) -> RestPose:
 
 
 def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | None = None,
-                              root_motion: bool = True) -> bytes:
-    """Serialise graphs (sorted by tag id here) into an ANIM section."""
+                              root_motion: bool = True,
+                              animations_needed: dict[int, "Iterable[int]"] | None = None) -> bytes:
+    """Serialise graphs (sorted by tag id here) into an ANIM section.
+
+    `animations_needed` maps a graph tag id to the animation indices that are really used. Every other animation of
+    such a graph is written as a STUB: same name, type, frame count and loop flags (so indices, names and timing stay
+    identical to a full conversion and ASTB's indices stay valid), but no pose data (all channels use the graph's rest
+    pose, ~nodes bytes) and no root motion, plus the flag `ANIM_STUB` (4; anim.c ignores it). Graphs that are not in the
+    dict are converted in full, as is everything when it is None (workstream E, ansmconv.needed_animations)."""
     graphs = sorted(graphs, key=lambda g: g.tag_id)
     if len({g.tag_id for g in graphs}) != len(graphs):
         raise ConvertError("duplicate graph tag id")
@@ -940,17 +978,30 @@ def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | Non
         default = b"".join(struct.pack("<4f3ff", *g.rest.rot[n], *g.rest.trans[n], g.rest.scale[n])
                            for n in range(g.node_count))
         default_off, _ = pool.add(default)
-        graph_recs.append(struct.pack("<IHHII I 12x", g.tag_id, g.node_count, len(g.anims), len(anim_recs),
-                                      default_off, g.model_tag))
+        names = b"".join(_node_name_bytes(g.node_names[n] if n < len(g.node_names) else "", g.path) for n in range(g.node_count))
+        names_off, _ = pool.add(names)
+        graph_recs.append(struct.pack("<IHHII I I 8x", g.tag_id, g.node_count, len(g.anims), len(anim_recs),
+                                      default_off, g.model_tag, names_off))
         gbytes = len(default)
-        for a in g.anims:
-            d = decode(a)
+        needed = None if animations_needed is None or g.tag_id not in animations_needed \
+            else {int(i) for i in animations_needed[g.tag_id]}
+        if needed is not None and any(not 0 <= i < len(g.anims) for i in needed):
+            raise ConvertError(f"{g.path}: animations_needed holds an index outside 0..{len(g.anims) - 1}")
+        for ai, a in enumerate(g.anims):
+            stub = needed is not None and ai not in needed
+            if stub:
+                if not 1 <= a.node_count <= MAX_NODES or a.frame_count < 1:
+                    raise ConvertError(f"{a.name}: node count {a.node_count}, frame count {a.frame_count}")
+                d = Decoded(a.node_count, a.frame_count)
+                blob, est = bytes(_pad4(a.node_count)), ErrStats()      # every channel mode 0: the graph's rest pose
+            else:
+                d = decode(a)
+                blob, est = encode_animation(d, g.rest, is_face_overlay(a))
             if d.nn > g.node_count:
                 raise ConvertError(f"{g.path}: animation {a.name!r} has {d.nn} nodes, graph {g.node_count}")
-            blob, est = encode_animation(d, g.rest)
             stats.errors.add(est)
             data_off, shared = pool.add(blob)
-            rtype, rblock = encode_root_motion(d, a.frame_info_type) if root_motion else (0, b"")
+            rtype, rblock = encode_root_motion(d, a.frame_info_type) if root_motion and not stub else (0, b"")
             root_off = pool.add(rblock)[0] if rblock else 0
             if not shared:
                 gbytes += len(blob)
@@ -962,7 +1013,8 @@ def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | Non
             if len(name) >= NAME_LEN:
                 raise ConvertError(f"{g.path}: animation name {a.name!r} too long")
             loop_frame = a.loop_frame if 0 <= a.loop_frame < a.frame_count else 0
-            anim_recs.append(struct.pack(ANIM_FMT, name, a.type, a.frame_count, loop_frame, loop_flags(a), d.nn,
+            anim_recs.append(struct.pack(ANIM_FMT, name, a.type, a.frame_count, loop_frame,
+                                         loop_flags(a) | (ANIM_STUB if stub else 0), d.nn,
                                          rtype, g.node_count, 25.0 if a.flags & F_PAL else 30.0, data_off,
                                          len(blob), root_off, default_off))
         stats.graph_bytes[g.tag_id] = gbytes
@@ -983,6 +1035,13 @@ def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | Non
 
 def _pad16(n: int) -> int:
     return (n + 15) & ~15
+
+
+def _node_name_bytes(name: str, path: str) -> bytes:
+    raw = name.encode("latin1", "replace")
+    if len(raw) >= NODE_NAME_LEN:
+        raise ConvertError(f"{path}: node name {name!r} too long")
+    return raw.ljust(NODE_NAME_LEN, b"\0")
 
 
 # ---- map -> graphs -----------------------------------------------------------------------------------------
@@ -1028,7 +1087,7 @@ def graph_source(g: Graph, models: dict[int, ModelRest], users: dict[int, list[i
             problems.append("no model with this node list checksum: rest pose derived from the animations")
         rest = rest_from_anims(g.anims, nn)
         pick = None
-    return GraphSource(g.tag_id, g.path, nn, g.anims, rest, pick.tag_id if pick else 0, problems)
+    return GraphSource(g.tag_id, g.path, nn, g.anims, rest, pick.tag_id if pick else 0, problems, [n.name for n in g.nodes])
 
 
 def load_graphs(src, anim_tags: list[int] | None = None) -> list[GraphSource]:
@@ -1047,10 +1106,11 @@ def load_graphs(src, anim_tags: list[int] | None = None) -> list[GraphSource]:
 
 
 def build_section(map_path: Path, anim_tags: list[int] | None = None, stats: BuildStats | None = None,
-                  root_motion: bool = True) -> bytes:
+                  root_motion: bool = True, animations_needed: dict[int, "Iterable[int]"] | None = None) -> bytes:
     """The ANIM section of a decompressed map: every `model_animations` tag (anim_tags None) or only the
-    tags with these ids, sorted by tag id."""
-    return build_section_from_graphs(load_graphs(Path(map_path), anim_tags), stats, root_motion)
+    tags with these ids, sorted by tag id. `animations_needed` (graph tag id -> animation indices) turns the other
+    animations of those graphs into pose-less stubs, see build_section_from_graphs."""
+    return build_section_from_graphs(load_graphs(Path(map_path), anim_tags), stats, root_motion, animations_needed)
 
 
 # ---- reading the section back (reference reader and sampler; engine/src/world/anim.c mirrors it) -------------
@@ -1062,6 +1122,7 @@ class SGraph:
     first_anim: int
     default_off: int
     model_tag: int
+    names_off: int = 0
 
 
 @dataclass
@@ -1108,6 +1169,11 @@ class Section:
         raw = self.pool(g.default_off, 32 * g.node_count)
         v = [struct.unpack_from("<8f", raw, 32 * n) for n in range(g.node_count)]
         return RestPose([x[0:4] for x in v], [x[4:7] for x in v], [x[7] for x in v])
+
+    def node_names(self, gi: int) -> list[str]:
+        g = self.graphs[gi]
+        raw = self.pool(g.names_off, NODE_NAME_LEN * g.node_count)
+        return [_cstr(raw[NODE_NAME_LEN * n:NODE_NAME_LEN * (n + 1)]) for n in range(g.node_count)]
 
     def blob(self, a: SAnim) -> bytes:
         return self.pool(a.data_off, a.data_bytes)
@@ -1259,8 +1325,8 @@ def parse_section(data: bytes) -> Section:
         raise ConvertError("inconsistent header")
     graphs = []
     for i in range(ng):
-        tag, nn, cnt, first, doff, model = struct.unpack_from("<IHHIII", data, goff + GRAPH_REC * i)
-        graphs.append(SGraph(tag, nn, cnt, first, doff, model))
+        tag, nn, cnt, first, doff, model, noff = struct.unpack_from("<IHHIIII", data, goff + GRAPH_REC * i)
+        graphs.append(SGraph(tag, nn, cnt, first, doff, model, noff))
     anims = []
     for i in range(na):
         (name, typ, fc, loop, flags, nn, rtype, gnodes, fps, doff, dbytes, roff,

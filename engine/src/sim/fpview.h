@@ -9,7 +9,6 @@ typedef struct {
 	int       active;
 	int       arms_model, arms_graph, weapon_model, weapon_graph;
 	unsigned  arms_anim, weapon_anim;
-	unsigned  weapon_node_offset;          /* weapon model node i = graph node offset + i (shared arms/weapon graph) */
 	int       hand_node;                   /* node named by weapon_hand_marker when the model has no such marker */
 	int       hand_marker;                 /* marker index on the arms model, -1 = fall back to the arms root */
 	float     offset[3];                   /* camera-space offset (right, up, forward) */

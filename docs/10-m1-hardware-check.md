@@ -16,6 +16,9 @@ average with peaks of 9.1 ms (b40 BSP 11 is the heaviest; the console measured 8
 close for EE), VIF1 and GS 0.4–1.8 ms in the model (it does not model GS fill: the console showed ~7.9 ms and
 drops on b40, ADR-022), visible triangles 1.5–7.5 k, level arena 3.0–4.2 MB, texture cache at most 47 % full. These numbers only prove the pipeline, the EE-side cost and the
 absence of stalls; they are not hardware numbers.
+Until ADR-059 (2026-10-18) the fog/sky/horizon lines of these configs were ignored (render keys applied only with an `obj` pack); with them applied
+the recompiler run of the same tree is unchanged: 0 dropped, EE prep 7.2/7.9/7.3 ms average over the last three windows and peaks 9.6/9.1/9.1 ms (a30/b40/a10),
+VIF1/GS 0.2–1.3 ms in the model, level arena 3.3–4.4 MB.
 
 ## Hardware results so far (2026-10-16, console at 192.168.0.10)
 - **Self test (`selftest 2`)**: matches on hardware: PSMT4 with the 8x2 CLUT, PSMT8 with the CSM1 swap and the
@@ -72,14 +75,16 @@ Left stick move, right stick look, R1/L1 up/down, R2 fast, Start toggles the ove
 with `pathkey` lines in the config) the camera follows the scripted path.
 
 ## `halo.cfg`
-One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (optional).
+One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (optional). The render keys (`fog`, `sky`, `horizon`,
+`textures`, `lightmaps`, `debug`, `onlybatch`, `clipbudget`, `skyfog`) apply with or without an `obj` pack (ADR-059; before it they were
+ignored unless the config had one).
 
 | Key | Meaning | Default |
 |---|---|---|
 | `pack <path>` | BSP pack (BSPS v2) | `assets/hp2/a10.hp2` |
 | `tex <path>` | TEXS + LMn pack; omitted = everything flat | none |
 | `bsp <n>` | BSP index inside the pack | 0 |
-| `arena_mb <n>` | level arena size (the one boot-time malloc) | 20 |
+| `arena_mb <n>` | level arena size (the one boot-time malloc) | 25 |
 | `camera x y z yaw pitch` | start pose (degrees) | centre of the BSP bounds |
 | `pathkey t x y z yaw pitch` | scripted camera keys (seconds, looped, up to 24) | none |
 | `frames <n>` | stop after n frames, print `[done]` | run forever |
@@ -89,6 +94,7 @@ One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (op
 | `sky r g b`, `horizon r g b` | gradient behind the world (top, horizon) | dark blue |
 | `textures 0/1`, `lightmaps 0/1` | disable a pass for debugging | 1, 1 |
 | `clipbudget ms` | EE time for clipping near triangles (ADR-017) | 6 |
+| `onlybatch lo [hi]` | draw only BSP batches lo..hi | all |
 | `fbdump <frame>` | print that frame's framebuffer on the TTY (repeatable) | none |
 | `obj <path>` | object pack (SCEN, MODL, OTEX, ANIM) of the map; objects of the chosen BSP are placed | none |
 | `objects 0/1`, `fp 0/1` | draw the placed objects / the first-person arms and weapon | 1, 1 |
@@ -96,6 +102,21 @@ One `key value…` per line, `#` comments, read from `host:halo.cfg` at boot (op
 | `objhidden 1` | also spawn the placements scripts would create later (stress population) | 0 |
 | `objdist <wu>`, `objcap <n>` | object draw distance (units) and per-frame batch cap | 200, 900 |
 | `sky3d 0/1`, `skyfog 0/1` | draw the sky model from the object pack's `SKY0` section / take the world fog from the sky tag (ADR-029) | 1, 0 |
+| `game <prefix>` | gameplay mode: loads `<prefix>.{coll,cmod,unit,weap,ansm,hud,snd,fx}.hp2` (needs `obj`); the player replaces the free-fly camera | none |
+| `player x y z yaw` | player start (feet position, yaw in degrees); default: the `camera` pose lowered by the eye height | camera |
+| `input t lx ly rx ry buttons` | scripted pad (seconds, sticks -1..1, raw button bits of `platform/pad.h`, hex); each key holds until the next; up to 120 keys, replaces the pad | none |
+| `allweapons 0/1`, `difficulty 0..3`, `seed n` | Triangle cycles through every weapon of the map / difficulty / random seed of the simulation | 0, 1, 1 |
+| `gamelog 0/1`, `gamestat 0/1`, `audiolog 0/1` | print every game event / a status line per second / every sound played | 0, 1, 0 |
+| `mission 1` | Phase 4 mission mode (needs `game` and the `script`/`ai`/`dev`/`cin`/`path`/`strm` packs of the map): scripts, AI, devices, cinematics, streamed audio, BSP switches, objectives, checkpoints | 0 |
+| `bot 1`, `missionlog 1`, `threaddump 1` | the mission bot plays (ADR-054) / print `[bot]` goal lines and a `[mission]` status line every 10 s / list what every script thread waits on at the end | 0 |
+| `cinelog 1`, `cinetrack <name>`, `nearlog <tick>` + `nearrad`, `nearnodes` | mission debugging: the cinematic camera, fade and letterbox every 15 ticks (and the position of objects whose definition name contains `cinetrack`); objects within `nearrad` units of the camera at one tick (with node positions) | 0 |
+| `exitonend 1` | leave the main loop when scripts call `game_won` or `game_lost` | 0 |
+| `stream 0/1`, `streamlog 0/1` | open the streamed-audio files (dialogue, music) / log stream events | 1, 0 |
+| `memcard 0/1`, `mcformat 1`, `savetest 1` | memory-card saves (PCSX2 blank card needs `mcformat 1` once) / a card save at every Select+Cross | 0 |
+| `pathprobe 1`, `bspswitch t bsp x y z yaw` | route queries printed at start / debug BSP switch at `t` seconds | off |
+| env `SPEED=n` (not a key) | `run-headless.sh` sets PCSX2's NominalScalar to n for development runs only; timing statistics of such runs are meaningless | 1 |
+| `hud 0/1`, `fx 0/1`, `fxdecals 0/1`, `fxparticles 0/1` | draw the HUD / effects / their decals / their particles | 1 |
+| `audio 0/1`, `audiopreload 0/1`, `audiotest <file>` | start the IOP audio server / upload every sound at level load / play one APCM file at boot (bring-up) | 1, 1, none |
 | `lodctl 0/1` | dynamic LOD controller | 1 |
 | `objlist 1` | print every placed object on the TTY | 0 |
 | `chief x y z yaw` / `chiefcam 1` | spawn the player's biped (third-person Master Chief) at a pose / 3 units ahead of the start camera | off |

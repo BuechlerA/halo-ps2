@@ -30,6 +30,8 @@ typedef struct {
 void clip_project(const float m[4][4], const float pos[3], cvert *out);
 /* 1 if any vertex is behind the near plane or outside the band (scaled by `margin` <= 1). */
 int  clip_needs(const cvert v[3], float near_z, float margin);
+/* 1 if all three vertices are outside the same plane of the band (near, left, right, top, bottom): nothing of the triangle can show. Needs c[0], c[1], c[3]. */
+int  clip_outside(const cvert v[3], float near_z);
 /* Clip a triangle to w >= near_z and |x|,|y| <= CLIP_GUARD * w. Returns the polygon's vertex
  * count (0 = nothing visible); the polygon is convex, draw it as a fan. */
 int  clip_polygon(const cvert in[3], float near_z, cvert out[CLIP_MAX_VERTS]);

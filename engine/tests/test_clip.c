@@ -62,6 +62,26 @@ int main(void)
 		CHECK(!clip_needs(v, cam.near_z, 1.0f) && clip_needs(v, cam.near_z, 0.9f));
 	}
 
+	/* --- clip_outside: a triangle it rejects has nothing for clip_polygon to return --- */
+	{
+		int rejected = 0, k;
+		srand(11);
+		for (k = 0; k < 4000; k++) {
+			cvert t[3], o[CLIP_MAX_VERTS];
+			int i, j;
+			for (i = 0; i < 3; i++) {
+				float p[3];
+				for (j = 0; j < 3; j++) p[j] = cam.pos[j] + ((float)rand() / (float)RAND_MAX - 0.5f) * 400.0f;
+				make_vertex(m, p, &t[i]);
+			}
+			if (clip_outside(t, cam.near_z)) {
+				rejected++;
+				CHECK(clip_polygon(t, cam.near_z, o) == 0);
+			}
+		}
+		CHECK(rejected > 500);                                   /* the random cloud is mostly off screen: the test must catch much of it */
+	}
+
 	srand(7);
 	for (iter = 0; iter < 3000; iter++) {
 		float p[3][3];

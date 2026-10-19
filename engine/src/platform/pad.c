@@ -55,3 +55,15 @@ unsigned pad_poll(fly_input *in)
 	s_prev = buttons;
 	return down;
 }
+
+int pad_read_raw(raw_input_t *out)
+{
+	struct padButtonStatus b;
+	memset(out, 0, sizeof *out);
+	if (!s_ready || padGetState(0, 0) != PAD_STATE_STABLE) return 0;
+	if (padRead(0, 0, &b) == 0) return 0;
+	out->buttons = (unsigned)(0xFFFF ^ b.btns);
+	out->lx = stick(b.ljoy_h); out->ly = -stick(b.ljoy_v);
+	out->rx = stick(b.rjoy_h); out->ry = -stick(b.rjoy_v);
+	return 1;
+}

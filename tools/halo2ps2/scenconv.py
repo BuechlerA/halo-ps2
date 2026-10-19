@@ -514,8 +514,9 @@ def locate_mask(probes: list[BspProbe], pos: tuple[float, float, float], manual:
 
 
 # ---- collecting ---------------------------------------------------------------------------------
-def collect_objects(m: texconv.MapData, probes: list[BspProbe]) -> ObjectSet:
-    """Placements, definitions and player data of a map (no lighting). ``probes`` may be empty."""
+def collect_objects(m: texconv.MapData, probes: list[BspProbe], extra: dict[int, str] | None = None) -> ObjectSet:
+    """Placements, definitions and player data of a map (no lighting). ``probes`` may be empty. ``extra`` maps object tag ids
+    (biped / weapon) to their group: definitions that run-time spawning (AI units, dropped weapons) needs although no placement uses them."""
     r = Region(m)
     problems: list[str] = []
     dt = DefTable(r, problems)
@@ -548,6 +549,11 @@ def collect_objects(m: texconv.MapData, probes: list[BspProbe]) -> ObjectSet:
             mask, tier = locate_mask(probes, pos, manual) if probes else (0, "none")
             placements.append(Placement(d.tag_id, kind, flags, pos, rot, ni if ni < nname else -1,
                                         mask, "", manual, tier))
+    for tid, group in sorted((extra or {}).items()):
+        if group == "bipd":
+            dt.get(tid, BIPED, "bipd", 0)
+        elif group == "weap":
+            dt.get(tid, WEAPON, "weap", 2)
     player = read_player(r, dt, problems)
     order = sorted(dt.defs)
     index = {t: i for i, t in enumerate(order)}
@@ -570,10 +576,10 @@ def collect_objects(m: texconv.MapData, probes: list[BspProbe]) -> ObjectSet:
                      Counter(pl.mask_tier for pl in placements), unresolved, problems)
 
 
-def collect(map_path: Path) -> ObjectSet:
+def collect(map_path: Path, extra: dict[int, str] | None = None) -> ObjectSet:
     """Everything of the SCEN section except the lighting probes."""
     m = texconv.MapData.open(map_path)
-    return collect_objects(m, load_bsps(m))
+    return collect_objects(m, load_bsps(m), extra)
 
 
 # ---- lighting probes ----------------------------------------------------------------------------
@@ -608,9 +614,13 @@ def _clamp8(v: float) -> int:
     return max(0, min(255, int(v + 0.5)))
 
 
+OBJECT_LM_GAIN = 1.7 * 1.8    # the BSP lightmap gain (scripts/build-world.sh LM_GAIN) x 1.8: a character stands in the light of all the walls around him, the
+                              # area mean of the lightmap of a cluster is about half of its lit walls, and the Xbox bridge crew is as bright as the bulkheads (2026-10-18)
+
+
 def cluster_lights(mats: list[bspconv.Material], st: bsp.Structure, pages: dict[int, texconv.Rgba],
                    suns: list[tuple[float, float, float] | None] | None = None,
-                   gain: float = texconv.LM_DEFAULT_GAIN) -> list[ClusterLight]:
+                   gain: float = texconv.LM_DEFAULT_GAIN, gamma: float = 1.0, chroma: float = 1.0) -> list[ClusterLight]:
     """One ``ClusterLight`` per cluster of ``st`` (formula in docs/13-scen-section.md).
 
     Per lightmapped triangle: area, normal (``-(e1 x e2)``, BSP triangles are wound clockwise), colour = mean of
@@ -644,7 +654,8 @@ def cluster_lights(mats: list[bspconv.Material], st: bsp.Structure, pages: dict[
             uvs = [mat.lmuv[k] for k in t]
             samples = [sample(*uv) for uv in uvs]
             samples.append(sample(sum(uv[0] for uv in uvs) / 3.0, sum(uv[1] for uv in uvs) / 3.0))
-            rgb = tuple(sum(sm[ch] for sm in samples) / 4.0 * gain for ch in range(3))
+            toned = [texconv.lightmap_tone_rgb(*sm, gain, gamma, chroma) for sm in samples]
+            rgb = tuple(sum(sm[ch] for sm in toned) / 4.0 for ch in range(3))
             tris.append((tuple(cl), ln / 2.0, (-n[0] / ln, -n[1] / ln, -n[2] / ln), rgb))  # type: ignore[arg-type]
     # BSP-wide mean colour (each triangle once)
     total = sum(t[1] for t in tris)
@@ -708,7 +719,7 @@ def map_lights(m: texconv.MapData, indices: list[int] | None) -> list[list[Clust
             mats, _ = bspconv.read_materials(block, loc)
             st = bsp.read_structure(loc, block)
             pages = texconv.lightmap_pages_rgba(m, infos[i])
-            out.append(cluster_lights(mats, st, pages, suns))
+            out.append(cluster_lights(mats, st, pages, suns, OBJECT_LM_GAIN, texconv.LM_GAMMA, texconv.CHROMA_STRENGTH))
     return out
 
 
@@ -841,13 +852,13 @@ def parse_section(data: bytes) -> Section:
     return Section(size, defs, pls, lights, player, list(struct.unpack_from("<10I", data, 0x38)))
 
 
-def build_section(map_path: Path, bsp_filter: list[int] | None = None) -> bytes:
+def build_section(map_path: Path, bsp_filter: list[int] | None = None, extra: dict[int, str] | None = None) -> bytes:
     """The SCEN section of a decompressed map. ``bsp_filter`` restricts the (expensive) lighting probes to those
     BSP indices (the others store no probes and read back as the neutral default); placements and their BSP masks
     always cover every BSP of the map."""
     m = texconv.MapData.open(map_path)
     probes = load_bsps(m)
-    objs = collect_objects(m, probes)
+    objs = collect_objects(m, probes, extra)
     lights = map_lights(m, bsp_filter) if probes else []
     return build(objs.defs, objs.placements, objs.player, lights, len(probes))
 

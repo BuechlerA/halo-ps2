@@ -826,6 +826,65 @@ def part_flags(info: texconv.ShaderInfo | None) -> int:
     return PF_BLEND if info.blend >= texconv.BLEND_ALPHA else 0
 
 
+# A model the camera can end up inside or right behind (the command display's hologram panel: the briefing looks through it from 0.19 wu): the VU1 object program drops every
+# triangle with a vertex outside the guard band or in front of the near plane, and a 1.4 wu panel at 0.19 wu has corners far outside it, so it vanished. Its triangles are cut
+# into pieces no longer than SUBDIV_EDGE (midpoint splits), which keeps the visible pieces whole.
+SUBDIVIDE_MODELS = ("levels\\a10\\devices\\command display\\command display",)
+SUBDIV_EDGE = 0.2
+
+
+def subdivide_part(sp: "SrcPart", max_edge: float = SUBDIV_EDGE) -> None:
+    pos, nrm, uv = list(sp.pos), list(sp.nrm), list(sp.uv)
+    n0, n1, w0 = list(sp.node0), list(sp.node1), list(sp.weight0)
+    out: list[tuple[int, int, int]] = []
+    mids: dict[tuple[int, int], int] = {}
+
+    def mid(a: int, b: int) -> int:
+        key = (a, b) if a < b else (b, a)
+        if key in mids:
+            return mids[key]
+        pos.append(tuple((pos[a][i] + pos[b][i]) * 0.5 for i in range(3)))
+        nrm.append(tuple((nrm[a][i] + nrm[b][i]) * 0.5 for i in range(3)))
+        uv.append(tuple((uv[a][i] + uv[b][i]) * 0.5 for i in range(2)))
+        n0.append(n0[a]); n1.append(n1[a]); w0.append(w0[a])
+        mids[key] = len(pos) - 1
+        return mids[key]
+
+    def length(a: int, b: int) -> float:
+        return sum((pos[a][i] - pos[b][i]) ** 2 for i in range(3)) ** 0.5
+
+    stack = list(sp.tris)
+    while stack:
+        a, b, c = stack.pop()
+        lab, lbc, lca = length(a, b), length(b, c), length(c, a)
+        if max(lab, lbc, lca) <= max_edge or len(out) + len(stack) > 20000:
+            out.append((a, b, c))
+            continue
+        if lab >= lbc and lab >= lca:
+            m = mid(a, b); stack += [(a, m, c), (m, b, c)]
+        elif lbc >= lca:
+            m = mid(b, c); stack += [(a, b, m), (a, m, c)]
+        else:
+            m = mid(c, a); stack += [(a, b, m), (m, b, c)]
+    sp.pos, sp.nrm, sp.uv, sp.node0, sp.node1, sp.weight0, sp.tris = pos, nrm, uv, n0, n1, w0, out
+
+
+def add_sky_layers(m: texconv.MapData, md: ModelData) -> None:
+    """A sky dome whose chicago shader stacks maps (the a10 `sky_x10` dome: nebula + stars) is drawn once per additive map: every part
+    of such a shader is followed by a copy with a pseudo shader id (objtex.layer_shader_id) that resolves to that map, additive."""
+    for parts in md.geometries.values():
+        for sp in list(parts):
+            if sp.shader_id == NO_SHADER:
+                continue
+            e = m.by_id.get(sp.shader_id)
+            if e is not None and e.path == objtex.CORTANA_LAYER_SHADER:
+                for index in objtex.CORTANA_LAYERS:
+                    parts.append(SrcPart(objtex.layer_shader_id(sp.shader_id, index), sp.pos, sp.nrm, sp.uv, sp.node0, sp.node1, sp.weight0, sp.tris))
+                continue
+            for index in objtex.chicago_layers(m, sp.shader_id):
+                parts.append(SrcPart(objtex.layer_shader_id(sp.shader_id, index), sp.pos, sp.nrm, sp.uv, sp.node0, sp.node1, sp.weight0, sp.tris))
+
+
 def convert_map(path: Path | texconv.MapData, model_tags: list[int] | None = None,
                 tex_budget: int = objtex.DEFAULT_BUDGET, max_tex: int = texconv.MAX_TEX,
                 skip_lod0: bool = False, variants: dict[int, set[str]] | None = None) -> ConvertResult:
@@ -839,6 +898,13 @@ def convert_map(path: Path | texconv.MapData, model_tags: list[int] | None = Non
         wanted = sorted(set(model_tags) & set(entries))
         skipped = sorted(set(model_tags) - set(entries))
     models = [read_model(m, entries[t], skip_lod0, variants.get(t) if variants is not None else None) for t in wanted]
+    for md in models:
+        if md.path.startswith("sky\\") or md.path == "characters\\cortana\\cortana":
+            add_sky_layers(m, md)
+        if md.path in SUBDIVIDE_MODELS:
+            for parts in md.geometries.values():
+                for sp in parts:
+                    subdivide_part(sp)
     shader_ids = [sp.shader_id for md in models for parts in md.geometries.values() for sp in parts if sp.shader_id != NO_SHADER]
     otex = objtex.build_otex(m, shader_ids, tex_budget, max_tex)
     flags = {sid: part_flags(info) for sid, info in otex.shaders.items()}

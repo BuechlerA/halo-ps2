@@ -87,7 +87,7 @@ Known limitations carried out of Phase 1 (none blocks the gate, each is a measur
   overall look, pad behaviour (Phase 6).
 
 **Gate M1**: noclip fly-through of **a30 and b40** at 30 fps (earlier measured at 60) with < 1 % dropped frames; memory report under
-budget. **Met on the PCSX2 interpreter** (0 dropped on a30, b40 and a10 in recompiler and interpreter modes at 30 fps and at 60 fps, final tree 2026-10-16; EE build ≤ 9.2 ms; level arena ≤ 4.2 MB); console verification in Phase 6.
+budget. **Met on the PCSX2 interpreter** (0 dropped on a30, b40 and a10 in recompiler and interpreter modes at 30 fps and at 60 fps, final tree 2026-10-16; EE build ≤ 9.2 ms; level arena ≤ 4.2 MB); console verification in Phase 6. Re-measured 2026-10-18 on the recompiler with the configs' fog and sky keys applied for the first time (ADR-059): still 0 dropped on all three, EE prep peak ≤ 9.7 ms, level arena ≤ 4.4 MB; the pre-fix ELF of the same tree gives the same numbers, so the rise since 2026-10-16 comes from later engine changes, not from fog.
 
 ## Phase 2 — Objects, animation, first person (≈ 4 pm) — done (PCSX2 gate)
 - [x] Converter: `model` → VU1 batches (≤24 tris, ≤24 palette nodes, 2 influences, LOD chain) (`modelconv.py`, docs/11); `OTEX` textures
@@ -109,18 +109,29 @@ world-only maps); level arena 12.5 MB (high water 13.4 MB) of 20 MB; sky costs a
 placements, so the "stress" path is only slightly heavier than the normal one; the worst case measured earlier (about 1000 batches via `objcap`) cost about 5 ms EE.
 Console verification in Phase 6 (ADR-022).
 
-## Phase 3 — Player, physics, weapons, HUD (≈ 5 pm)
-- Collision BSP + collision models; biped movement, stairs/slopes, crouch, jump
-- Camera, DualShock 2 input, look acceleration/aim assist from `globals`
-- Weapons: all campaign weapons, projectiles, grenades, melee, damage, shields,
-  health, decals, impact effects, particles (`sprite` program)
-- HUD (`weapon_hud_interface`, `unit_hud_interface`, `grenade_hud_interface`),
-  fonts, strings; pause menu
-- SPU2 audio path: `hsound.irx`, weapon/impact/ambient sounds, `sound_looping`
-- Checkpoint snapshot/revert in RAM
+## Phase 3 — Player, physics, weapons, HUD (≈ 5 pm) — done (PCSX2 gate)
+Built as eight data workstreams plus the engine integration ([14-phase3-plan.md](14-phase3-plan.md), ADR-030..042):
+- [x] Collision: `COLn` world collision BSP (ray, sphere sweep, depenetration; agreement with a polygon brute force 99.6 %, no sweep ended in solid space over 22,200 sweeps), `CMOD` object hit
+      shapes with damage regions and multipliers ([15](15-coll-section.md), [16](16-cmod-section.md)); biped capsule controller with stairs, slopes, crouch (with headroom check), jump, fall damage (`sim/player.c`)
+- [x] Camera, DualShock 2 input (Halo CE layout), look acceleration, aim assist from the weapon's autoaim cone, scripted input for headless runs (`sim/input.c`)
+- [x] Weapons: every weapon of all ten maps (20 distinct: pistol, assault rifle, shotgun, sniper, rocket launcher, needler, plasma pistol/rifle, flamethrower, fuel rods, vehicle guns, energy sword melee)
+      through the pure weapon state machine; two-weapon inventory, switching and pickup, projectiles with gravity, speed profile and material responses, grenades (frag, plasma), melee, zoom, damage
+      effects with regional multipliers, shields (stun delay and recharge), health, death animations ([17](17-unit-section.md), [18](18-weap-section.md), [19](19-ansm-section.md), ADR-040)
+- [x] HUD: unit HUD (shield/health meters, panels), weapon HUD (ammo numbers, crosshairs, meters), grenade HUD, messages and pickup prompt with the HUD font, pause banner ([20](20-hud-section.md))
+- [x] Effects: muzzle, impact and detonation effects, particles, decals (`FXD0`/`FXTX`, `sim/fx.c`, overlay pass) ([22](22-fx-section.md), ADR-041)
+- [x] Audio: gameplay sounds converted to SPU2 ADPCM (1.4 MiB per map, verified decoder and encoder), IOP `audsrv.irx` embedded in the ELF, every sample uploaded at level load, positional volume and pan,
+      HUD feedback sounds ([21](21-snd-section.md), ADR-030/038)
+- [x] Checkpoint snapshot and revert in RAM (about 300 KB, `sim/save.c`, ADR-042)
+- Known limitations (carried on): bodies do not block the player and nothing shoots back (AI is Phase 4); vehicles are not driven; `sound_looping` and `sound_environment` reverb are not played; 85-90 % of the reachable
+  sounds do not fit the SPU2 budget (footsteps and scripted impacts dropped); HUD meter fill and flash rules are unverified, the sniper scope is not converted (anchors and the motion tracker blips were fixed against an Xbox frame, ADR-060);
+  particle systems, lights and object parts of effects are not created, decals are screen-facing sprites, smoke puffs show their sprite edges; aim-assist angles and area-damage falloff are modelled; item collections untested;
+  the player start position is a `halo.cfg` key (scenario spawn points arrive with the scripts in Phase 4).
 
-**Gate M3**: "shooting gallery" — walk a10's first BSP, shoot placed targets,
-all weapons functional, 30 fps.
+**Gate M3**: "shooting gallery" — walk a10's first BSP, shoot placed targets, all weapons functional, 30 fps. **Met on the PCSX2 recompiler and interpreter** (2026-10-17, final tree): `a10game` (36 s of scripted walking,
+turning, jumping, crouching, firing the rifle and the pistol, reloading, melee, a grenade and the zoom against the cryo bay's crewmen: 0 dropped of 1081 frames in both modes; EE build avg 12–14.5 ms, peak ≤ 18.5 ms of
+33.3 ms; level arena 18.5 MB of 24 MB); a30, b40, a10, a10obj and a10obj-stress still 0 dropped. Engine-level check of "all weapons functional": `engine/tests/test_game.c` fires all 20 distinct weapons of the ten maps
+at the crewman (projectiles spawn, ammo is spent or the weapon reloads, melee weapon strikes), throws a grenade, restores a checkpoint, lays out the HUD and runs the effects lifecycle against the real packs under
+ASan/UBSan. Console verification in Phase 6 (ADR-022).
 
 ## Phase 4 — AI, scripting, mission 1 complete (≈ 8 pm)
 The core reverse-engineering phase.

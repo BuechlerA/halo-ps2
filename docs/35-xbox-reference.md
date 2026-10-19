@@ -1,7 +1,7 @@
 # Xbox reference emulator (xemu) for parity checks
 
 The port is built and gated on PCSX2 (ADR-015). To compare what the PS2 draws with what the original game draws at the same
-camera position (ADR-030), the user's own Halo ISO is booted in **xemu**, the original Xbox emulator. This is a development aid only: no
+camera position (ADR-055), the user's own Halo ISO is booted in **xemu**, the original Xbox emulator. This is a development aid only: no
 Xbox data leaves `assets/` or the ISO, and nothing here is part of the engine.
 
 ## What you need to supply

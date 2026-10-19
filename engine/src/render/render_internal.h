@@ -15,6 +15,8 @@ typedef struct render_ctx {
 	const frustum_t *frustum;
 	u32             frame;
 	const render_options_t *opt;
+	int             sky_index;        /* palette entry of the sky to draw (vis_t.sky_index) */
+	int             sky_visible;      /* a visible cluster has the sky flag (vis_t.sky_visible): the sky pass draws only then */
 } render_ctx_t;
 
 /* MSCAL (or other VIF pair) that must ride on the next tag; the object pass takes it with its first chunk. */
@@ -23,6 +25,10 @@ void rb_set_pending(u64 pair);
 /* GS TEX0 value for object texture `index` of the object tex source (uploading it if needed), 0 if it cannot
  * be drawn this frame. `tfx` 0 = modulate. */
 u64  rb_object_tex0(unsigned index, const tex_image_t *img, u64 tfx);
+/* GS TEX0 of texture `index` of a reserved key range (bsp_render_reserve_keys), 0 if it cannot be drawn this frame. */
+u64  rb_extra_tex0(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx);
+/* Is texture `index` of that key range in the GS texture cache now (no touch)? */
+int  rb_extra_resident(unsigned key_base, unsigned index);
 /* Fog constants in the F16 form of bsp.vsm (abs 9 / model abs 4): k, b. */
 void rb_fog_params(float *k, float *b);
 /* VU1 entry address (MSCAL operand) of the model program. */

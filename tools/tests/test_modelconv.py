@@ -652,7 +652,7 @@ def test_real_map() -> None:
     assert len(sec.models) == len(entries) and sec.triangles > 10000
     tex = tc.parse_texs(res.otex)
     assert len(tex.bindings) == len(res.otex_result.shaders) and len(tex.textures) > 10
-    assert res.otex_result.texture_bytes <= objtex.DEFAULT_BUDGET
+    assert res.otex_result.texture_bytes <= objtex.DEFAULT_BUDGET + objtex.HERO_BUDGET       # the hero textures (objtex.HERO) have an allowance of their own
     # the quaternion convention: the stored inverse bind pose equals the inverse of our default pose chain
     worst = 0.0
     for e, md in zip(sorted(entries, key=lambda e: e.tag_id), res.models):

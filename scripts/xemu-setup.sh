@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepare xemu (original Xbox emulator) for parity checks against the PS2 port (docs/14-xbox-reference.md).
+# Prepare xemu (original Xbox emulator) for parity checks against the PS2 port (docs/35-xbox-reference.md).
 # Reads the user-supplied Xbox boot files, validates them, and writes a project-local xemu config to
 # assets/xemu/xemu.toml (gitignored) so the user's global xemu settings are never touched. Nothing is copied or downloaded.
 #
@@ -35,7 +35,7 @@ for pair in "MCPX boot ROM (XBOX_MCPX):$MCPX" "flash BIOS (XBOX_FLASH):$FLASH" "
   label="${pair%%:*}"; path="${pair#*:}"
   if [ -z "$path" ] || [ ! -f "$path" ]; then echo "missing: $label" >&2; missing=1; fi
 done
-[ "$missing" = 0 ] || die "put the files in $BIOS_DIR (or set the variables above); see docs/14-xbox-reference.md"
+[ "$missing" = 0 ] || die "put the files in $BIOS_DIR (or set the variables above); see docs/35-xbox-reference.md"
 
 [ "$(size "$MCPX")" = 512 ] || die "MCPX boot ROM must be 512 bytes: $MCPX is $(size "$MCPX")"
 case "$(size "$FLASH")" in 262144|524288|1048576) ;; *) die "flash BIOS must be 256 KiB, 512 KiB or 1 MiB: $FLASH is $(size "$FLASH")";; esac
@@ -54,6 +54,9 @@ bootrom_path = '$MCPX'
 flashrom_path = '$FLASH'
 eeprom_path = '$STATE/eeprom.bin'
 hdd_path = '$HDD'
+# Keyboard on controller port 1 so the reference can be driven without a gamepad (xemu's keyboard device GUID is "keyboard").
+[input.bindings]
+port1 = 'keyboard'
 EOF
 echo "wrote $STATE/xemu.toml"
 echo "  MCPX  $MCPX"

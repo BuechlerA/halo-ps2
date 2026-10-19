@@ -202,7 +202,7 @@ program (it is a first approximation; `AMBIENT_FLOOR`, `PRIOR_AREA` and the 0.75
 ## Sky
 `skyconv.py` writes a 64-byte `SKY0` section next to `SCEN` (object packs from `objpack.py` carry both). Layout (little-endian):
 `'SKYS'`, u16 version (1), u16 reserved, u32 sky model tag id (0 = none), f32 fog rgb[3] (0..1), f32 fog near, f32 fog far (opaque
-distance), f32 fog max density, f32 outdoor ambient rgb[3], f32 indoor ambient rgb[3], padded to 64. Sources in the scenario: the `skies`
+distance), f32 fog max density, f32 outdoor ambient rgb[3], f32 indoor ambient rgb[3], u32 model tag id of the scenario's second sky (+60; ADR-061), padded to 64. Sources in the scenario: the `skies`
 block (+0x30) lists sky tags; the first is converted. The sky model is converted by `modelconv` (as a normal MODL entry, no placement).
 The engine draws it camera-locked before the world (ADR-029). a30: ring and cloud dome (fog near 1, far 120, density 0.8);
 a10: space. **Unverified**: the second a30 sky, the animation of the sky model, and the sky tag's fog values as a match for the Xbox's look.

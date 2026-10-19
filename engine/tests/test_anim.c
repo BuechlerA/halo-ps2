@@ -33,6 +33,10 @@ static void walk(const anim_section *s, int deep)
 		for (uint32_t k = 0; k < g.anim_count; k++) {
 			anim_info in = anim_get(s, &g, k);
 			float rm[4];
+			uint8_t om[ANIM_MAX_NODES];
+			unsigned on = anim_overlay_modes(s, &g, k, om);
+			if (on != (in.node_count > ANIM_MAX_NODES ? (unsigned)ANIM_MAX_NODES : in.node_count)) abort();
+			for (unsigned q = 0; q < on; q++) acc += om[q];
 			acc += (uint32_t)anim_find_name(s, &g, in.name) + in.frame_count + in.bytes + (uint32_t)strlen(in.name);
 			for (unsigned fi = 0; fi < nframes; fi++) {
 				anim_pose p;
@@ -118,7 +122,7 @@ static int check_tables(const anim_section *s)
 	CHECK(anim_find_name(s, &b, "stand idle") == 0 && anim_find_name(s, &b, "idle") == 7);
 	CHECK(anim_find_name(s, &b, "idle%1") == 5 && anim_find_name(s, &b, "stand idle%1") == 5);
 	CHECK(anim_find_name(s, &b, "move") == 1 && anim_find_name(s, &b, "aim") == 2 && anim_find_name(s, &b, "stand") == 0);
-	CHECK(anim_find_name(s, &b, "Stand") == -1 && anim_find_name(s, &b, "zzz") == -1 && anim_find_name(s, &b, "") == 0);
+	CHECK(anim_find_name(s, &b, "Stand") == 0 && anim_find_name(s, &b, "STAND IDLE%1") == 5 && anim_find_name(s, &b, "zzz") == -1 && anim_find_name(s, &b, "") == 0);
 	CHECK(anim_find_name(s, &d, "position") == 0 && anim_find_name(s, &d, "idle") == -1 && anim_find_name(s, &none, "x") == -1);
 	CHECK(anim_find_name(s, &b, NULL) == -1);
 	return 0;
@@ -276,7 +280,7 @@ static int check_corruption(const uint8_t *good, size_t n)
 	buf[0] = 'X';
 	CHECK(anim_open(&s, buf, n) == ANIM_ERR_MAGIC);
 	buf[0] = 'A';
-	buf[4] = 2;
+	buf[4] = 3;                                  /* version 2 is the current one */
 	CHECK(anim_open(&s, buf, n) == ANIM_ERR_VERSION);
 	free(buf);
 	CHECK(anim_open(&s, NULL, 0) == ANIM_ERR_TRUNCATED);

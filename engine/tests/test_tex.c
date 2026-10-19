@@ -86,6 +86,15 @@ int main(int argc, char **argv)
 	tex_section t;
 	CHECK(tex_open(&t, raw, size) == TEX_OK);
 	CHECK(t.texture_count == 3 && t.binding_count == 4);
+	{                                                           /* tables only (the streamed hi-res pack): the data offsets are checked against the whole size */
+		tex_section tt;
+		uint32_t dof = (uint32_t)raw[24] | (uint32_t)raw[25] << 8 | (uint32_t)raw[26] << 16 | (uint32_t)raw[27] << 24;
+		CHECK(tex_open_tables(&tt, raw, dof, size) == TEX_OK && tt.texture_count == 3 && tt.binding_count == 4 && tt.size == size);
+		CHECK(tex_get(&tt, 1).pixel_offset == tex_get(&t, 1).pixel_offset);
+		CHECK(tex_open_tables(&tt, raw, dof, size - 16) != TEX_OK);        /* the declared total must be the real one */
+		CHECK(tex_open_tables(&tt, raw, size + 16, size) != TEX_OK);       /* more available than exists */
+		CHECK(tex_open_tables(&tt, raw, 40, size) != TEX_OK);              /* tables cut short */
+	}
 	tex_info t0 = tex_get(&t, 0), t1 = tex_get(&t, 1), t2 = tex_get(&t, 2);
 	CHECK(t0.psm == TEX_PSMT8 && t0.width == 16 && t0.height == 16 && t0.mip_count == 2 && t0.clut_entries == 256);
 	CHECK(t0.flags == 0 && t0.source_id == 0xE1780001u && t0.pixel_bytes == 256 + 64);

@@ -47,6 +47,9 @@ static int src_binding(void *user, uint32_t shader_id, mat_binding_t *out)
 	out->flags = 0;
 	if (b.flags & TEX_B_ALPHA_TEST) out->flags |= MAT_ALPHA_TEST;
 	if (b.blend >= TEX_BLEND_ALPHA) out->flags |= MAT_BLEND;
+	out->add = b.blend == TEX_BLEND_ADD;
+	out->cc = (uint8_t)b.change;
+	out->tex2 = b.texture2 == TEX_NONE ? (int16_t)-1 : (int16_t)b.texture2;
 	if (b.flags & TEX_B_TWO_SIDED) out->flags |= MAT_TWO_SIDED;
 	out->uv_scale[0] = b.uv_scale[0];
 	out->uv_scale[1] = b.uv_scale[1];
@@ -90,14 +93,42 @@ static int src_lightmap(void *user, unsigned page, tex_image_t *out)
 	return 0;
 }
 
-int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index)
+/* Texture source over a TEXS-layout texture set (HUD and effect sprites): bindings keyed by tag id, textures by index. */
+void world_texset_source(tex_source_t *out, texset_t *ts)
+{
+	memset(out, 0, sizeof *out);
+	out->binding = src_binding;
+	out->texture = src_texture;
+	out->user = ts;
+	out->texture_count = ts->has ? ts->tex.texture_count : 0;
+}
+
+int world_load_tex(world_t *w, arena_t *a, const char *tex_path)
+{
+	size_t raw;
+	uint8_t *sec;
+	memset(&w->bsp_tex, 0, sizeof w->bsp_tex);
+	if (!tex_path) return 0;
+	sec = world_load_section(a, tex_path, "TEXS", &raw, 0);
+	if (sec && tex_open(&w->bsp_tex.tex, sec, raw) == TEX_OK) {
+		w->bsp_tex.has = 1;
+		printf("[tex] %s TEXS: %u textures, %u shader bindings, %u KB\n", tex_path, (unsigned)w->bsp_tex.tex.texture_count,
+		       (unsigned)w->bsp_tex.tex.binding_count, (unsigned)(raw / 1024));
+	} else {
+		printf("[warn] no usable TEXS in %s: drawing flat\n", tex_path);
+	}
+	return 0;
+}
+
+int world_load_bsp(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index)
 {
 	size_t raw;
 	uint8_t *sec;
 	char tag[8];
 	bsp_status bs;
-	memset(w, 0, sizeof *w);
 	w->bsp_index = bsp_index;
+	w->has_lm = 0;
+	memset(&w->lm, 0, sizeof w->lm);
 	/* section tags: BSP0..BSP9, BSPA.. (docs/08-bsp-section.md) */
 	snprintf(tag, sizeof tag, "BSP%c", bsp_index < 10 ? '0' + bsp_index : 'A' + (bsp_index - 10));
 	sec = world_load_section(a, pack_path, tag, &raw, 0);
@@ -107,16 +138,7 @@ int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_pa
 	printf("[pack] %s %s: %u materials, %u batches, %u tris, %u clusters, %u portals, %u KB\n", pack_path, tag,
 	       (unsigned)w->bsp.material_count, (unsigned)w->bsp.batch_count, (unsigned)w->bsp.triangle_count,
 	       (unsigned)w->bsp.cluster_count, (unsigned)w->bsp.portal_count, (unsigned)(raw / 1024));
-
 	if (tex_path) {
-		sec = world_load_section(a, tex_path, "TEXS", &raw, 0);
-		if (sec && tex_open(&w->bsp_tex.tex, sec, raw) == TEX_OK) {
-			w->bsp_tex.has = 1;
-			printf("[tex] %s TEXS: %u textures, %u shader bindings, %u KB\n", tex_path, (unsigned)w->bsp_tex.tex.texture_count,
-			       (unsigned)w->bsp_tex.tex.binding_count, (unsigned)(raw / 1024));
-		} else {
-			printf("[warn] no usable TEXS in %s: drawing flat\n", tex_path);
-		}
 		snprintf(tag, sizeof tag, "LM%d", bsp_index);
 		sec = world_load_section(a, tex_path, tag, &raw, 1);
 		if (sec && lm_open(&w->lm, sec, raw) == TEX_OK) {
@@ -133,6 +155,13 @@ int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_pa
 	w->source.user = w;
 	w->source.texture_count = w->bsp_tex.has ? w->bsp_tex.tex.texture_count : 0;
 	return 0;
+}
+
+int world_load(world_t *w, arena_t *a, const char *pack_path, const char *tex_path, int bsp_index)
+{
+	memset(w, 0, sizeof *w);
+	world_load_tex(w, a, tex_path);
+	return world_load_bsp(w, a, pack_path, tex_path, bsp_index);
 }
 
 int world_load_objects(world_t *w, arena_t *a, const char *obj_path)
@@ -153,6 +182,9 @@ int world_load_objects(world_t *w, arena_t *a, const char *obj_path)
 	if (sec && anim_open(&w->anims, sec, raw) == ANIM_OK)
 		printf("[obj] %s ANIM: %u graphs, %u animations, %u KB\n", obj_path, (unsigned)w->anims.graph_count, (unsigned)w->anims.anim_count, (unsigned)(raw / 1024));
 	else memset(&w->anims, 0, sizeof w->anims);
+	sec = world_load_section(a, obj_path, "MOUT", &raw, 1);
+	if (!sec || mouth_open(&w->mouth, sec, raw) != 0) memset(&w->mouth, 0, sizeof w->mouth);
+	else printf("[obj] %s MOUT: %u dialogue lines with mouth data, %u KB\n", obj_path, (unsigned)w->mouth.count, (unsigned)(raw / 1024));
 	sec = world_load_section(a, obj_path, "OTEX", &raw, 1);
 	w->obj_tex.has = 0;
 	if (sec && tex_open(&w->obj_tex.tex, sec, raw) == TEX_OK) {
@@ -160,6 +192,9 @@ int world_load_objects(world_t *w, arena_t *a, const char *obj_path)
 		printf("[obj] %s OTEX: %u textures, %u bindings, %u KB\n", obj_path, (unsigned)w->obj_tex.tex.texture_count,
 		       (unsigned)w->obj_tex.tex.binding_count, (unsigned)(raw / 1024));
 	}
+	sec = world_load_section(a, obj_path, "CCHG", &raw, 1);
+	if (!sec || cchg_open(&w->cchg, sec, raw) != 0) memset(&w->cchg, 0, sizeof w->cchg);
+	else printf("[obj] %s CCHG: %u models with colour change\n", obj_path, (unsigned)w->cchg.count);
 	memset(&w->sky, 0, sizeof w->sky);
 	sec = world_load_section(a, obj_path, "SKY0", &raw, 1);
 	if (sec && raw >= 64 && memcmp(sec, "SKYS", 4) == 0) {
@@ -170,11 +205,12 @@ int world_load_objects(world_t *w, arena_t *a, const char *obj_path)
 		memcpy(f, q + 4, sizeof f);                     /* little-endian host data, like the pack */
 		w->sky.valid = 1;
 		w->sky.model_tag = tag;
+		memcpy(&w->sky.model_tag2, sec + 60, 4);
 		memcpy(w->sky.fog_rgb, f, 12);
 		w->sky.fog_near = f[3]; w->sky.fog_far = f[4]; w->sky.fog_density = f[5];
 		memcpy(w->sky.outdoor, f + 6, 12);
 		memcpy(w->sky.indoor, f + 9, 12);
-		printf("[obj] SKY0: model tag %08x, fog near %.0f far %.0f density %.2f\n", (unsigned)tag, w->sky.fog_near, w->sky.fog_far, w->sky.fog_density);
+		printf("[obj] SKY0: model tags %08x %08x, fog near %.0f far %.0f density %.2f\n", (unsigned)tag, (unsigned)w->sky.model_tag2, w->sky.fog_near, w->sky.fog_far, w->sky.fog_density);
 	}
 	memset(&w->obj_source, 0, sizeof w->obj_source);
 	w->obj_source.binding = src_binding;
