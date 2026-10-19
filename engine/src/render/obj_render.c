@@ -194,7 +194,10 @@ static u64 hires_tex0(obj_render_t *o, int tex)
 		SyncDCache((void *)v.clut, (u8 *)v.pixels + v.pixel_bytes);       /* the DMA reads RAM, not the cache */
 	}
 	img.pixels = v.pixels; img.clut = v.clut; img.pixel_bytes = v.pixel_bytes; img.clut_bytes = v.clut_bytes; img.w = v.w; img.h = v.h; img.psm = v.psm;
-	return rb_extra_tex0(o->hires_key_base, (unsigned)tex, &img, 0);
+	{
+		u64 t0 = rb_extra_tex0(o->hires_key_base, (unsigned)tex, &img, 0);
+		return o->want_hi == 2 ? 0 : t0;
+	}
 }
 
 static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, const uint16_t *perm, unsigned regions,
@@ -390,7 +393,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 				w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
 				diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
 				lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
-				o->want_hi = o->hires != NULL && diameter >= o->hires_px;
+				o->want_hi = o->hires == NULL ? 0 : diameter >= o->hires_px ? 1 : diameter >= 0.5f * o->hires_px ? 2 : 0;      /* 2: approaching, load and upload the variant now, draw the resident one until it counts */
 				if (pass && !model_has_blend(o, ob->model, ob->perm, ob->region_count, lod)) continue;
 				if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { if (!pass) o->st_culled++; continue; }
 				light_at(o, c, &light);

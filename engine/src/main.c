@@ -57,6 +57,7 @@ static float s_cine_light[3] = { 1.0f, 1.0f, 1.0f }, s_cine_amb = 1.0f;     /* c
 static obj_render_t s_objr;
 static hires_t s_hires;
 static int s_hires_open;
+static uint32_t s_hires_loads = 1;
 static float s_hires_px;
 static char s_hires_path[160];
 
@@ -437,7 +438,8 @@ int main(int argc, char *argv[])
 			if (fsz > 0 && hires_open(&s_hires, &s_arena, hires_file_read, NULL, (size_t)fsz, (unsigned)cfg_int(&s_cfg, "hiresslots", 3)) == 0) {
 				s_hires_px = 200.0f;
 				cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
-				s_hires.max_loads = (uint32_t)cfg_int(&s_cfg, "hiresloads", 1);
+				s_hires_loads = (uint32_t)cfg_int(&s_cfg, "hiresloads", 1);
+				s_hires.max_loads = s_hires_loads;
 				s_hires_open = 1;
 				printf("[hires] %s: %u variants of %u textures, %u slots of %u KB, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (unsigned)s_hires.slots, (unsigned)(s_hires.slot_bytes / 1024u), (double)s_hires_px);
 			} else printf("[hires] none (%s)\n", s_hires_path);

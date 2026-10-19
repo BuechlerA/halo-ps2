@@ -741,6 +741,7 @@ for the frame budget; the uniform's badge and trim, Keyes' hologram beams and th
 **Unmeasured**: the cost of the reads on a real disc (a first close-up needs about ten 64 .. 128 KB reads spread over as many frames); no prefetch hook yet (a shot's cut could request the textures of the objects it is about to show); PCSX2 reads from the host file system. UNVERIFIED on hardware (ADR-022).
 (5) **Cinematic object lighting**: the cluster light probes leave objects 1.2 .. 2.4 x darker than the video (Keyes' cheek (100, 93, 51) against (144, 121, 81), his shirt (54, 70, 47) against (133, 137, 110)); during a cinematic the engine multiplies the probes by (2.5, 2.3, 2.6)
 and the ambient by 1.3 more (cfg `objlight`, `objamb`; gameplay keeps the probes: gain 1). Face now (141, 121, 77) / shirt (100, 115, 91): a fit, not the Xbox's object lighting, which is not decoded. `dlobj`, `dlwall`, `objchroma` are the other knobs.
+**Prefetch (addendum)**: an object whose diameter is between half of `hirespx` and `hirespx` (approaching) already loads and uploads its variants (drawn with the resident texture until it counts), so a camera move or a cut onto a growing object finds them in VRAM. On the a10 intro 202 loads / 21.7 MB read (ticks 60 .. 3500), 2679 refusals for the one-load-a-frame budget (the ring of three slots must outlive two frames, so more loads a frame need more slots: memory).
 (6) a30 and b40 object packs were rebuilt (MOUT, face overlays, hires); the other six maps have no converted packs at all.
 
 ## Open decisions
