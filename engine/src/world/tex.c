@@ -25,10 +25,14 @@ static uint32_t level_bytes(uint32_t psm, uint32_t w, uint32_t h)
 	return pad16((uint64_t)w * h * (psm == TEX_PSMT4 ? 4u : 8u) / 8u);
 }
 
-tex_status tex_open(tex_section *s, const uint8_t *d, size_t size)
+tex_status tex_open(tex_section *s, const uint8_t *d, size_t size) { return tex_open_tables(s, d, size, size); }
+
+/* `avail` bytes of the section (at least its header and tables) are at `d`, the whole section is `size` bytes long: the data offsets are checked against `size`,
+ * the tables against `avail`. s->data then covers only `avail` bytes: read the pixels and CLUTs from where tex_get says (the streamed high resolution textures do). */
+tex_status tex_open_tables(tex_section *s, const uint8_t *d, size_t avail, size_t size)
 {
 	memset(s, 0, sizeof *s);
-	if (size < HEADER_SIZE) return TEX_ERR_TRUNCATED;
+	if (avail < HEADER_SIZE || avail > size) return TEX_ERR_TRUNCATED;
 	if (memcmp(d, "TEXS", 4) != 0 || rd16(d + 4) != 1) return TEX_ERR_MAGIC;
 	uint32_t nt = rd32(d + 8), nb = rd32(d + 12), to = rd32(d + 16), bo = rd32(d + 20);
 	uint32_t dof = rd32(d + 24);
@@ -36,8 +40,8 @@ tex_status tex_open(tex_section *s, const uint8_t *d, size_t size)
 	if (nt >= TEX_NONE || nb > 0xFFFFu) return TEX_ERR_LAYOUT;
 	if (to % 16 || bo % 16 || dof % 16 || dof > size) return TEX_ERR_LAYOUT;
 	if (to < HEADER_SIZE || bo < HEADER_SIZE) return TEX_ERR_LAYOUT;
-	if (to > size || (uint64_t)nt * TEXTURE_REC > size - to) return TEX_ERR_TRUNCATED;
-	if (bo > size || (uint64_t)nb * BINDING_REC > size - bo) return TEX_ERR_TRUNCATED;
+	if (to > avail || (uint64_t)nt * TEXTURE_REC > avail - to) return TEX_ERR_TRUNCATED;
+	if (bo > avail || (uint64_t)nb * BINDING_REC > avail - bo) return TEX_ERR_TRUNCATED;
 	s->data = d;
 	s->size = size;
 	s->texture_count = nt;

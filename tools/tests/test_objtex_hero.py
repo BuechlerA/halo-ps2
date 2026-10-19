@@ -1,10 +1,12 @@
 """Hero textures (objtex.HERO, ADR-073): sizing and budget rules on plain numbers, and on the real a10 map (skipped without assets/decompressed/a10.map): the command display
 layers, the uniforms and Cortana keep up to 256 texels per side inside their own allowance, and the ordinary textures keep the size their budget gives them."""
+import os
+import struct
 import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1])]
-from halo2ps2 import objtex, texconv  # noqa: E402
+from halo2ps2 import hp2, objtex, texconv  # noqa: E402
 
 
 def test_sizes():
@@ -70,9 +72,62 @@ def test_real_a10():
     print(f"real a10: {len(seen)} hero textures, {hero_bytes / 1024:.0f} KiB (allowance {objtex.HERO_BUDGET // 1024} KiB), {big} ordinary 128 x 128")
 
 
+def synthetic_hires():
+    """An OtexResult-shaped object: 5 base textures, variants for 1, 3 and 4 (one PSMT4 at 256 x 256, one PSMT8 128 x 64, one PSMT8 256 x 128), pixels a known pattern."""
+    class R:
+        pass
+    r = R()
+    r.textures = [object()] * 5
+    r.hires = {}
+    for base, (w, h, psm) in ((1, (256, 256, texconv.PSMT4)), (3, (128, 64, texconv.PSMT8)), (4, (256, 128, texconv.PSMT8))):
+        n = w * h // (2 if psm == texconv.PSMT4 else 1)
+        entries = 16 if psm == texconv.PSMT4 else 256
+        pix = bytes((base * 31 + i) & 0xFF for i in range(n))
+        clut = bytes((base * 7 + i) & 0xFF for i in range(entries * 4))
+        r.hires[base] = texconv.Ps2Texture(0x1000 + base, w, h, psm, 0, clut, entries, [pix], 0x80808080)
+    return r
+
+
+def test_hires_blob():
+    r = synthetic_hires()
+    texs, hmap = objtex.build_hires(r)
+    v = texconv.parse_texs(texs)
+    assert [(t["width"], t["height"], t["mips"]) for t in v.textures] == [(256, 256, 1), (128, 64, 1), (256, 128, 1)] and not v.bindings
+    assert [t["source_id"] for t in v.textures] == [0x1001, 0x1003, 0x1004]
+    count, *m = struct.unpack_from("<I5H", hmap)
+    assert count == 5 and m == [0xFFFF, 0, 0xFFFF, 1, 2] and len(hmap) % 4 == 0
+    for t, base in zip(v.textures, (1, 3, 4)):                      # clut then pixels, contiguous (the engine reads them in one go)
+        assert t["pixel_offset"] - t["clut_offset"] == t["clut_entries"] * 4
+        assert v.data[t["pixel_offset"]:t["pixel_offset"] + t["pixel_bytes"]] == r.hires[base].mips[0]
+    pack = hp2.build("t", [("TEXS", texs), ("HMAP", hmap)], compress=False)
+    pk = hp2.parse(pack)
+    assert all(s.stored_size == s.raw_size for s in pk.sections)
+    if os.environ.get("HIRES_FIXTURE"):
+        Path(os.environ["HIRES_FIXTURE"]).write_bytes(pack)
+
+
+def test_real_hires():
+    mp = Path(__file__).resolve().parents[2] / "assets" / "hp2" / "a10.hires.hp2"
+    if not mp.exists():
+        print("real a10 hires: skipped")
+        return
+    pk = hp2.parse(mp.read_bytes())
+    v = texconv.parse_texs(pk.read("TEXS"))
+    hm = pk.read("HMAP")
+    count = struct.unpack_from("<I", hm)[0]
+    maps = struct.unpack_from("<%dH" % count, hm, 4)
+    used = [m for m in maps if m != 0xFFFF]
+    assert len(used) == len(v.textures) > 50 and len(set(used)) == len(used)
+    assert all(t["mips"] == 1 and t["pixel_bytes"] <= objtex.HIRES_MAX_BYTES for t in v.textures)
+    assert max(t["width"] for t in v.textures) == 512 and all(t["width"] <= 512 and t["height"] <= 512 for t in v.textures)
+    print(f"real a10 hires: {len(v.textures)} variants of {count} textures, {sum(t['pixel_bytes'] for t in v.textures) / 2**20:.1f} MiB")
+
+
 if __name__ == "__main__":
     test_sizes()
     test_estimate()
     test_table()
+    test_hires_blob()
     test_real_a10()
+    test_real_hires()
     print("ok")

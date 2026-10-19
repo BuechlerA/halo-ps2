@@ -730,5 +730,18 @@ cross-correlation with shifts of up to 40 px: the 4:3 render stretched horizonta
 "hfov 70 across 16:9"). So the video is 4:3 gameplay stretched, and the framings that looked "wrong" (the shot at ticks 2807+ showed a window where the video showed the hologram sphere: too wide a field) were the field of view, not the camera
 points. `widescreen` now defaults to 0 (the PS2 output is 4:3 anyway), 1 keeps the 16:9 variant, 2 is the debug "hfov kept". `scripts/cmp-intro.sh` still stretches the buffer to 16:9 to compare with the video.
 
+## ADR-074 Streamed high resolution object textures; cinematic object lighting
+**Decision**: (1) `objpack.py` writes `<map>.hires.hp2` next to the object pack: for every object texture whose source has more detail than the resident copy a variant at the source's resolution (256 per side, 512 for the HERO set; one mip level; <= 128 KB of pixels;
+16 colours where the hero entry says so), as a TEXS section of textures only plus HMAP (base texture -> variant), stored uncompressed (a10: 169 variants of 181 textures, 6.9 MiB). (2) `world/hires.c`: only the tables are resident; `hires_load` reads CLUT + pixels of one variant
+(one contiguous range) from the pack through a callback into a ring of three staging slots (129 KB each on a10: the DMA reads a slot at the end of the frame, so it must live two frames), at most one load per frame (`hiresloads`). (3) `obj_render.c`: an object whose on-screen
+diameter (640 px scale) is at least `hirespx` (200) asks for the variant of each of its textures: if the GS texture cache already holds it (`tc_find`, a new non-touching lookup) it is drawn at once, otherwise it is loaded and uploaded through `rb_extra_tex0` under a key range of its own
+(`bsp_render_reserve_keys`); until then, or over the frame's load budget, the resident texture is used. The VRAM cache stays the only LRU. (4) `tex_open_tables` opens a TEXS whose pixel data is not in memory; `TEX_MAX_DIM` is 512 (ADR-073).
+**Why**: the arena has no room for resident full resolution textures (high water 24.9 of 25.6 MB with this); close-ups (Keyes, the command display, Cortana) are what needs detail, and only for a few frames at a time. Measured on the a10 intro (ticks 60 .. 3500): 110 loads, 10.4 MB read, 838 refused
+for the frame budget; the uniform's badge and trim, Keyes' hologram beams and the display layers are sharp in the close-ups (frames against the video at 2700 .. 3340).
+**Unmeasured**: the cost of the reads on a real disc (a first close-up needs about ten 64 .. 128 KB reads spread over as many frames); no prefetch hook yet (a shot's cut could request the textures of the objects it is about to show); PCSX2 reads from the host file system. UNVERIFIED on hardware (ADR-022).
+(5) **Cinematic object lighting**: the cluster light probes leave objects 1.2 .. 2.4 x darker than the video (Keyes' cheek (100, 93, 51) against (144, 121, 81), his shirt (54, 70, 47) against (133, 137, 110)); during a cinematic the engine multiplies the probes by (2.5, 2.3, 2.6)
+and the ambient by 1.3 more (cfg `objlight`, `objamb`; gameplay keeps the probes: gain 1). Face now (141, 121, 77) / shirt (100, 115, 91): a fit, not the Xbox's object lighting, which is not decoded. `dlobj`, `dlwall`, `objchroma` are the other knobs.
+(6) a30 and b40 object packs were rebuilt (MOUT, face overlays, hires); the other six maps have no converted packs at all.
+
 ## Open decisions
 None.

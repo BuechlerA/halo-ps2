@@ -40,6 +40,7 @@
 #include "sim/objects.h"
 #include "render/selftest.h"
 #include "world/world.h"
+#include "world/hires.h"
 
 static video_t    s_video;
 static cfg_t      s_cfg;
@@ -52,7 +53,14 @@ static text_batch_t s_text;
 static object_table_t s_objects;
 static fpview_t   s_fp;
 static lodctl_t   s_lod;
+static float s_cine_light[3] = { 1.0f, 1.0f, 1.0f }, s_cine_amb = 1.0f;     /* cinematic object lighting gains (cfg objlight / objamb) */
 static obj_render_t s_objr;
+static hires_t s_hires;
+static int s_hires_open;
+static float s_hires_px;
+static char s_hires_path[160];
+
+static int hires_file_read(void *user, uint32_t offset, void *dst, uint32_t bytes) { (void)user; return file_read_at(s_hires_path, (long)offset, dst, bytes); }
 static int        s_have_objects;
 static gamedata_t s_gd;
 static game_t     s_game;
@@ -378,6 +386,16 @@ int main(int argc, char *argv[])
 			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
 			s_objr.unlit_add = (int)cfg_int(&s_cfg, "unlitadd", 1);
+			{
+				float v[3] = { 1.0f, 1.0f, 1.0f };
+				s_objr.dl_gain = 1.0f; cfg_floats(&s_cfg, "dlobj", &s_objr.dl_gain, 1);
+				/* cinematic object lighting, measured against the video (ADR-073): the cluster probes alone leave objects 1.2 .. 2.4 x darker than the Xbox shows them; gameplay keeps the probes as they are */
+				s_cine_light[0] = 2.5f; s_cine_light[1] = 2.3f; s_cine_light[2] = 2.6f; s_cine_amb = 1.3f; s_objr.light_chroma = 1.0f;
+				cfg_floats(&s_cfg, "objamb", &s_cine_amb, 1); cfg_floats(&s_cfg, "objchroma", &s_objr.light_chroma, 1);
+				if (cfg_floats(&s_cfg, "objlight", v, 3) == 3) { s_cine_light[0] = v[0]; s_cine_light[1] = v[1]; s_cine_light[2] = v[2]; }
+				s_objr.light_gain[0] = s_objr.light_gain[1] = s_objr.light_gain[2] = 1.0f; s_objr.amb_gain = 1.0f;
+				{ float g = 0.33f; if (cfg_floats(&s_cfg, "dlwall", &g, 1) == 1) bsp_render_set_dl_gain(g); }
+			}
 			g_face_compose = (int)cfg_int(&s_cfg, "facecompose", g_face_compose);
 			memset(s_objr.cc_perm, 0xFF, sizeof s_objr.cc_perm);
 			{                                                      /* cfg ccperm "508:3 223:5": colour change permutations read off the Xbox video */
@@ -408,6 +426,23 @@ int main(int argc, char *argv[])
 		if (file_size_of(sp) >= 0 && stream_ee_open(&s_see, &s_sp, &s_arena, sp, (int)cfg_int(&s_cfg, "streamlog", 0)) == 0) { s_stream_on = 1; printf("[stream] %s open\n", sp); }
 	}
 	mapp_reserve(&s_arena);                                   /* persistent mission memory (path scratch) before the BSP mark */
+	if (s_have_objects && cfg_int(&s_cfg, "hires", 1)) {          /* streamed high resolution object textures (ADR-074): <obj pack>.hires.hp2 next to the object pack; persistent, so before the BSP mark */
+		const char *obj = cfg_str(&s_cfg, "obj", "");
+		const char *dot = strstr(obj, ".obj.hp2");
+		s_hires_open = 0;
+		if (dot && (size_t)(dot - obj) + 11u < sizeof s_hires_path) {
+			long fsz;
+			memcpy(s_hires_path, obj, (size_t)(dot - obj)); strcpy(s_hires_path + (dot - obj), ".hires.hp2");
+			fsz = file_size_of(s_hires_path);
+			if (fsz > 0 && hires_open(&s_hires, &s_arena, hires_file_read, NULL, (size_t)fsz, (unsigned)cfg_int(&s_cfg, "hiresslots", 3)) == 0) {
+				s_hires_px = 200.0f;
+				cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
+				s_hires.max_loads = (uint32_t)cfg_int(&s_cfg, "hiresloads", 1);
+				s_hires_open = 1;
+				printf("[hires] %s: %u variants of %u textures, %u slots of %u KB, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (unsigned)s_hires.slots, (unsigned)(s_hires.slot_bytes / 1024u), (double)s_hires_px);
+			} else printf("[hires] none (%s)\n", s_hires_path);
+		}
+	}
 	s_bsp_mark = arena_mark(&s_arena);
 	{
 		int first_bsp = (int)cfg_int(&s_cfg, "bsp", 0);
@@ -421,6 +456,11 @@ int main(int argc, char *argv[])
 	apply_options();   /* every config, with or without an object pack (ADR-059); `skyfog` reads s_world.sky, loaded with the obj pack above */
 	if (s_have_objects) {
 		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
+		if (s_hires_open) {
+			s_objr.hires = &s_hires;
+			s_objr.hires_px = s_hires_px;
+			s_objr.hires_key_base = bsp_render_reserve_keys(s_world.obj_tex.has ? s_world.obj_tex.tex.texture_count : 0);
+		}
 		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
 		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
@@ -691,6 +731,12 @@ int main(int argc, char *argv[])
 		if ((frame % 6) == 0) profiler_overlay(&s_prof, &s_text);   /* a few updates a second: float formatting is slow */
 		{
 			camera_t rcam = s_cam;
+			if (mapp_active()) {                                       /* cinematic object lighting vs gameplay */
+				int cin = mapp_mission()->cine && mapp_mission()->cine->screen.cinematic;
+				unsigned lk;
+				for (lk = 0; lk < 3; lk++) s_objr.light_gain[lk] = cin ? s_cine_light[lk] : 1.0f;
+				s_objr.amb_gain = cin ? s_cine_amb : 1.0f;
+			}
 			if (cfg_int(&s_cfg, "widescreen", 0) == 2) {              /* debug: the horizontal field of view kept (70 degrees across the 16:9 picture) */
 				rcam.aspect = 16.0f / 9.0f;
 			} else if (cfg_int(&s_cfg, "widescreen", 0)) {                 /* 1: 16:9 with the 4:3 vertical field of view kept (hfov 70 -> 86 degrees, anamorphic buffer). Off by default: measured against the Xbox video (ADR-073) the picture is the 4:3 render, hfov 70 */
@@ -756,6 +802,7 @@ int main(int argc, char *argv[])
 				       (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024), (unsigned)(s_arena.high / 1024),
 				       (unsigned)rs->pages_free, (unsigned)bsp_render_cache_pages());
 			}
+			if (s_hires_open) printf("[hires] %u loads, %u KB read, %u refused (over the per frame budget)\n", (unsigned)s_hires.loads, (unsigned)(s_hires.bytes_read / 1024u), (unsigned)s_hires.refused);
 			printf("[done] frames=%u dropped=%u (%.2f%%)\n", s_prof.frames, s_prof.dropped,
 			       100.0f * (float)s_prof.dropped / (float)(s_prof.frames ? s_prof.frames : 1));
 			if (cfg_int(&s_cfg, "hold", 0)) {

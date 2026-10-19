@@ -75,6 +75,7 @@ typedef struct {
  * in place (the packets are static, so a patched batch stays patched until the light set changes) to blend toward the light's colour with a (1 - d / reach)^2 falloff:
  * walls are lit by baked lightmaps, this is their only dynamic term. n = 0 restores every batch. */
 void bsp_render_set_dynamic_lights(const float (*rows)[7], unsigned n);
+void bsp_render_set_dl_gain(float g);   /* default 0.33 */
 
 /* One-time: VU1 microprogram, double buffer, chain memory (the single boot-time malloc). */
 int  bsp_render_init(const video_t *v);

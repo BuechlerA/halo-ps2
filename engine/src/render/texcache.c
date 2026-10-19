@@ -32,6 +32,14 @@ unsigned tc_pages_free(const tc_t *t)
 	return n;
 }
 
+const tc_entry *tc_find(const tc_t *t, uint32_t key)
+{
+	unsigned e;
+	if (key >= t->max_keys || !t->map[key]) return NULL;
+	e = (unsigned)t->map[key] - 1u;
+	return t->entry[e].valid ? &t->entry[e] : NULL;
+}
+
 static void evict(tc_t *t, unsigned e)
 {
 	tc_entry *x = &t->entry[e];

@@ -47,5 +47,7 @@ tc_result tc_acquire(tc_t *t, uint32_t key, unsigned pages, uint32_t bytes, cons
 /* Forget everything (BSP switch). */
 void tc_flush(tc_t *t);
 unsigned tc_pages_free(const tc_t *t);
+/* The valid entry of `key` or NULL; does not touch it (no LRU update, no statistics). */
+const tc_entry *tc_find(const tc_t *t, uint32_t key);
 
 #endif

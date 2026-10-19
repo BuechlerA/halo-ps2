@@ -9,6 +9,7 @@
 #include "sim/objects.h"
 #include "world/bsp.h"
 #include "world/cchg.h"
+#include "world/hires.h"
 
 typedef struct {
 	const object_table_t *table;
@@ -32,6 +33,11 @@ typedef struct {
 	float                 sky_planet_gain;                   /* colour gain (1 .. 1.99) of the sky's non-additive parts (the planet): cfg skyplanet */
 	uint8_t               cc_perm[1280];                      /* per object index: the permutation of change colour a (0xFF = pick from the seed): cfg ccperm "obj:perm ..." */
 	const fx_t            *fx;                               /* dynamic lights of attached fixtures (alert lights, flames): objects near them take their colour */
+	float                 dl_gain, light_gain[3], light_chroma, amb_gain;             /* cfg dlobj (weight of dynamic lights on objects, 1.0) / objlight (rgb multiplier of the cluster lighting, 1 1 1) */
+	hires_t              *hires;                             /* streamed high resolution variants (NULL: none), their texcache key range, and the on-screen diameter (640 px scale) from which an object asks for them */
+	unsigned              hires_key_base;
+	float                 hires_px;
+	int                   want_hi;                            /* set per object by obj_render_pass */
 	int                   unlit_add;                          /* additive parts ignore the object lighting (cfg unlitadd, default 1) */
 	unsigned              sky_hide;                           /* debug (cfg skyhide): bit r hides region r of the sky model */
 	/* statistics of the last pass, copied into render_stats by the caller */

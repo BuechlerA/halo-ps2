@@ -442,14 +442,29 @@ class OtexResult:
     estimate_dim: int = 256
     untextured_shaders: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
+    hires: dict[int, texconv.Ps2Texture] = field(default_factory=dict)
 
     @property
     def texture_bytes(self) -> int:
         return sum(t.total_bytes for t in self.textures)
 
 
+# Streamed high resolution variants (ADR-074): see build_hires / engine/src/world/hires.c. A variant is at most HIRES_MAX_BYTES of pixels (one staging slot).
+HIRES_DIM, HIRES_HERO_DIM, HIRES_MAX_BYTES = 256, 512, 128 * 1024
+
+
+def build_hires(res: "OtexResult") -> tuple[bytes, bytes]:
+    """(TEXS, HMAP) of the variants of an OtexResult: TEXS holds only textures (one mip level each, no bindings); HMAP is u32 count of the base textures, then a u16 per base
+    texture: the index of its variant in TEXS or 0xFFFF."""
+    order = sorted(res.hires)
+    texs = texconv.build_texs([res.hires[i] for i in order], [])
+    index = {b: n for n, b in enumerate(order)}
+    hmap = struct.pack("<I", len(res.textures)) + b"".join(struct.pack("<H", index.get(i, 0xFFFF)) for i in range(len(res.textures)))
+    return texs, hmap + bytes(-len(hmap) % 4)
+
+
 def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_BUDGET,
-               max_dim: int = texconv.MAX_TEX) -> OtexResult:
+               max_dim: int = texconv.MAX_TEX, hires_enabled: bool = True) -> OtexResult:
     """The OTEX blob for the given shader tag ids (sorted, deduplicated here)."""
     ids = sorted(set(shader_ids))
     shaders = {sid: resolve_object_shader(m, sid) for sid in ids}
@@ -518,6 +533,23 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
         hcap //= 2
     textures: list[texconv.Ps2Texture] = []
     seen: dict[tuple[int, int, int], int] = {}
+    hires: dict[int, texconv.Ps2Texture] = {}              # base texture index -> its streamed high resolution variant (HIRES_* below)
+
+    def hi_tex(index: int, base: texconv.Ps2Texture, convert, s) -> None:
+        """The streamed variant of an object texture: the source at full resolution (256 per side, 512 for a hero texture), one mip level, only when it is
+        larger than the resident one and its pixels fit a staging slot (HIRES_MAX_BYTES). Sky bitmaps are already at their full size."""
+        if m.by_id[s.bitmap_id].path.startswith("sky\\") or not hires_enabled:
+            return
+        cap = HIRES_HERO_DIM if hero_dim(s) else HIRES_DIM
+        try:
+            hi = convert(cap, hero_bits(s))
+        except (bitmaps.BitmapError, ValueError):
+            return
+        hi.mips = hi.mips[:1]
+        if (hi.width <= base.width and hi.height <= base.height) or len(hi.mips[0]) > HIRES_MAX_BYTES:
+            return
+        hires[index] = hi
+
     for sid in ids:
         s = shaders[sid]
         if s.blank:
@@ -545,6 +577,8 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
                 continue
             seen[key] = len(textures)
             textures.append(tex)
+            hi_tex(len(textures) - 1, tex, lambda hd, hb: convert_product_texture(m, img, s.bitmap_id, dim, hd, hb) if s.product else convert_object_texture(
+                m, img, s.bitmap_id, cap, dim, (refl_imgs[s.reflect[0]], s.reflect[1]) if s.reflect else None, s.tint or None, hd, hb), s)
         s.texture = seen[key]
         tex = textures[s.texture]
         if s.mask_bitmap and s.change_source:
@@ -556,6 +590,7 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
                         raise bitmaps.BitmapError("colour change mask is not a decodable 2D image")
                     seen[key2] = len(textures)
                     textures.append(convert_cc_texture(m, plan[key][0], mimgs[0], s.bitmap_id, dim, min(hero_dim(s), hcap)))
+                    hi_tex(len(textures) - 1, textures[-1], lambda hd, hb, mi=mimgs[0], base=plan[key][0]: convert_cc_texture(m, base, mi, s.bitmap_id, dim, hd), s)
                 except bitmaps.BitmapError:
                     s.change_source = 0
             if s.change_source:
@@ -564,4 +599,4 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             s.blend = texconv.BLEND_OPAQUE        # the map has no alpha: nothing to test
     blob = texconv.build_texs(textures, [shaders[sid] for sid in ids])
     untextured = sum(1 for s in shaders.values() if s.texture == texconv.NO_TEXTURE)
-    return OtexResult(blob, shaders, textures, dim, max_dim, untextured, reasons)
+    return OtexResult(blob, shaders, textures, dim, max_dim, untextured, reasons, hires)

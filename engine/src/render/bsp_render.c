@@ -397,6 +397,9 @@ static uint8_t *dl_colours(u32 batch, u32 *verts, float *centre, float *scale, c
 	return (uint8_t *)(uintptr_t)raw.col;
 }
 
+static float s_dl_gain = 0.33f;                         /* strength of a dynamic light on the vertex colours at its centre (squared falloff) */
+void bsp_render_set_dl_gain(float g) { s_dl_gain = g; s_dl_hash = ~s_dl_hash; }
+
 static void dl_apply(void)
 {
 	u32 hash = 2166136261u, i, b, k;
@@ -441,7 +444,7 @@ static void dl_apply(void)
 					float dx = wp[0] - s_dl[l][0], dy = wp[1] - s_dl[l][1], dz = wp[2] - s_dl[l][2], d = sqrtf(dx * dx + dy * dy + dz * dz), a, mx;
 					if (d >= s_dl[l][6]) continue;
 					a = 1.0f - d / s_dl[l][6];
-					a = a * a * 0.33f;
+					a = a * a * s_dl_gain;
 					mx = s_dl[l][3] > s_dl[l][4] ? s_dl[l][3] : s_dl[l][4];
 					if (s_dl[l][5] > mx) mx = s_dl[l][5];
 					if (mx < 0.05f) continue;
@@ -916,6 +919,11 @@ unsigned bsp_render_reserve_keys(unsigned count)
 	s_extra_total += count;
 	tc_init(&s_tc, s_window_pages - CACHE_FIRST_PAGE, FONT_CLUT_SLOT, s_obj_key_base + s_obj_count + s_extra_total, 1536u * 1024u);
 	return base;
+}
+
+int rb_extra_resident(unsigned key_base, unsigned index)
+{
+	return tc_find(&s_tc, key_base + index) != NULL;
 }
 
 u64 rb_extra_tex0(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx)

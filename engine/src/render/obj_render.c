@@ -1,6 +1,7 @@
 #include "render/obj_render.h"
 #include "render/gs.h"
 #include "platform/timer.h"
+#include <kernel.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -182,6 +183,20 @@ static int model_has_blend(const obj_render_t *o, int model, const uint16_t *per
 	return 0;
 }
 
+/* GS TEX0 of the streamed high resolution variant of object texture `tex`, or 0 (none, not yet loaded, over this frame's load budget): the caller falls back to the resident one. */
+static u64 hires_tex0(obj_render_t *o, int tex)
+{
+	hires_view v;
+	tex_image_t img;
+	if (!o->hires || tex < 0 || hires_info(o->hires, (unsigned)tex, &v) != 0) return 0;
+	if (!rb_extra_resident(o->hires_key_base, (unsigned)tex)) {
+		if (hires_load(o->hires, (unsigned)tex, &v) != 0) return 0;
+		SyncDCache((void *)v.clut, (u8 *)v.pixels + v.pixel_bytes);       /* the DMA reads RAM, not the cache */
+	}
+	img.pixels = v.pixels; img.clut = v.clut; img.pixel_bytes = v.pixel_bytes; img.clut_bytes = v.clut_bytes; img.w = v.w; img.h = v.h; img.psm = v.psm;
+	return rb_extra_tex0(o->hires_key_base, (unsigned)tex, &img, 0);
+}
+
 static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, const uint16_t *perm, unsigned regions,
                            const object_nodes_t *nodes, unsigned lod, const scen_light *light, unsigned budget, const cc_tints *cc, int pass)
 {
@@ -215,7 +230,10 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 			}     /* pass 0: opaque and alpha tested parts, pass 1: blended parts (no Z write, far to near) */
 			if (rc->opt->textures && mb.tex >= 0 && o->textures && o->textures->texture) {
 				tex_image_t img;
-				if (o->textures->texture(o->textures->user, mb.tex, &img) == 0) tex0 = rb_object_tex0((unsigned)mb.tex, &img, 0);
+				if (o->textures->texture(o->textures->user, mb.tex, &img) == 0) {
+					if (o->want_hi) tex0 = hires_tex0(o, mb.tex);
+					if (!tex0) tex0 = rb_object_tex0((unsigned)mb.tex, &img, 0);
+				}
 			}
 			if (tex0) {
 				ad[n].data = tex0;                          ad[n++].addr = GS_A_TEX0_1;
@@ -276,6 +294,14 @@ static void light_at(const obj_render_t *o, const float pos[3], scen_light *l)
 	int cl = o->bsp ? bsp_find_cluster(o->bsp, pos) : -1;
 	if (cl >= 0 && o->world.scen) scen_cluster_light(o->world.scen, (uint32_t)o->bsp_index, (uint32_t)cl, l);
 	else scen_cluster_light(o->world.scen, (uint32_t)o->bsp_index, 0xFFFFu, l);   /* neutral default */
+	{                                                         /* the cluster probe averages a lightmap whose hue is stronger than the Xbox's object lighting: pull toward grey (light_chroma 1 = unchanged), then the gain */
+		unsigned k;
+		float la = 0.30f * l->ambient[0] + 0.59f * l->ambient[1] + 0.11f * l->ambient[2], ls = 0.30f * l->sun[0] + 0.59f * l->sun[1] + 0.11f * l->sun[2];
+		for (k = 0; k < 3; k++) {
+			float a = (la + ((float)l->ambient[k] - la) * o->light_chroma) * o->light_gain[k] * o->amb_gain, s = (ls + ((float)l->sun[k] - ls) * o->light_chroma) * o->light_gain[k];
+			l->ambient[k] = (uint8_t)(a > 255.0f ? 255.0f : a < 0.0f ? 0.0f : a); l->sun[k] = (uint8_t)(s > 255.0f ? 255.0f : s < 0.0f ? 0.0f : s);
+		}
+	}
 	if (o->fx) {                                              /* dynamic point lights of attached fixtures: the red alert of the bridge colours the people in it, the command display turns Keyes teal */
 		const fx_dynlight *dl;
 		unsigned n = fx_dynamic_lights(o->fx, &dl), i, k;
@@ -290,7 +316,7 @@ static void light_at(const obj_render_t *o, const float pos[3], scen_light *l)
 			{                                                 /* weight of the light's own (normalised) colour in what lights the object near it: a pulsing alarm lamp averages about 0.4 of its colour, a hologram projector is steady */
 				float red = (dl[i].rgb[0] - 0.5f * (dl[i].rgb[1] + dl[i].rgb[2])) / mx;
 				if (red < 0.0f) red = 0.0f;
-				a *= 0.6f - 0.3f * red;
+				a *= (0.6f - 0.3f * red) * o->dl_gain; if (a > 1.0f) a = 1.0f;
 			}
 			for (k = 0; k < 3; k++) {
 				float c = dl[i].rgb[k] / mx * 255.0f;
@@ -316,6 +342,8 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	if (!o->world.models || !o->world.scen) return;
 	camera_basis(cam, right, up, fwd);
 	emit_model_setup(rc->chain, rc);
+	if (o->hires) hires_begin_frame(o->hires);
+	o->want_hi = 0;
 
 	/* Visible objects are drawn nearest first: the batch budget runs out in busy scenes (the bridge sees 80 objects, the hangar's crowd among them) and the
 	 * objects that go missing must be the far ones, not the ones with the highest index (Keyes, index 508, vanished in the hologram shot). */
@@ -362,6 +390,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 				w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
 				diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
 				lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
+				o->want_hi = o->hires != NULL && diameter >= o->hires_px;
 				if (pass && !model_has_blend(o, ob->model, ob->perm, ob->region_count, lod)) continue;
 				if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { if (!pass) o->st_culled++; continue; }
 				light_at(o, c, &light);
@@ -374,6 +403,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 		}
 	}
 
+	o->want_hi = 0;
 	if (o->draw_fp && !o->hide_fp && o->fp && o->fp->active) {
 		const fpview_t *f = o->fp;
 		scen_light light;

@@ -221,3 +221,7 @@ at every length under ASan/UBSan. The Python twin is `texconv.parse_texs` / `par
   decoder (`BitmapImage.decodable`) and handled with the object/effect textures.
 * Texture dedupe across shaders is by (bitmap, alpha class); CLUT sharing between textures is not
   attempted.
+
+## Update (ADR-073 / 074): sizes up to 512, streamed variants
+The reader and the validator accept 8..512 texels per side (`TEX_MAX_DIM`, `texconv.MAX_TEX_FORMAT`); the converter's own cap stays 256 and only `texconv.HERO_BITMAPS` (BSP) and `objtex.HERO` (objects) exceed it. `tex_open_tables` opens a section of which only the header and tables are
+in memory (the streamed hi-res pack, `world/hires.h`, whose textures have one mip level and no bindings).
