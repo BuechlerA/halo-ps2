@@ -640,5 +640,11 @@ Keyes. The converted display maps are green: a TINT entry with a fourth value co
 Still different: the overlay's whiteness and diagonal beam brightness, real per-pixel wall lighting by dynamic lights, steam
 wind (the particle system physics constants are not decoded), and the exact purple of Cortana (by eye).
 
+## Open item (ADR-066 follow-up): the marines' legs at the hangar tracking shot (tick 4490 .. 4700)
+The video shows marines marching past the camera (boots and shins at floor level); ours show bare floor. Diagnosis: the camera matches (position and pitch), the marines run the recording `pep_run`
+(`cinconv`: throttle (1, 0) for 9 ticks, then (0, 0), a flag change at tick 30, length 235), starting at the flags `grunt_*_pep_run` (x = -27.4, facing +x), so in our run they take about 0.6 wu of steps
+and stand at x = -26.8, beside and behind the camera (-26.2, y 2.7 .. 5.3), out of its field of view. On the Xbox they keep moving through the shot, so the recording's semantics (the 9 / 21 / 9 / 195 waits, the
+throttle scale or a persistent run flag) are not what `cine_play` assumes. Not resolved: it needs the Xbox's recorded-animation playback (XBE) decoded.
+
 ## Open decisions
 None.
