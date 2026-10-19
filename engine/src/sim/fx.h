@@ -8,7 +8,7 @@
 
 #define FX_MAX_PARTICLES 320
 #define FX_MAX_DECALS 48
-#define FX_MAX_SYSTEMS 24
+#define FX_MAX_SYSTEMS 128
 #define FX_SYS_TYPES 4
 
 typedef struct {

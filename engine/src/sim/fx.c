@@ -223,14 +223,14 @@ static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type
 	p->fade_in = 3; p->fade_out = (uint16_t)(p->life / 2u);
 	p->size0 = 80.0f * range_mid(first.scale); p->size1 = 80.0f * range_mid(mid.scale);
 	if (p->size0 < 0.01f) p->size0 = 0.01f;
-	if (p->size1 < p->size0) p->size1 = p->size0;
+	if (p->size1 < p->size0 * 2.2f) p->size1 = p->size0 * 2.2f;                 /* a puff expands as it cools */
 	p->bitmap = mid.bitmap; p->seq = mid.sequence; p->blend = mid.blend; p->fade_mode = mid.fade_mode;
 	basis(dir, bl, bu);
-	cone = 0.25f * sqrtf(rnd01(f)); a = rnd01(f) * 6.2831853f;
+	cone = 0.42f * sqrtf(rnd01(f)); a = rnd01(f) * 6.2831853f;
 	for (i = 0; i < 3; i++) d[i] = dir[i] * cosf(cone) + (bl[i] * cosf(a) + bu[i] * sinf(a)) * sinf(cone);
 	speed = 0.028f * (0.7f + 0.6f * rnd01(f));
 	for (i = 0; i < 3; i++) { p->pos[i] = pos[i]; p->vel[i] = d[i] * speed; }
-	p->gravity = -0.0003f; p->friction = 0.985f;
+	p->gravity = -0.0004f; p->friction = 0.972f;                 /* buoyant steam slows quickly and rises: a jet becomes a cloud */
 	alpha = range_mid((float[2]){ mid.color1[0], mid.color2[0] }) * st->color_mult[0] * 4.0f;       /* the tag's alpha is a density: steam at 0.15 is a visible puff */
 	if (alpha < 0.3f) alpha = 0.3f;
 	if (alpha > 1.0f) alpha = 1.0f;
@@ -290,13 +290,28 @@ void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const 
 			dl->radius = (L.radius > 0.0f ? L.radius : 1.0f) * 2.5f;
 			if (f->dbg == 3) printf("[fx] dyn light tag %08x key %d at %.1f %.1f %.1f rgb %.2f %.2f %.2f r %.1f\n", (unsigned)r.tag, key, (double)pos[0], (double)pos[1], (double)pos[2], (double)dl->rgb[0], (double)dl->rgb[1], (double)dl->rgb[2], (double)dl->radius);
 		}
-		if ((L.flags & 1u) || gb < 0 || !(p = alloc_particle(f))) return;     /* dynamic lights light the objects around them (above); only the others bloom */
+		if (L.flags & 1u) {                                  /* the walls are lit by baked lightmaps and cannot take a dynamic light: a wide faint disc of its colour in front of the lamp stands in for the wash */
+			if (gb >= 0 && (p = alloc_particle(f))) {
+				float wc[3], mx = 0.01f;
+				unsigned q;
+				for (q = 0; q < 3; q++) { wc[q] = L.color_hi[1 + q]; if (wc[q] > mx) mx = wc[q]; }
+				memset(p, 0, sizeof *p);
+				p->active = 1; p->life = 2; p->age = 0;
+				for (q = 0; q < 3; q++) { p->pos[q] = pos[q]; p->rgba[q] = (uint8_t)colour_byte(wc[q] / mx * 0.9f); p->rgba_end[q] = p->rgba[q]; }
+				p->rgba[3] = p->rgba_end[3] = 0x05;
+				p->size0 = p->size1 = (L.radius > 0.0f ? L.radius : 1.0f) * 3.0f;
+				p->bitmap = (uint16_t)gb; p->seq = 0; p->blend = 3;
+			}
+			return;
+		}
+		if (gb < 0 || !(p = alloc_particle(f))) return;     /* the others bloom */
 		for (i = 0; i < 3; i++) c[i] = 0.55f * L.color_hi[1 + i] + 0.45f;           /* a bright light blooms towards white */
 		size = L.radius > 0.0f ? L.radius : 1.0f;
 		size = 0.05f * (size > 8.0f ? 8.0f : size) + 0.03f;       /* world units of half size: the light's radius is the reach of its light, the bloom is a small part of it */
 		{                                                          /* a bloom is a screen space effect: at a distance it keeps an apparent size (about 3 % of the distance, times the light's reach) */
 			float dx = pos[0] - f->cam[0], dy = pos[1] - f->cam[1], dz = pos[2] - f->cam[2], dist = sqrtf(dx * dx + dy * dy + dz * dz);
-			float apparent = 0.09f * dist * (0.6f + 0.4f * (L.radius > 4.0f ? 4.0f : L.radius));
+			float apparent = 0.13f * dist * (0.6f + 0.4f * (L.radius > 4.0f ? 4.0f : L.radius));
+			if (dist < 12.0f) apparent = 0.0f;                  /* close up it is a lamp, not a bloom */
 			if (apparent > size) size = apparent;
 			if (size > 90.0f) size = 90.0f;
 		}
@@ -308,7 +323,7 @@ void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const 
 			p->pos[0] = pos[0] + dx * inv; p->pos[1] = pos[1] + dy * inv; p->pos[2] = pos[2] + dz * inv;
 		}
 		for (i = 0; i < 3; i++) { p->rgba[i] = (uint8_t)colour_byte(c[i] * 0.9f); p->rgba_end[i] = p->rgba[i]; }
-		p->rgba[3] = p->rgba_end[3] = f->dbg == 2 ? 0x80 : 0x70;
+		p->rgba[3] = p->rgba_end[3] = f->dbg == 2 ? 0x80 : 0x80;
 		if (f->dbg == 2) { p->rgba[0] = p->rgba[1] = p->rgba[2] = 0x80; size = 20.0f; }
 		p->size0 = p->size1 = size;
 		p->bitmap = (uint16_t)gb; p->seq = 0; p->blend = 3;

@@ -628,8 +628,11 @@ the assault rifle's flash cyan). Lights with flag bit 0 (dynamic) register as po
 by the baked lightmaps and stay unlit by them (the Xbox lights them too). Dynamic lights do not bloom (the alert lamps have none on the Xbox).
 (8) Cortana's body and hair (additive `sotr` shaders, three stage combiner programs) are tinted purple (0.62, 0.32, 1.0, measured on the video) in their converted noise map (`objtex.TINT`): the programs are
 not decoded. UNVERIFIED: no frame of her was rendered (the bridge scene she is in does not run in the bot's timeline).
-Still different: the walls' red alert wash, Keyes' cyan hologram overlay (translucent teal Keyes and the beams across him: the display's volume effects are drawn as faint streaks only), steam physics (wind,
-buoyancy), the large engine bells' brightness.
+(9) Follow-ups: objects take the dynamic light's colour by blending toward it (weight 0.9 for a steady light such as the command display, down to 0.35 for a reddish alarm lamp) instead of adding, which turns
+Keyes teal in front of the display; a very faint wide disc of the light's colour stands in for the wall wash (the lightmaps cannot take it); glows of bloom lights grow 13 % of the distance beyond 12 wu (the
+engine bells now match the video's bloom); steam puffs expand 2.2x and rise; the attachment pool holds 128 systems (24 starved the steam jets once the lights took slots).
+Still different: the cyan scan beams and translucency of the hologram (Keyes is teal but solid; the display's volume effects are drawn as faint streaks), real per-pixel wall lighting by dynamic lights, steam
+wind (the particle system physics constants are not decoded), and Cortana's tint was not seen rendered.
 
 ## Open decisions
 None.

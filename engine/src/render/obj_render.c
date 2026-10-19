@@ -268,18 +268,26 @@ static void light_at(const obj_render_t *o, const float pos[3], scen_light *l)
 	int cl = o->bsp ? bsp_find_cluster(o->bsp, pos) : -1;
 	if (cl >= 0 && o->world.scen) scen_cluster_light(o->world.scen, (uint32_t)o->bsp_index, (uint32_t)cl, l);
 	else scen_cluster_light(o->world.scen, (uint32_t)o->bsp_index, 0xFFFFu, l);   /* neutral default */
-	if (o->fx) {                                              /* dynamic point lights of attached fixtures: the red alert of the bridge colours the people in it */
+	if (o->fx) {                                              /* dynamic point lights of attached fixtures: the red alert of the bridge colours the people in it, the command display turns Keyes teal */
 		const fx_dynlight *dl;
 		unsigned n = fx_dynamic_lights(o->fx, &dl), i, k;
 		for (i = 0; i < n; i++) {
-			float dx = pos[0] - dl[i].pos[0], dy = pos[1] - dl[i].pos[1], dz = pos[2] - dl[i].pos[2], d = sqrtf(dx * dx + dy * dy + dz * dz), a;
+			float dx = pos[0] - dl[i].pos[0], dy = pos[1] - dl[i].pos[1], dz = pos[2] - dl[i].pos[2], d = sqrtf(dx * dx + dy * dy + dz * dz), a, mx;
 			if (d >= dl[i].radius) continue;
 			a = 1.0f - d / dl[i].radius;
 			a *= a;
+			mx = dl[i].rgb[0] > dl[i].rgb[1] ? dl[i].rgb[0] : dl[i].rgb[1];
+			if (dl[i].rgb[2] > mx) mx = dl[i].rgb[2];
+			if (mx < 0.05f) continue;
+			{                                                 /* weight of the light's own (normalised) colour in what lights the object near it: a pulsing alarm lamp averages about 0.4 of its colour, a hologram projector is steady */
+				float red = (dl[i].rgb[0] - 0.5f * (dl[i].rgb[1] + dl[i].rgb[2])) / mx;
+				if (red < 0.0f) red = 0.0f;
+				a *= 0.9f - 0.55f * red;
+			}
 			for (k = 0; k < 3; k++) {
-				unsigned add = (unsigned)(dl[i].rgb[k] * 255.0f * a * 0.55f), amb = (unsigned)l->ambient[k] + add, sun = (unsigned)l->sun[k] + add / 2u;
-				l->ambient[k] = (uint8_t)(amb > 255u ? 255u : amb);
-				l->sun[k] = (uint8_t)(sun > 255u ? 255u : sun);
+				float c = dl[i].rgb[k] / mx * 255.0f;
+				l->ambient[k] = (uint8_t)((float)l->ambient[k] * (1.0f - a) + c * a * 0.7f);
+				l->sun[k] = (uint8_t)((float)l->sun[k] * (1.0f - a * 0.7f) + c * a * 0.5f);
 			}
 		}
 	}
