@@ -375,6 +375,19 @@ int main(int argc, char *argv[])
 			s_objr.sky_model = -1;
 			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
+			memset(s_objr.cc_perm, 0xFF, sizeof s_objr.cc_perm);
+			{                                                      /* cfg ccperm "508:3 223:5": colour change permutations read off the Xbox video */
+				const char *cp = cfg_str(&s_cfg, "ccperm", "");
+				while (*cp) {
+					char *end;
+					long oi = strtol(cp, &end, 10), pi;
+					if (end == cp || *end != ':') break;
+					pi = strtol(end + 1, &end, 10);
+					if (oi >= 0 && oi < 1280 && pi >= 0 && pi < 8) s_objr.cc_perm[oi] = (uint8_t)pi;
+					cp = end;
+					while (*cp == ' ' || *cp == ',') cp++;
+				}
+			}
 			{ float pg; s_objr.sky_planet_gain = cfg_floats(&s_cfg, "skyplanet", &pg, 1) == 1 ? pg : 1.0f; }
 			{ float yv; s_objr.sky_yaw0 = cfg_floats(&s_cfg, "skyyaw", &yv, 1) == 1 ? yv * 0.01745329f : 0.0f; }
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);

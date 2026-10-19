@@ -150,7 +150,7 @@ static unsigned pick_lod(const model_section *ms, const model_info *mi, const ui
 /* Change colours of an object: tint[c] (rgb 0..255) is valid when has[c] (c = 0..3 for change colour a..d). */
 typedef struct { uint8_t rgb[CCHG_MAX_CHANGE][3]; uint8_t has[CCHG_MAX_CHANGE]; } cc_tints;
 
-static void cc_pick(const obj_render_t *o, int model, uint32_t seed, cc_tints *t)
+static void cc_pick(const obj_render_t *o, int model, uint32_t seed, cc_tints *t, int obj)
 {
 	const uint8_t *rec;
 	unsigned c;
@@ -158,7 +158,10 @@ static void cc_pick(const obj_render_t *o, int model, uint32_t seed, cc_tints *t
 	if (!o->cchg || !o->world.models || model < 0) return;
 	rec = cchg_find(o->cchg, model_get(o->world.models, (uint32_t)model).tag_id);
 	if (!rec) return;
-	for (c = 0; c < CCHG_MAX_CHANGE; c++) t->has[c] = (uint8_t)cchg_tint(rec, c + 1, seed, t->rgb[c]);
+	for (c = 0; c < CCHG_MAX_CHANGE; c++) {
+		if (c == 0 && obj >= 0 && obj < OBJ_MAX && o->cc_perm[obj] != 0xFFu) t->has[c] = (uint8_t)cchg_tint_perm(rec, 1, o->cc_perm[obj], seed, t->rgb[c]);     /* picked from the Xbox video (cfg ccperm) */
+		else t->has[c] = (uint8_t)cchg_tint(rec, c + 1, seed, t->rgb[c]);
+	}
 }
 
 /* Does any part of the model at this lod draw blended (alpha / additive, not alpha tested)? Decides whether the object gets the second, far-to-near pass. */
@@ -332,7 +335,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 				if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { if (!pass) o->st_culled++; continue; }
 				light_at(o, c, &light);
 				if (!pass) o->st_visible++;
-				cc_pick(o, ob->model, (uint32_t)cand[kk] * 2654435761u + (uint32_t)ob->def * 40503u, &cc);
+				cc_pick(o, ob->model, (uint32_t)cand[kk] * 2654435761u + (uint32_t)ob->def * 40503u, &cc, (int)cand[kk]);
 				em = draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget > o->st_batches ? budget - o->st_batches : 0, &cc, pass);
 				if (o->dbg_obj == (int)cand[kk]) printf("[dbg] obj %u pass %d lod %u emitted %u budget %u used %u\n", (unsigned)cand[kk], pass, lod, em, budget, o->st_batches);
 				if (em == 0 && !pass && o->st_batches >= budget) { o->st_skipped++; }
@@ -355,7 +358,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 		mi = model_get(o->world.models, (uint32_t)f->arms_model);
 		model_select_permutations(o->world.models, &mi, NULL, perm);
 		for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
-		cc_pick(o, f->arms_model, 1u, &cc);
+		cc_pick(o, f->arms_model, 1u, &cc, -1);
 		draw_model(o, rc, f->arms_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS,
 		           &f->arms_nodes, 0, &light, 400, &cc, 2);
 		if (f->weapon_model >= 0) {
