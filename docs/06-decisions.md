@@ -749,5 +749,13 @@ Engine bells: the white discs and the cyan puffs are fx particles (`fxparticles 
 steam wind (no wind data in a10 and no `wind` string in the executable: nothing to read), the steam alpha scale (the unit is not decoded).
 (7) a30 and b40 object packs were rebuilt (MOUT, face overlays, hires); the other six maps have no converted packs at all.
 
+## ADR-075 What the executable says about object lighting (partial decode)
+Console variables found in the debug table (0x220900 ..): `object_light_ambient_base` = 0.03 (0x1fcbf4), `object_light_ambient_scale` = 0.4 (0x1fcbf8), `object_light_secondary_scale` = 1.0 (0x1fcbfc), `object_light_interpolate` (flag), `rasterizer_model_lighting_ambient`,
+`rasterizer_lightmap_ambient`. `FUN_00091660` builds an object's light record from the ambient colour A and a light colour L of its lightmap probe: ambient = 0.4 x A + 0.03 per channel; secondary light colour = 1.0 x L x luminance(A) (weights 0.299, 0.587, 0.114);
+the direction is the probe's (negated); a per channel fill term `clamp(2 x A + 0.25) x clamp(3 L + 0.5)`-shaped values and a hemisphere split (a 0.707 clamp of the horizontal component) follow. `FUN_000930c0` fills it: it casts a ray (the table at 0x1e9d04 / 0x1e9d10: one direction, or four for
+flagged objects) against the BSP from the object's position, takes the hit triangle's lightmap vertex data barycentrically (`FUN_00091d60` decodes it), and falls back to a default record (0x1e9c90) when the object has no cluster. So the Xbox lights an object from the lightmap of the surface
+under it, not from a per cluster average. Not decoded: the scale of A (the lightmap's HDR range), the pixel / vertex shader that consumes the record, and `FUN_000523d0`'s ray set. Our probes (scenconv `cluster_lights`) average the cluster's lightmap; the cinematic gain of ADR-074 (2.5 / 2.3 / 2.6, ambient x 1.3) stays a fit
+for the missing HDR range; a faithful version would sample the lightmap under each object at run time (a downward ray into the BSP's lightmap pages, which the EE has) and apply 0.4 A + 0.03.
+
 ## Open decisions
 None.
