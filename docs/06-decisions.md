@@ -656,5 +656,13 @@ re-patches when its hash changes (about 0.2 ms for a few batches on the host bui
 **Why**: the bridge and corridors are washed red on the Xbox by the alert lamps; with only the objects lit the walls stayed neutral grey.
 **Consequences**: vertex colour is shared by the base and the lightmap pass, so a patched surface takes the tint in both (strength tuned by eye against the video); no normals, so the light reaches the backs of walls it is not facing. UNVERIFIED on hardware (cache sync).
 
+## ADR-069 Particle system physics read from the executable (jet creation physics)
+**Decision**: the steam's creation physics `jet` is decoded from `default.xbe` (0x10f150, called through the table at 0x1ee70c; the update loop is 0x10f950, creation 0x10f620): a new particle's velocity is
+`(c1 x random unit vector + (1 - c1) x emission direction) x c0 / 30` per second plus the system's own velocity, with the type's physics constants c0 = 45 and c1 = 0.0355 (our `pctl_types` constants), i.e. a tight 1.5 wu/s jet
+(2 degrees of spread), not the 0.84 wu/s cone of 24 degrees of ADR-066. `fx.c spawn_pctl_particle` uses it and the particle states' point physics (air friction, gravity scale of the pphy tag) like the effect emitters;
+the per-tick motion of the Xbox is that point physics step (0x110320 -> 0x80720) with the creation rate accumulating per second (the integer part of rate x dt spawns, the fraction carries). Wind: the point physics flags (simple / damped wind)
+are not read by our pphy conversion, so steam does not drift with a wind (the a10 hangar has none).
+**Still approximate**: sprite size (80 x the tag scale), alpha and lifetime (the death state's fade) are tuned against the cryo steam of the video; the particle state / system state transition timing is ours (durations as bounds).
+
 ## Open decisions
 None.

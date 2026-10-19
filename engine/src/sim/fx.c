@@ -217,21 +217,27 @@ static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type
 		if (k + 1 >= n) break;
 	}
 	if (life_s < 0.4f) life_s = 0.4f;
+	life_s *= 1.6f;                                            /* particle lifetime = the states' transition times: the death state's fade-out adds to what is seen */
 	memset(p, 0, sizeof *p);
 	p->active = 1;
 	p->life = (uint16_t)(life_s * TICKS + 1.0f);
 	p->fade_in = 3; p->fade_out = (uint16_t)(p->life / 2u);
 	p->size0 = 80.0f * range_mid(first.scale); p->size1 = 80.0f * range_mid(mid.scale);
 	if (p->size0 < 0.01f) p->size0 = 0.01f;
-	if (p->size1 < p->size0 * 2.2f) p->size1 = p->size0 * 2.2f;                 /* a puff expands as it cools */
+	if (p->size1 < p->size0 * 3.5f) p->size1 = p->size0 * 3.5f;                 /* a puff expands as it cools */
 	p->bitmap = mid.bitmap; p->seq = mid.sequence; p->blend = mid.blend; p->fade_mode = mid.fade_mode;
 	basis(dir, bl, bu);
-	cone = 0.42f * sqrtf(rnd01(f)); a = rnd01(f) * 6.2831853f;
-	for (i = 0; i < 3; i++) d[i] = dir[i] * cosf(cone) + (bl[i] * cosf(a) + bu[i] * sinf(a)) * sinf(cone);
-	speed = 0.028f * (0.7f + 0.6f * rnd01(f));
-	for (i = 0; i < 3; i++) { p->pos[i] = pos[i]; p->vel[i] = d[i] * speed; }
-	p->gravity = -0.0004f; p->friction = 0.972f;                 /* buoyant steam slows quickly and rises: a jet becomes a cloud */
-	alpha = range_mid((float[2]){ mid.color1[0], mid.color2[0] }) * st->color_mult[0] * 4.0f;       /* the tag's alpha is a density: steam at 0.15 is a visible puff */
+	{                                                          /* creation physics "jet" (XBE 0x10f150): v = (c1 x random unit vector + (1 - c1) x direction) x c0 / 30 per second, c0 = 45, c1 = 0.0355 for the steam */
+		float c0 = ty->const_count > 0 ? fxdef_const(f->def, ty->first_const) : 45.0f, c1 = ty->const_count > 1 ? fxdef_const(f->def, ty->first_const + 1) : 0.0355f;
+		float rv[3], rl, spd = c0 * (1.0f / 30.0f);
+		for (i = 0; i < 3; i++) rv[i] = rnd01(f) * 2.0f - 1.0f;
+		rl = sqrtf(rv[0] * rv[0] + rv[1] * rv[1] + rv[2] * rv[2]);
+		if (rl < 1e-3f) { rv[0] = 1.0f; rv[1] = rv[2] = 0.0f; rl = 1.0f; }
+		cone = 0.0f; a = 0.0f; (void)bl; (void)bu;
+		for (i = 0; i < 3; i++) { d[i] = rv[i] / rl * c1 + dir[i] * (1.0f - c1); p->pos[i] = pos[i]; p->vel[i] = d[i] * spd / TICKS; }
+		speed = spd;
+	}
+	alpha = range_mid((float[2]){ mid.color1[0], mid.color2[0] }) * st->color_mult[0] * 3.4f;       /* the tag's alpha is a density: steam at 0.15 is a visible puff */
 	if (alpha < 0.3f) alpha = 0.3f;
 	if (alpha > 1.0f) alpha = 1.0f;
 	p->rgba[0] = (uint8_t)colour_byte(mid.color1[1] * st->color_mult[1] * 0.5f * 2.0f);
