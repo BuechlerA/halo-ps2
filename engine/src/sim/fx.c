@@ -283,14 +283,14 @@ void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const 
 		int gb = f->glow_tag != 0xFFFFFFFFu ? fxdef_find_bitmap(f->def, f->glow_tag) : -1;
 		float c[3], size;
 		unsigned i;
-		if ((L.flags & 1u) && f->dyn_next_n < FX_MAX_DYNLIGHTS) {      /* dynamic: it lights the objects near it (obj_render light_at); the tag's radius is in the engine's coarse units */
+		if ((L.flags & 1u) && L.radius >= 0.75f && f->dyn_next_n < FX_MAX_DYNLIGHTS) {      /* a held baton (radius 0.5) would colour its holder */      /* dynamic: it lights the objects near it (obj_render light_at); the tag's radius is in the engine's coarse units */
 			fx_dynlight *dl = &f->dyn_next[f->dyn_next_n++];
 			unsigned q;
 			for (q = 0; q < 3; q++) { dl->pos[q] = pos[q]; dl->rgb[q] = L.color_hi[1 + q]; }
 			dl->radius = (L.radius > 0.0f ? L.radius : 1.0f) * 2.5f;
 			if (f->dbg == 3) printf("[fx] dyn light tag %08x key %d at %.1f %.1f %.1f rgb %.2f %.2f %.2f r %.1f\n", (unsigned)r.tag, key, (double)pos[0], (double)pos[1], (double)pos[2], (double)dl->rgb[0], (double)dl->rgb[1], (double)dl->rgb[2], (double)dl->radius);
 		}
-		if (L.flags & 1u) {                                  /* the walls are lit by baked lightmaps and cannot take a dynamic light: a wide faint disc of its colour in front of the lamp stands in for the wash */
+		if ((L.flags & 1u) && L.radius >= 0.75f) {           /* the walls are lit by baked lightmaps and cannot take a dynamic light: a wide faint disc of its colour in front of the lamp stands in for the wash */
 			if (gb >= 0 && (p = alloc_particle(f))) {
 				float wc[3], mx = 0.01f;
 				unsigned q;

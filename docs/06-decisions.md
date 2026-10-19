@@ -626,13 +626,14 @@ in the GS and drew a band across the frame).
 the assault rifle's flash cyan). Lights with flag bit 0 (dynamic) register as point lights (`fx_dynlight`, reach = tag radius x 2.5, up to 16) and light the objects near them in `obj_render light_at` (ambient
 + half of it on the sun colour, falloff (1 - d / reach)^2, strength 0.55): this is the red alert wash on the crew and Keyes in the bridge and corridor, and the teal glow of the command display; walls are lit
 by the baked lightmaps and stay unlit by them (the Xbox lights them too). Dynamic lights do not bloom (the alert lamps have none on the Xbox).
-(8) Cortana's body and hair (additive `sotr` shaders, three stage combiner programs) are tinted purple (0.62, 0.32, 1.0, measured on the video) in their converted noise map (`objtex.TINT`): the programs are
-not decoded. UNVERIFIED: no frame of her was rendered (the bridge scene she is in does not run in the bot's timeline).
+(8) Cortana's body and hair (additive `sotr` shaders, three stage combiner programs): their first map is a grey noise mask that the Xbox multiplies into the colour map, and the converter took the mask, so
+she was invisible. `objtex.BITMAP_OVERRIDE` swaps in the shader's own purple bitmaps (body 512 x 512, hair 128 x 256) with a gain (`objtex.TINT`, chosen by eye against the video; the combiner programs are not
+decoded). Rendered with the new debug key `spawnobj <exact definition name>` / `spawnat <tick>` (an object 1.6 wu in front of the cinematic camera): she shows as a translucent purple figure as in the video.
 (9) Follow-ups: objects take the dynamic light's colour by blending toward it (weight 0.9 for a steady light such as the command display, down to 0.35 for a reddish alarm lamp) instead of adding, which turns
 Keyes teal in front of the display; a very faint wide disc of the light's colour stands in for the wall wash (the lightmaps cannot take it); glows of bloom lights grow 13 % of the distance beyond 12 wu (the
 engine bells now match the video's bloom); steam puffs expand 2.2x and rise; the attachment pool holds 128 systems (24 starved the steam jets once the lights took slots).
 Still different: the cyan scan beams and translucency of the hologram (Keyes is teal but solid; the display's volume effects are drawn as faint streaks), real per-pixel wall lighting by dynamic lights, steam
-wind (the particle system physics constants are not decoded), and Cortana's tint was not seen rendered.
+wind (the particle system physics constants are not decoded), and the exact purple of Cortana (by eye).
 
 ## Open decisions
 None.

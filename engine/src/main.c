@@ -604,6 +604,20 @@ int main(int argc, char *argv[])
 						}
 					}
 				}
+				if (s_have_objects && mapp_active() && cfg_str(&s_cfg, "spawnobj", NULL) && s_tick == (uint32_t)cfg_int(&s_cfg, "spawnat", 3000)) {   /* debug: an object whose definition name contains the string, placed 2.5 wu in front of the cinematic camera */
+					const cine_state *cs = mapp_mission()->cine;
+					cine_pose cp = cine_cam_pose(&cs->cam);
+					unsigned di, nd = s_objr.world.scen ? (unsigned)s_objr.world.scen->def_count : 0;
+					for (di = 0; di < nd; di++) {
+						scen_def d = scen_get_def(s_objr.world.scen, di);
+						if (strcmp(d.name, cfg_str(&s_cfg, "spawnobj", "")) == 0) {
+							float p[3] = { cp.pos[0] + 1.6f * cosf(cp.yaw) - 0.7f * sinf(cp.yaw), cp.pos[1] + 1.6f * sinf(cp.yaw) + 0.7f * cosf(cp.yaw), cp.pos[2] - 0.8f };
+							int slot = objects_spawn_def(&s_objects, &s_objr.world, di, p, cp.yaw + 3.1416f);
+							printf("[obj] spawned %s as %d\n", d.name, slot);
+							break;
+						}
+					}
+				}
 				if (s_have_objects && mapp_active() && cfg_int(&s_cfg, "nearlog", 0) && s_tick == (uint32_t)cfg_int(&s_cfg, "nearlog", 0)) {   /* objects around the cinematic camera */
 					const cine_state *cs = mapp_mission()->cine;
 					cine_pose cp = cine_cam_pose(&cs->cam);

@@ -224,6 +224,12 @@ def resolve_object_shader(m: texconv.MapData, shader_id: int) -> texconv.ShaderI
     info.product = texconv.sotr_product(m, shader_id)
     info.reflect = soso_reflect(m, shader_id) or ()
     info.tint = TINT.get(info.path, ())
+    ov = BITMAP_OVERRIDE.get(info.path)
+    if ov:
+        for e in m.index.entries:
+            if e.group == "bitm" and e.path == ov:
+                info.bitmap_id = e.tag_id
+                info.flags &= ~texconv.BF_UNTEXTURED
     got = soso_change(m, shader_id)
     if got is not None and info.bitmap_id is not None:
         info.change_source, info.mask_bitmap = got
@@ -270,9 +276,12 @@ def target_size(w: int, h: int, max_dim: int) -> tuple[int, int]:
 
 # Brightness measured against the Xbox intro video: the dome's nebula is a 1x additive layer in its shader, yet it shows about three times as bright
 # there as the bitmap's own colours (the tag data gives no reason: the Xbox path is not decoded). Applied to the converted copy only.
-# Cortana's hologram: her body and hair are additive `sotr` shaders with a grey noise mask; the Xbox runs a three stage combiner program whose constants give the
-# purple she shows (measured on the intro video: about (0.62, 0.32, 1.0) at full strength); the program is not decoded, so the converted map is tinted instead.
-TINT = {"characters\\cortana\\shaders\\cortana_body": (0.62, 0.32, 1.0), "characters\\cortana\\shaders\\cortana_hair": (0.62, 0.32, 1.0)}
+# Cortana's hologram: her body and hair are additive `sotr` shaders whose FIRST map is a grey noise mask (the Xbox combiner multiplies it into the colour map); the converter took the
+# mask, so she came out as an invisible grey. The colour maps are the purple bitmaps of the same shader (body 512 x 512 with an alpha shape, hair 128 x 256): they replace the mask, brightened
+# because the Xbox's combiner adds the layers (UNVERIFIED gain, chosen so the body reaches the video's purple (0.62, 0.32, 1.0) at its brightest).
+BITMAP_OVERRIDE = {"characters\\cortana\\shaders\\cortana_body": "characters\\cortana\\bitmaps\\cortana_body",
+                   "characters\\cortana\\shaders\\cortana_hair": "characters\\cortana\\bitmaps\\cortana_hair"}
+TINT = {"characters\\cortana\\shaders\\cortana_body": (2.4, 1.5, 2.0), "characters\\cortana\\shaders\\cortana_hair": (2.2, 1.6, 2.0)}
 SKY_GAIN = {"sky\\sky_x10\\bitmaps\\space": 2.5}
 
 
