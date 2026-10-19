@@ -618,8 +618,13 @@ take a colour gain (`skyplanet`, 1.7 in the a10 configs: the planet at the bridg
 the a10 configs set the bridge crew's from the Xbox video (the Xbox draws its own random numbers).
 **Why**: steam at the cryo tubes, exhaust and smoke were missing (the engine created particle systems nowhere), and the Chief in the pod stood upright.
 **Consequences**: rebuild `a10.fx.hp2` (`scripts/build-world.sh a10`; the pack loads without FXAT). The ccperm picks are per object index of a10's placements: they are valid for that map only.
-Still different: the red alert lighting (dynamic lights; the `ligh` attachments are listed but not drawn), Keyes' cyan hologram overlay and Cortana's hologram colour (multi-stage `sotr`
-combiner programs of the cinematic effects are not decoded), exhaust bloom, steam physics (wind, buoyancy).
+(6) Light attachments (FXAT kind 3, only on scenery / device tags: weapon, projectile and vehicle lights are switched by functions we do not model) are drawn as additive glow discs at their
+marker (the soft disc of `plasma burn outer glow`, tag id in the FXAT v2 header): half size = max(0.12 x radius, 9 % of the distance to the camera, up to 90 wu), colour 55 % tag colour + 45 % white, pulled
+towards the camera by their size so the fixture does not hide half of them; this is the exhaust bloom of the Autumn's engines and the small lamps. Off-screen sprites are culled (their far coordinates wrapped
+in the GS and drew a band across the frame).
+Still different, and not fixable from the tag data alone: the red alert wash on objects and walls (the Xbox lights them with dynamic lights; the light tags' colour fields do not parse into a plausible
+red: `alert_light` reads green, `light red` reads green or blue, so the layout at +0x34 is not understood), Keyes' cyan hologram overlay and Cortana's hologram colour (multi-stage `sotr` combiner programs of the
+cinematic effects are not decoded), steam physics (wind, buoyancy).
 
 ## Open decisions
 None.
