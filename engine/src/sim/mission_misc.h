@@ -31,9 +31,12 @@ enum { MISC_GAIN_MUSIC = 0, MISC_GAIN_AMBIENCE, MISC_GAIN_DIALOGUE, MISC_GAIN_OT
 typedef struct {                /* one sound_impulse_start */
 	uint32_t tag;               /* snd! tag id */
 	uint32_t end_tick;          /* mission tick the sound ends (natural length); remaining = end - tick */
+	uint32_t start_tick;        /* mission tick it started: the lip-sync byte of the source object is (tick - start_tick) */
 	int16_t  obj;               /* source object slot or -1 */
 	int8_t   slot;              /* stream slot it plays in (STREAM_SLOT_*), -1 none */
 	uint8_t  used;
+	uint16_t variant;           /* the take that plays (mouth data is per take) */
+	uint8_t  pad[2];
 } misc_impulse;
 
 typedef struct {                /* one sound_looping_start */

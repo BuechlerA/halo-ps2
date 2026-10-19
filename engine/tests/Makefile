@@ -37,6 +37,7 @@ test: $(HOST_TMP)/halo-test.hp2 $(HOST_TMP)/halo-bsp.hp2
 	SCEN_FIXTURE=$(HOST_TMP)/halo-scen.hp2 python3 -I $(PYTESTS)/test_scenconv.py && cc $(CFLAGS) test_scen.c ../src/world/scen.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_scen && $(HOST_TMP)/test_scen $(HOST_TMP)/halo-scen.hp2
 	MODEL_FIXTURE=$(HOST_TMP)/halo-model.hp2 python3 -I $(PYTESTS)/test_modelconv.py && cc $(CFLAGS) test_model.c ../src/world/model.c ../src/world/tex.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_model && $(HOST_TMP)/test_model $(HOST_TMP)/halo-model.hp2
 	ANIM_FIXTURE=$(HOST_TMP)/halo-anim.hp2 python3 -I $(PYTESTS)/test_animconv.py && cc $(CFLAGS) test_anim.c ../src/world/anim.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_anim && $(HOST_TMP)/test_anim $(HOST_TMP)/halo-anim.hp2
+	MOUT_FIXTURE=$(HOST_TMP)/halo-mout.bin python3 -I $(PYTESTS)/test_mouthconv.py && cc $(CFLAGS) test_mouth.c ../src/world/mouth.c -o $(HOST_TMP)/test_mouth && $(HOST_TMP)/test_mouth $(HOST_TMP)/halo-mout.bin
 	FXDEF_FIXTURE=$(HOST_TMP)/halo-fxdef.hp2 python3 -I $(PYTESTS)/test_fxconv.py && cc $(CFLAGS) test_fxdef.c ../src/world/fxdef.c ../src/world/tex.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_fxdef && $(HOST_TMP)/test_fxdef $(HOST_TMP)/halo-fxdef.hp2
 	cc $(CFLAGS) test_fxat.c ../src/sim/fx.c ../src/world/fxdef.c ../src/world/tex.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_fxat && $(HOST_TMP)/test_fxat
 	ANSM_FIXTURE=$(HOST_TMP)/halo-ansm.hp2 python3 -I $(PYTESTS)/test_ansmconv.py && cc $(CFLAGS) test_ansm.c ../src/world/ansm.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_ansm && $(HOST_TMP)/test_ansm $(HOST_TMP)/halo-ansm.hp2
@@ -139,12 +140,12 @@ $(HOST_TMP)/halo-bsp.hp2: $(PYTESTS)/test_bspconv.py ../../tools/halo2ps2/bspcon
 # H2 script host (docs/34-host-misc.md): camera / cinematic, sound, hud, navpoints, game flow built-ins on a mission built from the real a10 packs
 # (skips without them); needs the CINE pack of a10, converted into HOST_TMP like the cine rule does.
 HM_CINE = $(and $(wildcard ../../assets/decompressed/a10.map),$(HOST_TMP)/halo-cine-a10.hp2)
-HM_SRC = mission_weak.c ../src/script/hs.c ../src/script/hs_core.c ../src/script/hs_host_misc.c ../src/sim/mission.c ../src/sim/cine.c ../src/sim/devices.c ../src/sim/game.c ../src/sim/fx.c \
+HM_SRC = mission_weak.c ../src/script/hs.c ../src/script/hs_core.c ../src/script/hs_host_misc.c ../src/world/mouth.c ../src/sim/mission.c ../src/sim/cine.c ../src/sim/devices.c ../src/sim/game.c ../src/sim/fx.c \
 	../src/ui/hud.c ../src/ui/huddef.c ../src/sim/playerdef.c ../src/sim/player.c ../src/sim/phys.c ../src/sim/vitals.c ../src/sim/unitdef.c ../src/sim/weapdef.c \
 	../src/sim/objects.c ../src/sim/skeleton.c ../src/sim/fpview.c ../src/core/mat.c ../src/render/camera.c ../src/world/anim.c ../src/world/model.c ../src/world/scen.c \
 	../src/world/ansm.c ../src/world/cmod.c ../src/world/coll.c ../src/world/fxdef.c ../src/world/tex.c ../src/world/cinedef.c ../src/world/devdef.c ../src/ai/aidef.c \
 	../src/audio/strmdef.c ../src/audio/stream.c ../src/audio/snddef.c ../src/stream/hp2.c
-host_misc: $(HM_CINE) test_host_misc.c test_host_misc_fixture.h ../src/script/hs_host_misc.c
+host_misc: $(HM_CINE) test_host_misc.c test_host_misc_fixture.h ../src/script/hs_host_misc.c ../src/world/mouth.c
 	cc $(CFLAGS) test_host_misc.c $(HM_SRC) -lm -o $(HOST_TMP)/test_host_misc
 	$(HOST_TMP)/test_host_misc ../../assets/hp2 $(or $(HM_CINE),$(HOST_TMP)/halo-cine-a10.hp2)
 
@@ -166,7 +167,7 @@ AI_SRC = mission_weak.c ../src/ai/ai.c ../src/ai/path.c ../src/script/hs_host_ai
 	../src/sim/game.c ../src/sim/fx.c ../src/ui/hud.c ../src/ui/huddef.c ../src/sim/playerdef.c ../src/sim/player.c ../src/sim/phys.c ../src/sim/vitals.c ../src/sim/unitdef.c \
 	../src/sim/weapdef.c ../src/sim/objects.c ../src/sim/skeleton.c ../src/sim/fpview.c ../src/core/mat.c ../src/render/camera.c ../src/world/anim.c ../src/world/model.c \
 	../src/world/scen.c ../src/world/ansm.c ../src/world/cmod.c ../src/world/coll.c ../src/world/fxdef.c ../src/world/tex.c ../src/world/cinedef.c ../src/world/devdef.c \
-	../src/ai/aidef.c $(wildcard ../src/ai/units.c) ../src/stream/hp2.c ../src/script/hs_host_obj.c ../src/script/hs_host_misc.c ../src/audio/strmdef.c ../src/audio/stream.c \
+	../src/ai/aidef.c $(wildcard ../src/ai/units.c) ../src/stream/hp2.c ../src/script/hs_host_obj.c ../src/script/hs_host_misc.c ../src/world/mouth.c ../src/audio/strmdef.c ../src/audio/stream.c \
 	../src/audio/snddef.c
 AI_DEFS = $(if $(wildcard ../src/ai/units.c),-DAI_REAL_UNITS)
 ai: $(AI_PATH) test_ai.c mission_fixture.h ../src/ai/ai.c ../src/ai/ai.h ../src/script/hs_host_ai.c

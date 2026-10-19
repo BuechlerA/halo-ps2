@@ -5,6 +5,7 @@
 #include "world/bsp.h"
 #include "world/cchg.h"
 #include "world/anim.h"
+#include "world/mouth.h"
 #include "world/model.h"
 #include "world/scen.h"
 #include "world/tex.h"
@@ -29,6 +30,7 @@ typedef struct {
 	/* object data (world_load_objects): models, animations, scenario, object textures */
 	model_section models;
 	anim_section  anims;
+	mouth_section mouth;                   /* MOUT: lip-sync data of the dialogue lines (count 0 = none) */
 	scen_section  scen;
 	texset_t      obj_tex;
 	sky_info_t    sky;

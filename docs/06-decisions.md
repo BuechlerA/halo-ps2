@@ -704,5 +704,21 @@ the Xbox, and that alone is too faint here (coverage 0.16 .. 0.22 against 0.52 .
 **Why**: an additive shader is self lit on the Xbox. Cortana's measured colour at tick 3202 was 12 % / 19 % dim in red / blue (ADR-070), which I had put down to an undecoded framebuffer step; it was our own lighting multiplying her
 (ambient < 1 in that corridor). Unlit: (161, 119, 206) against the video's (168, 109, 216), within 6 %, no constant fitted. The same reasoning applies to the steam alpha scale (not to the sprites, which are not lit): that one stays fitted.
 
+## ADR-073 Captain's animation: the face (emotion + lip sync) was missing; hero textures for the displays
+**Answer to "the captain's animations are not taken over correctly"**: the body animation is the Xbox data (18 animated nodes of `well_thats_it_then`, decoded and quantised to 0.18 degrees); what the Xbox adds at run time and we did not
+play is the FACE: two overlay animations of the unit's own graph (`stand emotions`, 6 frames; `stand talk`, 1 frame) whose channels the tag flags as animated (eyelids, jaw, brows, lips) are deltas composed onto the pose
+(`base * overlay`), the emotion frame chosen by `unit_set_emotion` (Keyes: 3, then 5 = heavy lids during "that's it then", then 3) and the jaw scaled by the line's mouth data (one loudness byte per tick, `snd!` permutation +0x54,
+verified on the 293 byte line `cor05b`). Ours froze the face at the rest pose (a smile). Now: `animconv` keeps only the driven channels of face overlays (`encode_animation(overlay=True)`), `anim_overlay_modes` gives the mask,
+`objects_pose_model_face` composes them, `unit_set_emotion` stores the frame, the object pack gets a `MOUT` section (4658 lines on a10, 242 KB; `mouthconv.py`) and `sound_impulse_start` with a unit as source drives `face.talk` per tick
+(docs/12-anim-section.md 9a). The composition order was settled against the video (frames 2830 .. 2910): `base * overlay` opens the mouth and drops the lids like the video's Keyes, `overlay * base` twists the lips (cfg `facecompose 0` shows it).
+**Not done / unknown**: `stand look` (head aim, 9 frames) is not played (no aim source in a cinematic); the shot's camera at ticks 2807+ (points 47 / 101) frames the room differently from the video (a window where the video has the hologram sphere):
+not investigated; Keyes' face and uniform are lit greener / darker than the video.
+**Texture resolution ("the displays and holograms are so low res, can a higher mip be streamed in?")**: every object texture is halved and capped by the budget's `dim` (128 on a10), so a 512 x 512 display map is 128 x 128 (4 x down).
+Streaming a high LOD in on demand would need a hi-res companion pack read from disc at shot boundaries; what limits it is not the GS (the texture cache already uploads only what a frame uses: 140 of 271 cache pages free at the end of the intro) but
+the EE arena (24 MB, high water 24072 KB: only ~500 KB of headroom), which holds every source mip resident, and a disc read in the frame loop (real hardware, deferred by ADR-022). So the first step is static: `objtex.HERO` lists the surfaces a
+cinematic shows large (the command display's hologram layers, Cortana, the uniforms of Keyes, the marines, the pilot and the crew, the Halo close-up) with their own allowance (`HERO_BUDGET` 640 KB) and a full-resolution target (<= 256, the
+display layers at 16 colours = 43 KB each instead of 21 KB at 128 x 128 x 256 colours), so the other textures keep their size. a10: OTEX 2.54 -> 2.92 MiB of pixels. A real LOD stream (hi-res variants in a companion section, loaded into a
+small slot pool when a shot's camera comes close, drawn through the same texture cache) remains a design, not code.
+
 ## Open decisions
 None.

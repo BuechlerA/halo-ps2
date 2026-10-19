@@ -19,7 +19,7 @@ uint32_t tex_max_mips(uint32_t w, uint32_t h)
 	return n;
 }
 
-/* Bytes of one level, padded to 16; w*h <= 256*256 so no overflow. */
+/* Bytes of one level, padded to 16 (64-bit arithmetic: w, h <= 512). */
 static uint32_t level_bytes(uint32_t psm, uint32_t w, uint32_t h)
 {
 	return pad16((uint64_t)w * h * (psm == TEX_PSMT4 ? 4u : 8u) / 8u);

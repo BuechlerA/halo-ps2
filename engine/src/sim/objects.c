@@ -162,8 +162,83 @@ static const node_remap *remap_for(const object_world_t *w, const model_info *mi
 	return r;
 }
 
+int g_face_compose = 1;
+
+static void quat_mul4(const float a[4], const float b[4], float o[4])     /* Hamilton product a * b, x y z w */
+{
+	float x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+	float y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+	float z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+	float w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+	o[0] = x; o[1] = y; o[2] = z; o[3] = w;
+}
+
+/* The face overlays are deltas (an eyelid turns by a few degrees, a brow moves a few millimetres): the driven channels of the overlay
+ * compose with the posed skeleton's own, every other node is untouched. `weight` scales the overlay (1 = as authored). */
+static void apply_overlay(const object_world_t *w, const model_info *mi, int model, int gi, const anim_graph *g, unsigned k, float frame,
+                          float weight, skel_xform *local, unsigned n)
+{
+	static anim_pose ov;
+	uint8_t mode[ANIM_MAX_NODES];
+	const node_remap *rm;
+	unsigned i;
+	if (k >= g->anim_count || !anim_overlay_modes(w->anims, g, k, mode)) return;
+	anim_sample(w->anims, g, k, frame, &ov);
+	rm = remap_for(w, mi, model, gi, n);
+	for (i = 0; i < n; i++) {
+		int j = rm->identity ? (int)i : rm->map[i];
+		float q[4], d[4];
+		if (j < 0 || (unsigned)j >= g->node_count || (unsigned)j >= ANIM_MAX_NODES) continue;
+		if (mode[j] & ANIM_OV_ROT) {
+			memcpy(q, ov.node[j].rot, sizeof q);
+			if (weight < 1.0f) {                                   /* identity -> q along the short arc */
+				float s = q[3] < 0.0f ? -1.0f : 1.0f;
+				d[0] = s * q[0] * weight; d[1] = s * q[1] * weight; d[2] = s * q[2] * weight; d[3] = 1.0f + (s * q[3] - 1.0f) * weight;
+				{ float l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2] + d[3] * d[3]); if (l > 1e-12f) { q[0] = d[0] / l; q[1] = d[1] / l; q[2] = d[2] / l; q[3] = d[3] / l; } }
+			}
+			if (g_face_compose) quat_mul4(local[i].rot, q, d); else quat_mul4(q, local[i].rot, d);
+			memcpy(local[i].rot, d, sizeof d);
+		}
+		if (mode[j] & ANIM_OV_TRANS) {
+			local[i].trans[0] += ov.node[j].trans[0] * weight;
+			local[i].trans[1] += ov.node[j].trans[1] * weight;
+			local[i].trans[2] += ov.node[j].trans[2] * weight;
+		}
+	}
+}
+
+static void apply_face(const object_world_t *w, const model_info *mi, int model, skel_xform *local, unsigned n, const object_face *f)
+{
+	anim_graph g;
+	if (!f || f->graph <= 0 || !w->anims || (unsigned)(f->graph - 1) >= w->anims->graph_count) return;
+	g = anim_get_graph(w->anims, (uint32_t)(f->graph - 1));
+	if (f->emotion && f->emo_anim > 0) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emotion - 1), 1.0f, local, n);
+	if (f->talk && f->talk_anim > 0) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->talk_anim - 1u, 0.0f, (float)f->talk * (1.0f / 255.0f), local, n);
+}
+
+void objects_set_face_graph(object_t *o, const object_world_t *w, int graph)
+{
+	anim_graph g;
+	int emo, talk;
+	o->face.graph = o->face.emo_anim = o->face.talk_anim = 0;
+	if (graph < 0 || !w->anims || (unsigned)graph >= w->anims->graph_count) return;
+	g = anim_get_graph(w->anims, (uint32_t)graph);
+	emo = anim_find_name(w->anims, &g, "stand emotions");
+	talk = anim_find_name(w->anims, &g, "stand talk");
+	if (emo < 0 && talk < 0) return;
+	o->face.graph = (int16_t)(graph + 1);
+	o->face.emo_anim = (int16_t)(emo + 1);
+	o->face.talk_anim = (int16_t)(talk + 1);
+}
+
 unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsigned anim, float frame,
                             const mat4 *root, object_nodes_t *out)
+{
+	return objects_pose_model_face(w, model, graph, anim, frame, root, out, NULL);
+}
+
+unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, unsigned anim, float frame,
+                                 const mat4 *root, object_nodes_t *out, const object_face *face)
 {
 	model_info mi;
 	skel_xform local[SKEL_MAX_NODES];
@@ -196,6 +271,7 @@ unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsig
 			}
 		}
 	}
+	if (face && (face->emotion || face->talk)) apply_face(w, &mi, model, local, n, face);
 	if (n == 0) { out->count = 0; return 0; }
 	if (skel_world(out->world, local, parent, n, root) != 0) { out->count = 0; return 0; }
 	{
@@ -222,7 +298,7 @@ unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsig
 
 unsigned objects_pose(const object_t *o, const object_world_t *w, object_nodes_t *out)
 {
-	return objects_pose_model(w, o->model, o->graph, o->anim, o->frame, &o->root, out);
+	return objects_pose_model_face(w, o->model, o->graph, o->anim, o->frame, &o->root, out, &o->face);
 }
 
 unsigned objects_pose_static(const object_t *o, const object_world_t *w, object_nodes_t *out)

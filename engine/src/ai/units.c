@@ -432,6 +432,7 @@ int units_attach(units_t *s, game_t *g, int obj, int team, int32_t weapon_tag)
 	u->biped = (int16_t)bi;
 	u->anim_tag = b.anim_tag;
 	u->base_graph = o->graph;
+	objects_set_face_graph(o, &g->ow, o->graph);
 	u->custom_graph = -1; u->custom_anim = -1; u->custom_frame_scale = 1.0f; u->anim_cur = -1;
 	u->anim_key = 0xFFFFu; u->anim_rate = 1.0f; u->rate_mult = 1.0f; u->weapon = -1;
 	u->rng = (uint32_t)obj * 2654435761u ^ g->tick * 40503u ^ 0x9E3779B9u;

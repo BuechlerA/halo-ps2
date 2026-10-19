@@ -286,7 +286,7 @@ int main(int argc, char *argv[])
 	printf("halo-ps2 phase 1 boot\n");
 	load_config();
 
-	arena_bytes = (size_t)cfg_int(&s_cfg, "arena_mb", 24) * 1024u * 1024u;
+	arena_bytes = (size_t)cfg_int(&s_cfg, "arena_mb", 25) * 1024u * 1024u;
 	heap = malloc(arena_bytes);                         /* the one boot-time allocation (ADR-006) */
 	if (!heap) { printf("[err] cannot allocate %u MB arena\n", (unsigned)(arena_bytes >> 20)); return 1; }
 	arena_init(&s_arena, "level", heap, arena_bytes);
@@ -331,7 +331,7 @@ int main(int argc, char *argv[])
 		const char *obj = cfg_str(&s_cfg, "obj", NULL);
 		if (obj && world_load_objects(&s_world, &s_arena, obj) == 0) {
 			object_world_t ow;
-			ow.scen = &s_world.scen; ow.models = &s_world.models; ow.anims = s_world.anims.graph_count ? &s_world.anims : NULL;
+			ow.scen = &s_world.scen; ow.models = &s_world.models; ow.anims = s_world.anims.graph_count ? &s_world.anims : NULL; ow.mouth = s_world.mouth.count ? &s_world.mouth : NULL;
 			objects_clear(&s_objects);
 			objects_spawn_all(&s_objects, &ow, (int)cfg_int(&s_cfg, "objhidden", 0));
 			printf("[obj] %u objects placed in all BSPs (skipped: %u no model, %u hidden, %u over capacity)\n",
@@ -378,6 +378,7 @@ int main(int argc, char *argv[])
 			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
 			s_objr.unlit_add = (int)cfg_int(&s_cfg, "unlitadd", 1);
+			g_face_compose = (int)cfg_int(&s_cfg, "facecompose", g_face_compose);
 			memset(s_objr.cc_perm, 0xFF, sizeof s_objr.cc_perm);
 			{                                                      /* cfg ccperm "508:3 223:5": colour change permutations read off the Xbox video */
 				const char *cp = cfg_str(&s_cfg, "ccperm", "");

@@ -387,7 +387,7 @@ BI(sound_impulse_start)
 	const snd_section *sn = NULL;
 	snd_sound snd;
 	misc_impulse *im;
-	unsigned i;
+	unsigned i, take = 0;
 	ENTER(sound_impulse_start);
 	if (!m || tag == HS_HANDLE_NONE || tag == 0) return 0;
 	obj = n > 1 ? mission_resolve_object(m, &a[1], 0) : -1;
@@ -403,6 +403,7 @@ BI(sound_impulse_start)
 		strm_sound ssn = strm_get_sound(ss, (uint32_t)si);
 		unsigned variant = ssn.stream_count ? misc_rand(m) % ssn.stream_count : 0;
 		strm_stream st = strm_get_stream(ss, ssn.stream_first + variant);
+		take = variant;
 		float gain, pan, cg = class_gain(m, kind_group(ssn.kind));
 		slot = kind_slot(ssn.kind);
 		dur = ssn.max_play_ms ? (uint32_t)((uint64_t)ssn.max_play_ms * 30u / 1000u) : frames_to_ticks(st.frames, st.rate);   /* the Xbox: tag +0x84 ms * 30 / 1000 (0x2b9d0) */
@@ -427,7 +428,7 @@ BI(sound_impulse_start)
 	}
 	if (m->log) printf("[camset] t%u impulse %08x dur %u slot %d resident %d\n", m->tick, (unsigned)tag, (unsigned)dur, slot, resident);
 	im = imp_alloc(m, tag);
-	im->used = 1; im->tag = tag; im->obj = (int16_t)obj; im->slot = (int8_t)slot; im->end_tick = m->tick + dur;
+	im->used = 1; im->tag = tag; im->obj = (int16_t)obj; im->slot = (int8_t)slot; im->end_tick = m->tick + dur; im->start_tick = m->tick; im->variant = (uint16_t)take;
 	m->misc.impulses_started++;
 	return 0;
 }
@@ -987,9 +988,32 @@ NOOP(render_lights)
 NOOP(rasterizer_lights_reset_for_new_map)
 
 /* ---- per tick service, registration, statistics ------------------------------------------------------------------------------------------ */
+/* Lip sync: the mouth data of a line a unit speaks (sound_impulse_start with the unit as source) is one loudness byte per tick; the face's talk
+ * overlay is scaled by it (sim/objects.c apply_face). Every tick the speakers are zeroed first, so a line that ended or was cut closes the mouth. */
+static void lipsync(mission_t *m)
+{
+	unsigned i;
+	if (!m->objects) return;
+	for (i = 0; i < MISC_IMPULSES; i++) {
+		const misc_impulse *p = &m->misc.imp[i];
+		if (p->used && p->obj >= 0 && (unsigned)p->obj < m->objects->count) m->objects->obj[p->obj].face.talk = 0;
+	}
+	if (!m->ow.mouth) return;
+	for (i = 0; i < MISC_IMPULSES; i++) {
+		const misc_impulse *p = &m->misc.imp[i];
+		unsigned len = 0, k;
+		const uint8_t *mouth;
+		if (!p->used || p->obj < 0 || (unsigned)p->obj >= m->objects->count || m->tick < p->start_tick || m->tick >= p->end_tick) continue;
+		mouth = mouth_find(m->ow.mouth, p->tag, p->variant, &len);
+		k = m->tick - p->start_tick;
+		if (mouth && k < len) m->objects->obj[p->obj].face.talk = mouth[k];
+	}
+}
+
 void misc_tick(mission_t *m)
 {
 	if (!m) return;
+	lipsync(m);
 	refresh_player_pose(m);
 	if (m->misc.cam_anchor_obj1 > 0 && m->cine) {
 		cine_frame f;

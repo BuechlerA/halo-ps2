@@ -83,6 +83,10 @@ GROUP_CODES = {"senv": 1, "sotr": 2, "schi": 3, "sgla": 4, "swat": 5}
 FLAT_GREY = 0x80808080               # RGBA8, alpha on the PS2 0x80 = 1.0 scale
 
 MAX_TEX, MIN_TEX, MAX_MIPS = 256, 8, 4
+MAX_TEX_FORMAT = 512       # the TEXS format allows 512 on a side; the converter's default cap is MAX_TEX, only HERO_BITMAPS go above it (ADR-073)
+# Bitmaps (tag paths) of surfaces a cinematic shows large that a half resolution strip would smear: the a10 command wall's monitors (1024 x 256, three screens side by side)
+# get 512 x 128 instead of 256 x 64.
+HERO_BITMAPS = {"levels\\a10\\bitmaps\\monitors": 512}
 LM_BUDGET_BYTES = 512 * 1024         # per BSP, after conversion (see docs/09-tex-section.md)
 LM_DEFAULT_GAIN = 1.0
 CHROMA_STRENGTH = 0.4                # how much of the lightmap colour reaches the vertices and the object lighting (1.0 = all of it)
@@ -369,10 +373,10 @@ def resample_rgba(rgba: bytes, w: int, h: int, tw: int, th: int, alpha_weighted:
     return bytes(out)
 
 
-def target_size(w: int, h: int) -> tuple[int, int]:
-    """Half resolution, power of two, 8..256 per side."""
+def target_size(w: int, h: int, cap: int = MAX_TEX) -> tuple[int, int]:
+    """Half resolution, power of two, 8..cap (256) per side."""
     tw, th = max(MIN_TEX, w // 2), max(MIN_TEX, h // 2)
-    while tw > MAX_TEX or th > MAX_TEX:
+    while tw > cap or th > cap:
         tw, th = max(MIN_TEX, tw // 2), max(MIN_TEX, th // 2)
     return tw, th
 
@@ -695,7 +699,7 @@ def convert_texture(m: MapData, img: bitmaps.BitmapImage, source_id: int, klass_
     """Decode, shrink and quantise one bitmap image. ``klass_cap`` is the strongest alpha class the
     shader allows: CLASS_OPAQUE drops alpha, CLASS_PUNCH thresholds it, CLASS_BLEND keeps it; the
     class actually used is the lesser of that and what the pixels contain."""
-    tw, th = target_size(img.width, img.height)
+    tw, th = target_size(img.width, img.height, HERO_BITMAPS.get(m.by_id[source_id].path, MAX_TEX))
     level = 1 if img.mip_count >= 1 and img.width >> 1 >= tw and img.height >> 1 >= th else 0
     w, h, rgba = bitmaps.decode_level(img, m.pixels(img), level)
     if key_opaque and klass_cap == CLASS_PUNCH:
@@ -950,7 +954,7 @@ def parse_texs(data: bytes) -> TexsView:
             TEXTURE_FMT, data, to + i * TEXTURE_REC)
         bits = {PSMT8: 8, PSMT4: 4}.get(psm)
         if bits is None or not (1 <= mips <= MAX_MIPS) or w & (w - 1) or h & (h - 1) \
-                or not MIN_TEX <= w <= MAX_TEX or not MIN_TEX <= h <= MAX_TEX:
+                or not MIN_TEX <= w <= MAX_TEX_FORMAT or not MIN_TEX <= h <= MAX_TEX_FORMAT:
             raise TexError(f"texture {i}: bad format or size")
         if ce != (256 if psm == PSMT8 else 16) or co % 16 or po % 16 or co < do or co + ce * 4 > po \
                 or po + pb > len(data):
@@ -1090,14 +1094,14 @@ def multiply_normalise(layers: list[bytes]) -> bytes:
     return bytes(min(255, v * 255 // peak) if i & 3 != 3 else 255 for i, v in enumerate(acc))
 
 
-def product_texture(m: MapData, imgs: list, source_id: int, tw: int, th: int) -> Ps2Texture:
+def product_texture(m: MapData, imgs: list, source_id: int, tw: int, th: int, force_bits: int = 8) -> Ps2Texture:
     """The product of several maps at tw x th, scaled so its brightest channel reaches 255 (an emissive glow: the Xbox's stage arithmetic is not
     as dark as the product in 8 bits). Opaque: the shader is additive."""
     layers = []
     for img in imgs:
         w, h, rgba = bitmaps.decode_level(img, m.pixels(img), 0)
         layers.append(resample_rgba(rgba, w, h, tw, th, False))
-    return convert_rgba(source_id, multiply_normalise(layers), tw, th, CLASS_OPAQUE, 8, 128)
+    return convert_rgba(source_id, multiply_normalise(layers), tw, th, CLASS_OPAQUE, force_bits, 128)
 
 
 def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_GAIN,

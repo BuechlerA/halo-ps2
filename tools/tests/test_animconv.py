@@ -629,9 +629,31 @@ def check_real_map():
     print(f"real a10: {len(data) / 1024:.0f} KiB for 4 graphs, rot err max {err.rot_max:.3f} deg, trans {err.trans_max:.3f} mm")
 
 
+def test_face_overlay_encoding():
+    """A face overlay writes only the channels its flags mark as animated (a single frame is a static channel, even when it equals the rest
+    pose) and leaves every other channel "default" (mode 0): the engine reads the modes back as the overlay's mask."""
+    ident = (0.0, 0.0, 0.0, 1.0)
+    jaw = axis_angle((0, 0, 1), 0.11)
+    rest = ac.RestPose([ident] * 3, [(0.0, 0.0, 0.0)] * 3, [1.0] * 3)
+    d = ac.Decoded(3, 1, [[(0.5, 0.5, 0.5, 0.5)], [jaw], [ident]], [[(0.1, 0.2, 0.3)], [(0.0, 0.0, 0.0)], [(0.001, 0.0, 0.0)]],
+                   [[1.0], [1.0], [1.0]], driven_rot=frozenset({1, 2}), driven_trans=frozenset({2}))
+    blob, _ = ac.encode_animation(d, rest, overlay=True)
+    modes = list(blob[:3])
+    assert modes == [0, ac.M_STATIC, ac.M_STATIC | ac.M_STATIC << 2], modes        # node 2's rotation is the identity = the rest pose, still written
+    assert len(blob) == 4 + 8 + 8 + 12, len(blob)
+    base, _ = ac.encode_animation(d, rest, overlay=False)                          # a base animation keeps its authoring pose of the undriven nodes
+    assert base[0] != 0 and len(base) > len(blob)
+
+    def anim(name, typ):
+        return ac.Anim(name, typ, 1, 0, 0, 0, 3, 0, -1, 0, 0, 0, 0, b"", b"", b"")
+    assert ac.is_face_overlay(anim("stand emotions", 1)) and ac.is_face_overlay(anim("Stand Talk ", 1))
+    assert not ac.is_face_overlay(anim("stand talk", 0)) and not ac.is_face_overlay(anim("stand look", 1)) and not ac.is_face_overlay(anim("device position", 1))
+
+
 def main() -> None:
     test_q48_roundtrip()
     test_quantisers()
+    test_face_overlay_encoding()
     with tempfile.TemporaryDirectory() as td_:
         tmp = Path(td_)
         mp, sec, graphs = check_world(tmp)

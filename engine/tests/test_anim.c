@@ -33,6 +33,10 @@ static void walk(const anim_section *s, int deep)
 		for (uint32_t k = 0; k < g.anim_count; k++) {
 			anim_info in = anim_get(s, &g, k);
 			float rm[4];
+			uint8_t om[ANIM_MAX_NODES];
+			unsigned on = anim_overlay_modes(s, &g, k, om);
+			if (on != (in.node_count > ANIM_MAX_NODES ? (unsigned)ANIM_MAX_NODES : in.node_count)) abort();
+			for (unsigned q = 0; q < on; q++) acc += om[q];
 			acc += (uint32_t)anim_find_name(s, &g, in.name) + in.frame_count + in.bytes + (uint32_t)strlen(in.name);
 			for (unsigned fi = 0; fi < nframes; fi++) {
 				anim_pose p;

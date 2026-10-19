@@ -79,7 +79,7 @@ EE_OBJS = src/main.o \
           src/world/coll.o \
           src/world/fxdef.o \
           src/world/gamedata.o \
-          src/world/model.o \
+          src/world/model.o src/world/mouth.o \
           src/world/scen.o \
           src/world/tex.o \
           src/world/world.o

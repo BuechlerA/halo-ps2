@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build a map's object pack (assets/hp2/<map>.obj.hp2): SCEN (placements, definitions, player, lighting),
-MODL + OTEX (models and their textures) and ANIM (animation graphs), restricted to what the scenario places
+MODL + OTEX (models and their textures), ANIM (animation graphs) and MOUT (lip-sync data of the dialogue lines), restricted to what the scenario places
 (plus the player's first-person set).
 
     python3 -I tools/halo2ps2/objpack.py assets/decompressed/a10.map -o assets/hp2/a10.obj.hp2
@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from halo2ps2 import aiconv, animconv, ansmconv, chgconv, devconv, cinconv, fxconv, hp2, modelconv, scenconv, skyconv, unitconv, weapconv  # noqa: E402
+from halo2ps2 import aiconv, animconv, ansmconv, chgconv, devconv, cinconv, fxconv, hp2, modelconv, mouthconv, scenconv, skyconv, unitconv, weapconv  # noqa: E402
 
 
 def build(map_path: Path) -> tuple[bytes, dict]:
@@ -34,7 +34,7 @@ def build(map_path: Path) -> tuple[bytes, dict]:
         model_tags |= {t for t in (sky["model_tag"], sky["model_tag2"]) if t}      # the sky models are drawn by the engine's sky pass
     model_sections = modelconv.build_sections(map_path, sorted(model_tags))
     anim = animconv.build_section(map_path, sorted(anim_tags))
-    sections = [("SCEN", scen), ("SKY0", skyconv.build_section(map_path)), ("CCHG", chgconv.build_section(map_path, model_tags))] + list(model_sections) + [("ANIM", anim)]
+    sections = [("SCEN", scen), ("SKY0", skyconv.build_section(map_path)), ("CCHG", chgconv.build_section(map_path, model_tags))] + list(model_sections) + [("ANIM", anim), ("MOUT", mouthconv.build_section(map_path))]
     info = {"models": len(model_tags), "graphs": len(anim_tags), "seconds": time.time() - t0,
             "sizes": {tag: len(blob) for tag, blob in sections}, "counts": getattr(objs, "counts", {})}
     return hp2.build(map_path.stem, sections), info

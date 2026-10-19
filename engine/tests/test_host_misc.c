@@ -5,6 +5,7 @@
  *   test_host_misc ASSET_DIR CINE_PACK       (skips with a message when the packs are missing) */
 #include "audio/stream.h"
 #include "script/hs_host_misc.h"
+#include "world/mouth.h"
 #include "test_host_misc_fixture.h"
 #ifdef HM_WITH_OBJ
 #include "script/hs_host_obj.h"
@@ -280,6 +281,41 @@ static void test_sound(void)
 		CHECK(t >= lo2 && t <= hi2);
 		call("sound_impulse_stop", b, 1, HS_VOID);
 		CHECK(call("sound_impulse_time", b, 1, HS_SHORT).v.i == 0);
+	}
+	/* lip sync: a line a unit speaks drives its face's talk byte with the line's mouth data, one byte per tick, closing the mouth when it ends */
+	{
+		uint8_t blob[16 + 12 * 8 + 16], *q = blob;
+		strm_sound ss = strm_get_sound(&X.strm, (uint32_t)strm_find(&X.strm, d1));
+		mouth_section ms;
+		unsigned v, k;
+		uint32_t t0;
+		static const uint8_t line[8] = { 0, 40, 255, 130, 5, 0, 90, 200 };
+		CHECK(ss.stream_count >= 1 && ss.stream_count <= 8);
+		memset(blob, 0, sizeof blob);
+		memcpy(q, "MOUT", 4); q[4] = 1; q[8] = (uint8_t)ss.stream_count; q[12] = (uint8_t)(16 + 12 * ss.stream_count);
+		for (v = 0; v < ss.stream_count; v++) {                      /* every take has the same mouth data (the picked take is random) */
+			uint8_t *r = blob + 16 + 12 * v;
+			r[0] = (uint8_t)d1; r[1] = (uint8_t)(d1 >> 8); r[2] = (uint8_t)(d1 >> 16); r[3] = (uint8_t)(d1 >> 24);
+			r[4] = (uint8_t)v; r[6] = 8; r[8] = 0;
+		}
+		memcpy(blob + 16 + 12 * ss.stream_count, line, 8);
+		CHECK(mouth_open(&ms, blob, 16 + 12 * ss.stream_count + 8) == 0);
+		X.m.ow.mouth = &ms;
+		a[0] = hv(d1, 24); a[1] = hv(mission_obj_handle(o), 37); a[2] = rv(1.0f);
+		X.objects.obj[o].face.talk = 77;
+		call("sound_impulse_start", a, 3, HS_VOID);
+		t0 = (uint32_t)call("sound_impulse_time", a, 1, HS_SHORT).v.i;
+		CHECK(t0 > 10);
+		for (k = 1; k < 8; k++) {                                               /* tick k after the start plays byte k */
+			step(1);
+			CHECK(X.objects.obj[o].face.talk == line[k]);
+		}
+		step(1);
+		CHECK(X.objects.obj[o].face.talk == 0);                                 /* past the data: closed */
+		call("sound_impulse_stop", a, 1, HS_VOID);
+		X.m.ow.mouth = NULL;
+		step(1);
+		CHECK(X.objects.obj[o].face.talk == 0);
 	}
 	/* unknown sounds and none: no-ops with time 0 */
 	a[0] = hv(0xE0001234u, 24);

@@ -499,6 +499,18 @@ void anim_sample(const anim_section *s, const anim_graph *g, uint32_t k, float f
 	out->count = (uint16_t)nodes;
 }
 
+unsigned anim_overlay_modes(const anim_section *s, const anim_graph *g, uint32_t k, uint8_t out[ANIM_MAX_NODES])
+{
+	const uint8_t *a = anim_rec(s, g, k), *b;
+	uint32_t nn, n;
+	if (!a) return 0;
+	nn = rd16(a + A_NODES);
+	if (nn > ANIM_MAX_NODES) nn = ANIM_MAX_NODES;
+	b = s->pool + rd32(a + A_DATA_OFF);
+	for (n = 0; n < nn; n++) out[n] = (uint8_t)(((b[n] & 3u) ? ANIM_OV_ROT : 0u) | ((b[n] >> 2) & 3u ? ANIM_OV_TRANS : 0u));
+	return nn;
+}
+
 void anim_blend(const anim_pose *a, const anim_pose *b, float t, anim_pose *out)
 {
 	uint32_t n, cnt = a->count < b->count ? a->count : b->count;

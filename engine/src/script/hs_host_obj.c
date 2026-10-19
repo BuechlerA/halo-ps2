@@ -825,7 +825,16 @@ BI(unit_doesnt_drop_items) { ENTER(unit_doesnt_drop_items); for_list(M, A(0), se
 BI(object_set_collideable) { ENTER(object_set_collideable); return 0; }
 BI(unit_open) { ENTER(unit_open); return 0; }
 BI(unit_close) { ENTER(unit_close); return 0; }
-BI(unit_set_emotion) { ENTER(unit_set_emotion); return 0; }
+/* A frame of the unit's "stand emotions" overlay (-1 = none, "other values depend on unit", XBE 0x220df0): its face's eyelids, brows and lips. */
+BI(unit_set_emotion)
+{
+	int slot, e;
+	ENTER(unit_set_emotion);
+	slot = obj_arg(M, A(0), 0);
+	e = argi(A(1));
+	if (slot >= 0 && (unsigned)slot < M->objects->count) M->objects->obj[slot].face.emotion = (uint8_t)(e < 0 ? 0 : e > 254 ? 255 : e + 1);
+	return 0;
+}
 BI(unit_solo_player_integrated_night_vision_is_active) { ENTER(unit_solo_player_integrated_night_vision_is_active); ret_bool(r, 0); return 0; }
 BI(units_set_desired_flashlight_state) { ENTER(units_set_desired_flashlight_state); return 0; }
 BI(vehicle_hover) { ENTER(vehicle_hover); return 0; }

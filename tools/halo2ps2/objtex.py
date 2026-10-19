@@ -144,6 +144,7 @@ def soso_change(m: texconv.MapData, shader_id: int) -> tuple[int, int] | None:
 SOSO_CUBE_MAP, SOSO_REFL_PERP_BRIGHT, SOSO_REFL_PERP_COLOUR, SOSO_REFL_PAR_BRIGHT, SOSO_REFL_PAR_COLOUR = 0x164, 0x144, 0x148, 0x154, 0x158
 REFLECT_KEY = 1 << 41
 TINT_KEY = 1 << 42
+HERO_KEY = 1 << 43
 _CUBE_AVG: dict[int, tuple[float, float, float] | None] = {}
 
 
@@ -208,9 +209,9 @@ def soso_reflect(m: texconv.MapData, shader_id: int) -> tuple[int, tuple[int, in
     return (mask, add) if max(add) >= 8 else None
 
 
-def convert_cc_texture(m: texconv.MapData, base: bitmaps.BitmapImage, mask: bitmaps.BitmapImage, source_id: int, max_dim: int) -> texconv.Ps2Texture:
+def convert_cc_texture(m: texconv.MapData, base: bitmaps.BitmapImage, mask: bitmaps.BitmapImage, source_id: int, max_dim: int, hero: int = 0) -> texconv.Ps2Texture:
     """The base map (colour) with the mask's blue channel as alpha, converted like an object texture of alpha class blend."""
-    tw, th = target_size(base.width, base.height, max_dim)
+    tw, th = hero_size(base.width, base.height, hero) if hero else target_size(base.width, base.height, max_dim)
     level = 1 if base.mip_count >= 1 and base.width >> 1 >= tw and base.height >> 1 >= th else 0
     w, h, rgba = bitmaps.decode_level(base, m.pixels(base), level)
     mw, mh, mrgba = bitmaps.decode_level(mask, m.pixels(mask), 0)
@@ -297,6 +298,39 @@ for _n in ("gas giant grid top left", "no 1s", "indicators", "poa peremeter grid
     TINT["levels\\a10\\devices\\command display\\shaders\\" + _n] = (0.55, 1.0, 1.0, 0.9)      # 4th value: blue = max(blue, 0.9 x green) (cyan from green)
 SKY_GAIN = {"sky\\sky_x10\\bitmaps\\space": 2.5}
 
+# Hero textures (ADR-073): the surfaces a cinematic shows large. Every object texture is halved (and then capped by the budget's `dim`: 128 on a10), which turns a
+# 512 x 512 display map into 128 x 128; these keep up to `HERO[shader path]` texels per side (never above the source's own size, never above TEX_MAX_DIM 256) and are
+# counted in the budget at that size. Shader paths: the command display's hologram layers (the shots of the console wall and the planet), Keyes' and the crew's
+# uniform maps (close-ups of the briefing), Cortana (a hologram a metre from the lens), the Halo close-up planet.
+# HERO[path] = (dim, bits): bits 4 forces a 16 colour palette (the hologram layers are one hue line art: 16 levels of cyan cost half the bytes of 256), 0 lets the converter choose.
+# They have their own allowance, HERO_BUDGET bytes (the whole set is estimated at its size, and if it does not fit every hero dimension is halved until it does), so the
+# ordinary textures keep the size their budget gives them.
+HERO: dict[str, tuple[int, int]] = {}
+for _n in ("gas giant grid top left", "no 1s", "indicators", "poa peremeter grid", "halo grid", "poa", "trajectory a", "trajectory b", "trajectory c", "trajectory d", "trajectory e"):
+    HERO["levels\\a10\\devices\\command display\\shaders\\" + _n] = (256, 4)
+for _n in ("cortana_body", "cortana_hair"):
+    HERO["characters\\cortana\\shaders\\" + _n] = (256, 0)
+for _n in ("captain\\shaders\\captain_body", "marine_armored\\shaders\\marine_torso", "marine_armored\\shaders\\marine_legs", "pilot\\shaders\\pilot_body", "crewman\\shaders\\crewman_body"):
+    HERO["characters\\" + _n] = (256, 0)
+HERO["cinematics\\scenery\\planets\\halo_closeup\\shaders\\halo_closeup"] = (256, 0)
+HERO_BUDGET = 640 * 1024
+
+
+def hero_dim(info) -> int:
+    return HERO.get(info.path, (0, 0))[0]
+
+
+def hero_bits(info) -> int:
+    return HERO.get(info.path, (0, 0))[1]
+
+
+def hero_size(w: int, h: int, dim: int) -> tuple[int, int]:
+    """Full source resolution (power of two) up to `dim` per side, at least MIN_TEX."""
+    tw, th = max(texconv.MIN_TEX, w), max(texconv.MIN_TEX, h)
+    while tw > dim or th > dim:
+        tw, th = max(texconv.MIN_TEX, tw // 2), max(texconv.MIN_TEX, th // 2)
+    return tw, th
+
 
 CORTANA_BODY_BITMAP = "characters\\cortana\\bitmaps\\cortana_body"
 
@@ -327,11 +361,11 @@ def bake_cortana_body(m: texconv.MapData, w: int, h: int, rgba: bytes) -> bytes:
 
 
 def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_id: int, klass_cap: int,
-                           max_dim: int, reflect: tuple | None = None, tint: tuple | None = None) -> texconv.Ps2Texture:
+                           max_dim: int, reflect: tuple | None = None, tint: tuple | None = None, hero: int = 0, bits: int = 0) -> texconv.Ps2Texture:
     """texconv.convert_texture with a configurable size cap and without the colour-key stand-in. A sky bitmap (the whole dome is made of a few of
     them, and they are dark gradients that 16 colours band) keeps its size up to 256 and always gets a 256 colour palette."""
     sky = m.by_id[source_id].path.startswith("sky\\")
-    tw, th = target_size(img.width, img.height, max_dim)
+    tw, th = hero_size(img.width, img.height, hero) if hero else target_size(img.width, img.height, max_dim)
     if sky:
         tw, th = min(texconv.MAX_TEX, max(texconv.MIN_TEX, img.width)), min(texconv.MAX_TEX, max(texconv.MIN_TEX, img.height))
     level = 1 if img.mip_count >= 1 and img.width >> 1 >= tw and img.height >> 1 >= th else 0
@@ -368,7 +402,7 @@ def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_
     gain = SKY_GAIN.get(m.by_id[source_id].path)
     if gain:
         rgba = bytes(min(255, int(v * gain + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
-    tex = texconv.convert_rgba(source_id, rgba, tw, th, klass, 8 if sky or reflect else 0, alpha_ref)
+    tex = texconv.convert_rgba(source_id, rgba, tw, th, klass, 8 if sky or reflect else bits, alpha_ref)
     if img.width < texconv.MIN_TEX or img.height < texconv.MIN_TEX:
         tex.flags |= texconv.TF_UPSCALED
     return tex
@@ -377,19 +411,25 @@ def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_
 PRODUCT_KEY = texconv.PRODUCT_KEY
 
 
-def convert_product_texture(m: texconv.MapData, imgs: list[bitmaps.BitmapImage], source_id: int, max_dim: int) -> texconv.Ps2Texture:
-    tw, th = target_size(max(i.width for i in imgs), max(i.height for i in imgs), max_dim)
-    return texconv.product_texture(m, imgs, source_id, max(tw, 32), max(th, 32))
+def convert_product_texture(m: texconv.MapData, imgs: list[bitmaps.BitmapImage], source_id: int, max_dim: int, hero: int = 0, bits: int = 8) -> texconv.Ps2Texture:
+    w, h = max(i.width for i in imgs), max(i.height for i in imgs)
+    tw, th = hero_size(w, h, hero) if hero else target_size(w, h, max_dim)
+    return texconv.product_texture(m, imgs, source_id, max(tw, 32), max(th, 32), bits or 8)
 
 
-def estimate_bytes(sizes: list[tuple[int, int]], max_dim: int) -> int:
-    """Upper bound of the pixel + CLUT bytes of textures whose source sizes are `sizes`."""
+def estimate_bytes(sizes: list[tuple], max_dim: int, hero_cap: int = 256, heroes: bool = False) -> int:
+    """Upper bound of the pixel + CLUT bytes of textures whose source sizes are `sizes` ((w, h) or (w, h, hero dim, hero bits)): the ordinary ones when `heroes` is
+    False, the hero ones (their dimension capped by `hero_cap`, 16 colour ones at half the bytes) when True."""
     total = 0
-    for w, h in sizes:
-        tw, th = target_size(w, h, max_dim)
+    for w, h, *hd in sizes:
+        hero = bool(hd and hd[0])
+        if hero != heroes:
+            continue
+        tw, th = hero_size(w, h, min(hd[0], hero_cap)) if hero else target_size(w, h, max_dim)
+        bits = 4 if hero and len(hd) > 1 and hd[1] == 4 else 8
         for lw, lh in texconv.mip_dims(tw, th)[:texconv.MAX_MIPS]:
-            total += (lw * lh + 15) // 16 * 16
-        total += 1024
+            total += (lw * lh * bits // 8 + 15) // 16 * 16
+        total += 1024 if bits == 8 else 64
     return total
 
 
@@ -417,6 +457,11 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
     # which bitmaps are actually decodable (decided before sizing the budget)
     plan: dict[tuple[int, int, int], tuple[bitmaps.BitmapImage, int]] = {}
     refl_imgs: dict[int, bitmaps.BitmapImage] = {}
+    hero_of: dict[tuple, tuple] = {}                 # plan key -> (hero dimension, bits), (0, 0) = a plain texture
+
+    def put(key: tuple, val: tuple, hd: tuple) -> None:
+        plan.setdefault(key, val)
+        hero_of.setdefault(key, hd)
     for s in shaders.values():
         if s.bitmap_id is None:
             reasons[s.note or "no base map"] = reasons.get(s.note or "no base map", 0) + 1
@@ -434,6 +479,7 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             reasons[s.note] = reasons.get(s.note, 0) + 1
             continue
         cap = texconv.klass_cap_for(s)
+        hk = HERO_KEY if hero_dim(s) else 0
         used_plain = True
         if s.product:
             try:
@@ -441,7 +487,7 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             except (bitmaps.BitmapError, IndexError):
                 pimgs = []
             if pimgs and all(i.decodable for i in pimgs):
-                plan.setdefault((s.bitmap_id, cap, PRODUCT_KEY | s.product[-1]), (pimgs, cap))
+                put((s.bitmap_id, cap, PRODUCT_KEY | s.product[-1] | hk), (pimgs, cap), (hero_dim(s), hero_bits(s)))
                 used_plain = False
             else:
                 s.product = ()
@@ -452,21 +498,24 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
                 rimgs = []
             if rimgs and rimgs[0].decodable:
                 refl_imgs[s.reflect[0]] = rimgs[0]
-                plan.setdefault((s.bitmap_id, cap, REFLECT_KEY | s.reflect[0]), (images[0], cap))
+                put((s.bitmap_id, cap, REFLECT_KEY | s.reflect[0] | hk), (images[0], cap), (hero_dim(s), hero_bits(s)))
                 used_plain = False
             else:
                 s.reflect = ()
         if s.tint and not s.product and not s.reflect:
-            plan.setdefault((s.bitmap_id, cap, TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100) | (len(s.tint) > 3) << 30), (images[0], cap))
+            put((s.bitmap_id, cap, TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100) | (len(s.tint) > 3) << 30 | hk), (images[0], cap), (hero_dim(s), hero_bits(s)))
             used_plain = False
         if used_plain:
-            plan.setdefault((s.bitmap_id, cap, 0), (images[0], cap))
+            put((s.bitmap_id, cap, hk), (images[0], cap), (hero_dim(s), hero_bits(s)))
         if s.mask_bitmap:
-            plan.setdefault((s.bitmap_id, -1, s.mask_bitmap), (images[0], cap))
-    sizes = [(img.width, img.height) for img, _ in ([(i if not isinstance(i, list) else max(i, key=lambda x: x.width), c) for i, c in plan.values()])]
+            put((s.bitmap_id, -1, s.mask_bitmap | hk), (images[0], cap), (hero_dim(s), hero_bits(s)))
+    sizes = [(img.width, img.height, *hero_of.get(k, (0, 0))) for k, (img, _) in ((k, (i if not isinstance(i, list) else max(i, key=lambda x: x.width), c)) for k, (i, c) in plan.items())]
     dim = max_dim
     while dim > MIN_MAX_DIM and estimate_bytes(sizes, dim) > budget:
         dim //= 2
+    hcap = texconv.MAX_TEX                                 # the hero set has an allowance of its own (HERO_BUDGET)
+    while hcap > MIN_MAX_DIM and estimate_bytes(sizes, dim, hcap, True) > HERO_BUDGET:
+        hcap //= 2
     textures: list[texconv.Ps2Texture] = []
     seen: dict[tuple[int, int, int], int] = {}
     for sid in ids:
@@ -481,14 +530,15 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             continue
         if s.bitmap_id is None:
             continue
-        key = (s.bitmap_id, texconv.klass_cap_for(s), PRODUCT_KEY | s.product[-1] if s.product else REFLECT_KEY | s.reflect[0] if s.reflect else TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100) | (len(s.tint) > 3) << 30 if s.tint else 0)
+        variant = PRODUCT_KEY | s.product[-1] if s.product else REFLECT_KEY | s.reflect[0] if s.reflect else TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100) | (len(s.tint) > 3) << 30 if s.tint else 0
+        key = (s.bitmap_id, texconv.klass_cap_for(s), variant | (HERO_KEY if hero_dim(s) else 0))
         if key not in seen:
             img, cap = plan[key]
             try:
                 if s.product:
-                    tex = convert_product_texture(m, img, s.bitmap_id, dim)
+                    tex = convert_product_texture(m, img, s.bitmap_id, dim, min(hero_dim(s), hcap), hero_bits(s))
                 else:
-                    tex = convert_object_texture(m, img, s.bitmap_id, cap, dim, (refl_imgs[s.reflect[0]], s.reflect[1]) if s.reflect else None, s.tint or None)
+                    tex = convert_object_texture(m, img, s.bitmap_id, cap, dim, (refl_imgs[s.reflect[0]], s.reflect[1]) if s.reflect else None, s.tint or None, min(hero_dim(s), hcap), hero_bits(s))
             except bitmaps.BitmapError as exc:
                 s.bitmap_id, s.flags, s.note = None, s.flags | texconv.BF_UNTEXTURED, f"base map failed to decode: {exc}"
                 reasons["base map failed to decode"] = reasons.get("base map failed to decode", 0) + 1
@@ -498,14 +548,14 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
         s.texture = seen[key]
         tex = textures[s.texture]
         if s.mask_bitmap and s.change_source:
-            key2 = (s.bitmap_id, -1, s.mask_bitmap)
+            key2 = (s.bitmap_id, -1, s.mask_bitmap | (HERO_KEY if hero_dim(s) else 0))
             if key2 not in seen:
                 try:
                     mimgs = m.images(s.mask_bitmap)
                     if not mimgs or not mimgs[0].decodable:
                         raise bitmaps.BitmapError("colour change mask is not a decodable 2D image")
                     seen[key2] = len(textures)
-                    textures.append(convert_cc_texture(m, plan[key][0], mimgs[0], s.bitmap_id, dim))
+                    textures.append(convert_cc_texture(m, plan[key][0], mimgs[0], s.bitmap_id, dim, min(hero_dim(s), hcap)))
                 except bitmaps.BitmapError:
                     s.change_source = 0
             if s.change_source:
