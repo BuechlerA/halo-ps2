@@ -28,6 +28,7 @@ typedef struct {
 	float                 sky_rot[3];    /* extra sky rotation yaw, pitch, roll in radians (debug / calibration: config key skyrot) */
 	float                 sky_yaw0;                           /* extra yaw (radians) of the palette-0 sky only: cfg skyyaw in degrees */
 	int                   dbg_obj;                           /* debug (cfg objdbg): log the visibility test of this object index each frame (-1 none) */
+	float                 sky_planet_gain;                   /* colour gain (1 .. 1.99) of the sky's non-additive parts (the planet): cfg skyplanet */
 	unsigned              sky_hide;                           /* debug (cfg skyhide): bit r hides region r of the sky model */
 	/* statistics of the last pass, copied into render_stats by the caller */
 	float                 st_ms;         /* EE time of the pass */

@@ -501,7 +501,8 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 						clip_project(rc->clip, wp, &tri[k]);
 						memset(tri[k].a, 0, sizeof tri[k].a);
 						tri[k].a[0] = (float)uvk[0] * su; tri[k].a[1] = (float)uvk[1] * sv;
-						tri[k].a[4] = tri[k].a[5] = tri[k].a[6] = tri[k].a[7] = 128.0f;
+						tri[k].a[4] = tri[k].a[5] = tri[k].a[6] = 128.0f * (mb.add ? 1.0f : o->sky_planet_gain);   /* the planet billboards (double multiply on the Xbox) */
+						tri[k].a[7] = 128.0f;
 					}
 					cnt = (unsigned)clip_polygon(tri, rc->cam->near_z, out);
 					if (cnt >= 3 && filled + cnt <= 24 * CLIP_MAX_VERTS) {

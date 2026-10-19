@@ -375,6 +375,7 @@ int main(int argc, char *argv[])
 			s_objr.sky_model = -1;
 			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
+			{ float pg; s_objr.sky_planet_gain = cfg_floats(&s_cfg, "skyplanet", &pg, 1) == 1 ? pg : 1.0f; }
 			{ float yv; s_objr.sky_yaw0 = cfg_floats(&s_cfg, "skyyaw", &yv, 1) == 1 ? yv * 0.01745329f : 0.0f; }
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
 			s_objr.sky_model2 = -1;
