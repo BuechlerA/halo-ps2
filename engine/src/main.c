@@ -271,8 +271,36 @@ static void check_bsp_switch(void)
 	}
 }
 
+/* Streamed high resolution object textures (ADR-074): <obj pack>.hires.hp2 next to the object pack. Its staging ring lives above the BSP mark (a BSP switch frees it and this reopens it)
+ * and is kept only when the arena still has 1 MB after it: b30 (the largest map) has no room for it, a10 does. */
+#define HIRES_MARGIN (1024u * 1024u)
+static void open_hires(void)
+{
+	const char *obj = cfg_str(&s_cfg, "obj", "");
+	const char *dot = strstr(obj, ".obj.hp2");
+	size_t mark;
+	s_hires_open = 0; s_objr.hires = NULL;
+	if (!s_have_objects || !cfg_int(&s_cfg, "hires", 1) || !dot || (size_t)(dot - obj) + 11u >= sizeof s_hires_path) return;
+	memcpy(s_hires_path, obj, (size_t)(dot - obj)); strcpy(s_hires_path + (dot - obj), ".hires.hp2");
+	{
+		long fsz = file_size_of(s_hires_path);
+		if (fsz <= 0) { printf("[hires] none (%s)\n", s_hires_path); return; }
+		mark = arena_mark(&s_arena);
+		if (hires_open(&s_hires, &s_arena, hires_file_read, NULL, (size_t)fsz, (unsigned)cfg_int(&s_cfg, "hiresslots", 3)) != 0) { arena_release(&s_arena, mark); printf("[hires] unusable (%s)\n", s_hires_path); return; }
+	}
+	if (arena_free(&s_arena) < HIRES_MARGIN) { printf("[hires] dropped: %u KB left after the staging ring (needs %u KB)\n", (unsigned)(arena_free(&s_arena) / 1024u), (unsigned)(HIRES_MARGIN / 1024u)); arena_release(&s_arena, mark); return; }
+	s_hires_px = 200.0f;
+	cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
+	s_hires_loads = (uint32_t)cfg_int(&s_cfg, "hiresloads", 1);
+	s_hires.max_loads = s_hires_loads;
+	s_hires_open = 1;
+	s_objr.hires = &s_hires; s_objr.hires_px = s_hires_px;
+	printf("[hires] %s: %u variants of %u textures, %u slots of %u KB, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (unsigned)s_hires.slots, (unsigned)(s_hires.slot_bytes / 1024u), (double)s_hires_px);
+}
+
 static int load_bsp(int idx)
 {
+	s_objr.hires = NULL; s_hires_open = 0;
 	arena_release(&s_arena, s_bsp_mark);
 	if (world_load_bsp(&s_world, &s_arena, s_pack, s_tex, idx)) return -1;
 	if (bsp_render_set_world(&s_arena, &s_world.bsp, &s_world.source)) return -1;
@@ -281,6 +309,7 @@ static int load_bsp(int idx)
 		gamedata_load_bsp(&s_gd, &s_arena, cfg_str(&s_cfg, "game", NULL), idx);
 		if (s_game_on) game_set_collision(&s_game, s_gd.has_coll ? &s_gd.coll : NULL);
 	}
+	open_hires();
 	return 0;
 }
 
@@ -427,24 +456,6 @@ int main(int argc, char *argv[])
 		if (file_size_of(sp) >= 0 && stream_ee_open(&s_see, &s_sp, &s_arena, sp, (int)cfg_int(&s_cfg, "streamlog", 0)) == 0) { s_stream_on = 1; printf("[stream] %s open\n", sp); }
 	}
 	mapp_reserve(&s_arena);                                   /* persistent mission memory (path scratch) before the BSP mark */
-	if (s_have_objects && cfg_int(&s_cfg, "hires", 1)) {          /* streamed high resolution object textures (ADR-074): <obj pack>.hires.hp2 next to the object pack; persistent, so before the BSP mark */
-		const char *obj = cfg_str(&s_cfg, "obj", "");
-		const char *dot = strstr(obj, ".obj.hp2");
-		s_hires_open = 0;
-		if (dot && (size_t)(dot - obj) + 11u < sizeof s_hires_path) {
-			long fsz;
-			memcpy(s_hires_path, obj, (size_t)(dot - obj)); strcpy(s_hires_path + (dot - obj), ".hires.hp2");
-			fsz = file_size_of(s_hires_path);
-			if (fsz > 0 && hires_open(&s_hires, &s_arena, hires_file_read, NULL, (size_t)fsz, (unsigned)cfg_int(&s_cfg, "hiresslots", 3)) == 0) {
-				s_hires_px = 200.0f;
-				cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
-				s_hires_loads = (uint32_t)cfg_int(&s_cfg, "hiresloads", 1);
-				s_hires.max_loads = s_hires_loads;
-				s_hires_open = 1;
-				printf("[hires] %s: %u variants of %u textures, %u slots of %u KB, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (unsigned)s_hires.slots, (unsigned)(s_hires.slot_bytes / 1024u), (double)s_hires_px);
-			} else printf("[hires] none (%s)\n", s_hires_path);
-		}
-	}
 	s_bsp_mark = arena_mark(&s_arena);
 	{
 		int first_bsp = (int)cfg_int(&s_cfg, "bsp", 0);
@@ -458,11 +469,7 @@ int main(int argc, char *argv[])
 	apply_options();   /* every config, with or without an object pack (ADR-059); `skyfog` reads s_world.sky, loaded with the obj pack above */
 	if (s_have_objects) {
 		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
-		if (s_hires_open) {
-			s_objr.hires = &s_hires;
-			s_objr.hires_px = s_hires_px;
-			s_objr.hires_key_base = bsp_render_reserve_keys(s_world.obj_tex.has ? s_world.obj_tex.tex.texture_count : 0);
-		}
+		s_objr.hires_key_base = bsp_render_reserve_keys(s_world.obj_tex.has ? s_world.obj_tex.tex.texture_count : 0);       /* the key range is reserved whether or not the staging ring fits */
 		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
 		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
