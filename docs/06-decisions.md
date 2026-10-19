@@ -724,5 +724,11 @@ small slot pool when a shot's camera comes close, drawn through the same texture
 (8 KB pages, no size assumption). Memory: a10's arena high water went from 24072 to 24514 KB of the (now 25 MB, was 24) arena: `arena_mb` default 25, 1 MB of margin. Other maps' packs were not rebuilt (no MOUT there: their dialogue stays lip-less until
 `scripts/build-world.sh` is run for them).
 
+## ADR-073 addendum: the video is the 4:3 render stretched to 16:9; `widescreen` is off by default
+ADR-063 (2) assumed the Xbox 16:9 mode (vertical field kept, horizontal 70 -> 86 degrees) because the video is 16:9. Measured instead: 45 frames of the intro (ticks 60 .. 3700, step 80), PS2 frame against the video frame at the same time, edge-map
+cross-correlation with shifts of up to 40 px: the 4:3 render stretched horizontally (hfov 70, `widescreen 0`) is the best of three variants in 38 of 45 frames (mean correlation about 0.38, against 0.21 for the old 16:9 mode and 0.25 for
+"hfov 70 across 16:9"). So the video is 4:3 gameplay stretched, and the framings that looked "wrong" (the shot at ticks 2807+ showed a window where the video showed the hologram sphere: too wide a field) were the field of view, not the camera
+points. `widescreen` now defaults to 0 (the PS2 output is 4:3 anyway), 1 keeps the 16:9 variant, 2 is the debug "hfov kept". `scripts/cmp-intro.sh` still stretches the buffer to 16:9 to compare with the video.
+
 ## Open decisions
 None.

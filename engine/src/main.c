@@ -691,7 +691,9 @@ int main(int argc, char *argv[])
 		if ((frame % 6) == 0) profiler_overlay(&s_prof, &s_text);   /* a few updates a second: float formatting is slow */
 		{
 			camera_t rcam = s_cam;
-			if (cfg_int(&s_cfg, "widescreen", 1)) {                 /* the Xbox renders 16:9 with the 4:3 vertical field of view kept: hfov grows (70 -> 86 degrees), the 512x448 buffer is anamorphic */
+			if (cfg_int(&s_cfg, "widescreen", 0) == 2) {              /* debug: the horizontal field of view kept (70 degrees across the 16:9 picture) */
+				rcam.aspect = 16.0f / 9.0f;
+			} else if (cfg_int(&s_cfg, "widescreen", 0)) {                 /* 1: 16:9 with the 4:3 vertical field of view kept (hfov 70 -> 86 degrees, anamorphic buffer). Off by default: measured against the Xbox video (ADR-073) the picture is the 4:3 render, hfov 70 */
 				rcam.hfov = 2.0f * atanf(tanf(s_cam.hfov * 0.5f) * ((16.0f / 9.0f) / s_cam.aspect));
 				rcam.aspect = 16.0f / 9.0f;
 			}
