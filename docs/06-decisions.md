@@ -682,5 +682,14 @@ The three stage combiner program of `cortana_body` was read from the tag's stage
 gains and the extra layers of the sweep above are gone. Measured against the video at tick 3202: purple pixels 3913 (video 5184), average (148, 112, 176) against (168, 109, 216): 12 % dimmer in red, 19 % in blue, no constant fitted.
 The hair shader was not decoded (it keeps its plain strand map, untinted).
 
+## ADR-071 What the Xbox particle system renderer does (XBE 0x1105e0), and what is still unknown
+Found through the particle array globals (0x2fab44 systems, 0x2fab40 particles): the iteration is 0x110c80, the per-system draw is `0x1105e0`, the billboard emit is 0x59a20 (flag bit 7 of the type: additive-ish mode 3).
+Per particle it computes, with t = remaining / duration of its current particle state (0 .. 1) between the current and the next particle state: size = lerp(state.scale, next.scale) x the system state's scale multiplier;
+colour and ALPHA = lerp(state colour (A R G B), next state colour) x the system state's colour multiplier (A R G B), and for blend function 0 (alpha blend, the steam) the RGB is further multiplied by the system's own tint (+0x48..0x50);
+the sprite frame is random in the sequence. The a10 steam therefore has alpha = 0 (`steam jet`) -> 0.25 .. 0.35 (`steam cloud`) -> 0 (`death`) x 0.5 (state colour multiplier A) = at most 0.15 and a size of
+0.0065 .. 0.0085 x 1.0: both multiplied by factors this engine fits (alpha x 3.4, size x 120): the unit of the size handed to 0x59a20 / 0x59550 (a distance-faded perspective sprite, `FUN_000b2880`) and the framebuffer / overbright
+of the Xbox are not decoded, and our two-key fade stands in for the three-state alpha ramp. The creation rate is the integer part of rate x dt per tick with the fraction carried (0x10f620), already as ours.
+**Consequence**: the steam multipliers stay measured, but they are now known to stand for two specific unknown units (sprite size unit, framebuffer alpha scale), not for missing tag data.
+
 ## Open decisions
 None.
