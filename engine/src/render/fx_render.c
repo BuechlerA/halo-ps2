@@ -51,6 +51,7 @@ void fx_render_pass(void *user, render_ctx_t *rc)
 		if (a < 2) continue;
 		life_t = p->life ? (float)p->age / (float)p->life : 0.0f;
 		size = p->size0 + (p->size1 - p->size0) * life_t;
+		if (p->blend == FXD_BLEND_ADD) size *= r->add_size;
 		if (!project(rc, p->pos, size, &it->cx, &it->cy, &it->half, &it->depth) || it->depth < 0.35f) continue;
 		if (it->half < 0.75f) it->half = 0.75f;
 		if (it->half > 40.0f) it->half = 40.0f;             /* effects are tuned for a third-person-ish camera: cap the near-camera blow-up */
@@ -59,6 +60,10 @@ void fx_render_pass(void *user, render_ctx_t *rc)
 		it->sprite_tex = sp.texture; it->u0 = sp.u0; it->v0 = sp.v0; it->u1 = sp.u1; it->v1 = sp.v1;
 		it->rgba = (uint32_t)p->rgba[0] | (uint32_t)p->rgba[1] << 8 | (uint32_t)p->rgba[2] << 16 | (uint32_t)a << 24;
 		it->blend = (uint8_t)blend_of(p->blend); it->decal = 0;
+		if (it->blend == SPR_BLEND_ADD && r->add_gain != 1.0f) {
+			unsigned c;
+			for (c = 0; c < 3; c++) { unsigned v = (unsigned)((float)((it->rgba >> (8 * c)) & 0xFFu) * r->add_gain); it->rgba = (it->rgba & ~(0xFFu << (8 * c))) | ((v > 255u ? 255u : v) << (8 * c)); }
+		}
 		if (it->blend == SPR_BLEND_ALPHA && it->half > 12.0f) it->rgba = (it->rgba & 0x00FFFFFFu) | (((it->rgba >> 24) * 2u / 5u) << 24);
 		if (it->blend == SPR_BLEND_MULTIPLY) { it->blend = SPR_BLEND_ALPHA; it->rgba = 0x10u | 0x10u << 8 | 0x10u << 16 | (((it->rgba >> 24) * 3u / 5u) << 24); }
 		n++;
