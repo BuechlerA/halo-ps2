@@ -633,7 +633,7 @@ decoded). Rendered with the new debug key `spawnobj <exact definition name>` / `
 Keyes teal in front of the display; a very faint wide disc of the light's colour stands in for the wall wash (the lightmaps cannot take it); glows of bloom lights grow 13 % of the distance beyond 12 wu (the
 engine bells now match the video's bloom); steam puffs expand 2.2x and rise; the attachment pool holds 128 systems (24 starved the steam jets once the lights took slots).
 (10) Searched for Keyes' hologram overlay: it is NOT the cinematic screen effect (a10 uses that only for the purple flash that ends the bridge and the lens burst at the cryo exit, after tick 2760), NOT the
-command display (a flat 1.4 wu panel), and no tag name (holo, scan, beam, keyes, x10) in a10 holds teal scan geometry; its source is unknown. The `screen.effect` flag is kept in `cine_screen` for a later full-screen pass.
+command display (a flat 1.4 wu panel), and no tag name (holo, scan, beam, keyes, x10) in a10 holds teal scan geometry; its source is unknown. The two `cortana vol` scenery placements (names `x10_cortana_effect` / `cortana_effect`, at the console, 0.55 wu from Keyes) are Cortana's projection volume; spawned during the Keyes shot with the debug key (`spawnobj`, `spawnpos`) they draw nothing visible, so they are not the beams either. The `screen.effect` flag is kept in `cine_screen` for a later full-screen pass.
 Still different: the cyan scan beams and translucency of the hologram (Keyes is teal but solid; the display's volume effects are drawn as faint streaks), real per-pixel wall lighting by dynamic lights, steam
 wind (the particle system physics constants are not decoded), and the exact purple of Cortana (by eye).
 

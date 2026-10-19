@@ -612,6 +612,8 @@ int main(int argc, char *argv[])
 						scen_def d = scen_get_def(s_objr.world.scen, di);
 						if (strcmp(d.name, cfg_str(&s_cfg, "spawnobj", "")) == 0) {
 							float p[3] = { cp.pos[0] + 1.6f * cosf(cp.yaw) - 0.7f * sinf(cp.yaw), cp.pos[1] + 1.6f * sinf(cp.yaw) + 0.7f * cosf(cp.yaw), cp.pos[2] - 0.8f };
+							float fixp[3];
+							if (cfg_floats(&s_cfg, "spawnpos", fixp, 3) == 3) { p[0] = fixp[0]; p[1] = fixp[1]; p[2] = fixp[2]; }
 							int slot = objects_spawn_def(&s_objects, &s_objr.world, di, p, cp.yaw + 3.1416f);
 							printf("[obj] spawned %s as %d\n", d.name, slot);
 							break;
