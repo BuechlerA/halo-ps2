@@ -742,7 +742,10 @@ for the frame budget; the uniform's badge and trim, Keyes' hologram beams and th
 (5) **Cinematic object lighting**: the cluster light probes leave objects 1.2 .. 2.4 x darker than the video (Keyes' cheek (100, 93, 51) against (144, 121, 81), his shirt (54, 70, 47) against (133, 137, 110)); during a cinematic the engine multiplies the probes by (2.5, 2.3, 2.6)
 and the ambient by 1.3 more (cfg `objlight`, `objamb`; gameplay keeps the probes: gain 1). Face now (141, 121, 77) / shirt (100, 115, 91): a fit, not the Xbox's object lighting, which is not decoded. `dlobj`, `dlwall`, `objchroma` are the other knobs.
 **Prefetch (addendum)**: an object whose diameter is between half of `hirespx` and `hirespx` (approaching) already loads and uploads its variants (drawn with the resident texture until it counts), so a camera move or a cut onto a growing object finds them in VRAM. On the a10 intro 202 loads / 21.7 MB read (ticks 60 .. 3500), 2679 refusals for the one-load-a-frame budget (the ring of three slots must outlive two frames, so more loads a frame need more slots: memory).
-(6) a30 and b40 object packs were rebuilt (MOUT, face overlays, hires); the other six maps have no converted packs at all.
+(6) All ten maps now have converted packs in the worktree (`scripts/build-world.sh` for a50 b30 c10 c20 c40 d20 d40 completed with no failed converter). Boot smoke tests on the headless interpreter: c10 runs 300 ticks with 0 script errors; b30 (the large outdoor map) does not fit
+the arena (`no scratch room for COL0 (1248597 bytes)` with 24.6 MB used of 25.6): its BSP needs memory work that is outside this change. Tried and left as is: the engine bells (a bloom size multiplier for blue lights changed nothing, so the halo of the video is not that path; the grey chrome rim of the bell and the missing halo remain),
+steam wind (no wind data in a10 and no `wind` string in the executable: nothing to read), the steam alpha scale (the unit is not decoded).
+(7) a30 and b40 object packs were rebuilt (MOUT, face overlays, hires); the other six maps have no converted packs at all.
 
 ## Open decisions
 None.
