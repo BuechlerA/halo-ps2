@@ -35,6 +35,15 @@ void mat4_from_ypr(mat4 *o, float yaw, float pitch, float roll, const float t[3]
 	o->m[3][0] = t[0]; o->m[3][1] = t[1]; o->m[3][2] = t[2]; o->m[3][3] = 1.0f;
 }
 
+void mat4_from_euler_halo(mat4 *o, float yaw, float pitch, float roll, const float t[3])
+{
+	float c1 = cosf(yaw), s1 = sinf(yaw), c2 = cosf(pitch), s2 = sinf(pitch), c3 = cosf(roll), s3 = sinf(roll);
+	o->m[0][0] = c1 * c2;  o->m[0][1] = s1 * c3 - s2 * s3 * c1;  o->m[0][2] = s1 * s3 + s2 * c3 * c1;  o->m[0][3] = 0.0f;
+	o->m[1][0] = -s1 * c2; o->m[1][1] = c1 * c3 + s2 * s3 * s1;  o->m[1][2] = c1 * s3 - s2 * c3 * s1;  o->m[1][3] = 0.0f;
+	o->m[2][0] = -s2;      o->m[2][1] = -c2 * s3;                o->m[2][2] = c2 * c3;                 o->m[2][3] = 0.0f;
+	o->m[3][0] = t[0]; o->m[3][1] = t[1]; o->m[3][2] = t[2]; o->m[3][3] = 1.0f;
+}
+
 void mat4_mul(mat4 *o, const mat4 *a, const mat4 *b)
 {
 	mat4 r;

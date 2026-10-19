@@ -88,10 +88,10 @@ void profiler_report(const profiler_t *p)
 {
 	const render_stats_t *r = &p->last;
 	printf("[prof] frames=%u fps=%.1f dropped=%u (%u this window) interval max=%.1fms | ee prep avg=%.2f peak=%.2f vis=%.2f wait=%.2f | "
-	       "vif1=%.2f gs=%.2f | tris=%u batches=%u mats=%u clusters=%u/%u portals=%u/%u | tex hit=%u up=%u/%uKB defer=%u fail=%u free=%upg flat=%u | chain=%uqw%s clip=%ub/%u/%u skip=%u drop=%u (%.2fms, polygon %.2fms) build=%.2f | obj %.2fms vis=%u batches=%u tris=%u lod=%u\n",
+	       "vif1=%.2f gs=%.2f | tris=%u batches=%u mats=%u clusters=%u/%u portals=%u/%u | tex hit=%u up=%u/%uKB defer=%u fail=%u free=%upg flat=%u | chain=%uqw%s clip=%ub/%u/%u skip=%u drop=%u (%.2fms, scan %.2f gather %.2f polygon %.2fms) build=%.2f | obj %.2fms vis=%u batches=%u tris=%u lod=%u\n",
 	       p->frames, p->fps, p->dropped, p->win_dropped, p->interval_max, p->prep_avg, p->prep_peak, r->vis_ms, p->wait_avg,
 	       p->vif_ms, p->gs_ms, r->triangles, r->batches, r->materials_drawn, r->clusters_visible, r->clusters_total,
 	       r->portals_passed, r->portals_tested, r->tex_hits, r->uploads, r->upload_bytes / 1024, r->tex_deferred, r->tex_failed,
 	       r->pages_free, r->untextured_batches, r->chain_qw, r->chain_overflow ? " OVERFLOW" : "",
-	       (unsigned)r->clip_batches, (unsigned)r->clip_polys, (unsigned)r->clip_tris, (unsigned)r->clip_skipped_batches, (unsigned)r->clip_dropped, r->clip_ms, r->emit_clip_ms, r->build_ms, p->obj_ms, p->obj_visible, p->obj_batches, p->obj_tris, p->lod_level);
+	       (unsigned)r->clip_batches, (unsigned)r->clip_polys, (unsigned)r->clip_tris, (unsigned)r->clip_skipped_batches, (unsigned)r->clip_dropped, r->clip_ms, r->clip_scan_ms, r->clip_gather_ms, r->emit_clip_ms, r->build_ms, p->obj_ms, p->obj_visible, p->obj_batches, p->obj_tris, p->lod_level);
 }

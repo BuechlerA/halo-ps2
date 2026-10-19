@@ -64,6 +64,12 @@ int         anim_find_name(const anim_section *s, const anim_graph *g, const cha
 /* Sample animation k at fractional frame `frame` (loops or clamps per its flags) into `out`: all
  * g->node_count nodes get a transform (nodes the animation does not drive get the graph's default). */
 void        anim_sample(const anim_section *s, const anim_graph *g, uint32_t k, float frame, anim_pose *out);
+/* Which channels animation k drives, for an OVERLAY (a face overlay, tools/halo2ps2/animconv.py is_face_overlay: only the channels the
+ * tag flags as animated carry data, every other one is "default"): out[n] = ANIM_OV_ROT and/or ANIM_OV_TRANS. Returns the node count
+ * (0 when k does not exist). Sample the values with anim_sample; they are deltas to compose with the base pose. */
+#define ANIM_OV_ROT 1u
+#define ANIM_OV_TRANS 2u
+unsigned    anim_overlay_modes(const anim_section *s, const anim_graph *g, uint32_t k, uint8_t out[ANIM_MAX_NODES]);
 /* out = lerp(a, b, t) with normalised quaternion interpolation; a, b, out may alias. */
 void        anim_blend(const anim_pose *a, const anim_pose *b, float t, anim_pose *out);
 

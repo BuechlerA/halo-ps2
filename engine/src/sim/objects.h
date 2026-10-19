@@ -8,6 +8,7 @@
 #include "sim/skeleton.h"
 #include "world/anim.h"
 #include "world/model.h"
+#include "world/mouth.h"
 #include "world/scen.h"
 
 #define OBJ_MAX 1280
@@ -19,7 +20,14 @@
 #define OBJ_F_INACTIVE 4u       /* lies in a BSP that is not loaded: kept, frozen, not drawn */
 #define OBJ_F_FREE 8u           /* unused slot (destroyed object), reused by the next spawn */
 #define OBJ_F_HIDDEN 16u        /* exists but is not drawn (scripts hide objects) */
+#define OBJ_F_HELD 64u          /* a weapon in a unit's hand (hs_host_obj.c): follows the hand marker, cannot be picked up */
 #define OBJ_F_POSED 32u         /* drawn at anim/frame but the frame is set by its owner (devices), not advanced by objects_tick */
+
+/* A talking unit's face (docs/12-anim-section.md "Face overlays"): the overlays of the unit's own graph that move the eyelids, brows,
+ * lips and jaw on top of whatever it plays. graph = graph index + 1 (0 = no face), emo_anim / talk_anim = animation index + 1 of
+ * "stand emotions" / "stand talk", emotion = frame + 1 of the emotions overlay (`unit_set_emotion`, 0 = none), talk = the sound's
+ * mouth amplitude of this tick (0..255, the jaw overlay scaled by it). */
+typedef struct { int16_t graph, emo_anim, talk_anim; uint8_t emotion, talk; } object_face;
 
 typedef struct {
 	int16_t  def;                         /* scen definition */
@@ -33,6 +41,8 @@ typedef struct {
 	float    pos[3], radius;
 	mat4     root;                        /* placement transform */
 	uint16_t perm[OBJ_MAX_REGIONS];       /* flat permutation index per region */
+	object_face face;
+	uint16_t serial;                      /* creation counter (never 0): a destroyed and recreated object in the same slot is a new object (attached effects restart) */
 } object_t;
 
 typedef struct {
@@ -40,12 +50,14 @@ typedef struct {
 	unsigned count;                       /* slots in use (high-water mark) */
 	int16_t  by_placement[OBJ_MAX_PLACEMENTS];   /* placement index -> object slot, -1 not spawned */
 	unsigned skipped_no_model, skipped_hidden, skipped_cap, skipped_other_bsp;
+	uint16_t next_serial;
 } object_table_t;
 
 typedef struct {
 	const scen_section  *scen;
 	const model_section *models;
 	const anim_section  *anims;
+	const mouth_section *mouth;           /* lip-sync data (NULL = none) */
 } object_world_t;
 
 void objects_clear(object_table_t *t);
@@ -77,6 +89,13 @@ unsigned objects_pose(const object_t *o, const object_world_t *w, object_nodes_t
  * graph's maps 1:1, a node the graph does not name keeps its bind pose. The map is cached per (model, graph). */
 unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsigned anim, float frame,
                             const mat4 *root, object_nodes_t *out);
+/* Same with a face (NULL = none): the emotion / talk overlays are composed onto the face nodes of the posed skeleton. */
+unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, unsigned anim, float frame,
+                                 const mat4 *root, object_nodes_t *out, const object_face *face);
+/* Fill o->face from the unit's own graph (the face overlays of the graph, none when it has neither). */
+void objects_set_face_graph(object_t *o, const object_world_t *w, int graph);
+/* Debug: 0 = overlay * base (the overlay turns in the parent's frame), 1 = base * overlay (in the bone's own frame). */
+extern int g_face_compose;
 /* Fast path for objects that are not animated: every skinning matrix is the placement matrix (bind pose x root);
  * out->world is NOT filled. Returns the node count. */
 unsigned objects_pose_static(const object_t *o, const object_world_t *w, object_nodes_t *out);

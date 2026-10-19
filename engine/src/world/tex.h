@@ -12,7 +12,7 @@
 #define TEX_PSMT4 0x14u
 #define TEX_MAX_MIPS 4u
 #define TEX_MIN_DIM 8u
-#define TEX_MAX_DIM 256u
+#define TEX_MAX_DIM 512u            /* the format's limit; the converter's default cap is 256, only hero textures (tools/halo2ps2 HERO_BITMAPS) go above it */
 #define TEX_NONE 0xFFFFu           /* binding without a texture: draw flat grey */
 
 /* tex_info.flags */
@@ -67,6 +67,9 @@ typedef struct {
 } tex_section;
 
 tex_status tex_open(tex_section *s, const uint8_t *data, size_t size);
+/* Same for a section of which only the first `avail` bytes (header and tables) are in memory (`size` = its whole length): the accessors that return pixel or CLUT
+ * pointers (tex_mip, tex_clut) must not be used then; read the data from the offsets of tex_get. */
+tex_status tex_open_tables(tex_section *s, const uint8_t *data, size_t avail, size_t size);
 tex_info tex_get(const tex_section *s, uint32_t i);                    /* i < texture_count */
 /* Number of mip levels a texture of this size may have (halve while the smaller side is > 8, max 4). */
 uint32_t tex_max_mips(uint32_t width, uint32_t height);

@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REF="$1"; OUT="$2"; FIRST="${3:-60}"; LAST="${4:-3700}"; STEP="${5:-120}"; OFF="${6:-0}"
 shift $(( $# < 6 ? $# : 6 )) || true
 mkdir -p "$OUT"
-{ sed -e "s/^frames .*/frames $((LAST + 2))/" ${PACK:+-e "s#^pack .*#pack $PACK#"} ${TEX:+-e "s#^tex .*#tex $TEX#"} ${OBJ:+-e "s#^obj .*#obj $OBJ#"} "$ROOT/scripts/paths/a10mission.cfg"
+{ sed -e "s/^frames .*/frames $((LAST + 2))/" ${PACK:+-e "s#^pack .*#pack $PACK#"} ${TEX:+-e "s#^tex .*#tex $TEX#"} ${OBJ:+-e "s#^obj .*#obj $OBJ#"} "${CFG:-$ROOT/scripts/paths/a10intro.cfg}"
   for ((f = FIRST; f <= LAST; f += STEP)); do echo "fbdump $f"; done
   for l in "$@"; do echo "$l"; done; } > "$OUT/halo.cfg"
 SPEED="${SPEED:-8}" "$ROOT/scripts/run-headless.sh" -t 1200 -c "$OUT/halo.cfg" -l "$OUT/emu.log" > "$OUT/out.txt" 2>&1 || true
@@ -28,12 +28,13 @@ out, first, last, step = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sy
 ticks = [t for t in range(first, last + 1, step) if os.path.exists(f"{out}/fb-{t}.png") and os.path.exists(f"{out}/ref-{t}.png")]
 for t in ticks:
     a, b = Image.open(f"{out}/fb-{t}.png"), Image.open(f"{out}/ref-{t}.png")
-    w = Image.new("RGB", (1024, 448)); w.paste(a, (0, 0)); w.paste(b, (512, 80))
+    a = a.resize((797, 448)) if os.environ.get("WIDE", "1") == "1" else a        # the 512x448 buffer is anamorphic 16:9 (engine key widescreen)
+    w = Image.new("RGB", (a.width + 512, 448)); w.paste(a, (0, 0)); w.paste(b, (a.width, 80))
     ImageDraw.Draw(w).text((4, 4), f"tick {t} ({t / 30:.1f} s)", fill=(255, 255, 0)); w.save(f"{out}/cmp-{t}.png")
 per = 3
 for n in range(0, len(ticks), per):
     grp = ticks[n:n + per]
-    sh = Image.new("RGB", (1024, 448 * len(grp)))
+    sh = Image.new("RGB", (Image.open(f"{out}/cmp-{grp[0]}.png").width, 448 * len(grp)))
     for i, t in enumerate(grp):
         sh.paste(Image.open(f"{out}/cmp-{t}.png"), (0, 448 * i))
     sh.save(f"{out}/sheet-{n // per}.png")

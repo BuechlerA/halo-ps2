@@ -109,7 +109,7 @@ static int check_playback(const cinedef_section *s)
 	CHECK(!p.done && p.tick == 10);
 	cine_play_tick(&p);
 	CHECK(p.done);
-	/* third: version 0 header; the mode and throttle events (the throttle one waits 2 ticks AFTER applying) are both tick 0 */
+	/* third: version 0 header; the mode and throttle events (a wait is the delay before an event) are both tick 0 */
 	CHECK(cine_play_start(&p, s, 2));
 	CHECK(p.length == 3 && p.ctl.mode == 3 && p.ctl.flags == 0x12 && p.ctl.throttle[0] == 0.5f && p.ctl.throttle[1] == -0.5f &&
 	      (p.changed & CINE_CH_MODE) && (p.changed & CINE_CH_THROTTLE));
@@ -258,18 +258,19 @@ static int check_camera(void)
 	CHECK(now.pos[0] == 1.0f && cine_cam_time(&c) == 0);
 	cine_cam_control(&c, 1);
 	CHECK(c.control && c.mode == CINE_CAM_POSE && cine_cam_pose(&c).pos[0] == 1.0f);
-	/* linear transition of 30 ticks */
+	/* from rest: Halo's observer, a quintic (minimum jerk) with no velocity at either end */
 	cine_cam_set(&c, &t, 30, CINE_EASE_LINEAR);
 	CHECK(cine_cam_time(&c) == 30 && cine_cam_pose(&c).pos[0] == 1.0f);
 	for (i = 1; i <= 30; i++) {
 		cine_cam_tick(&c);
 		now = cine_cam_pose(&c);
-		CHECK(near(now.pos[0], 1.0f + 10.0f * (float)i / 30.0f, 1e-4f) && cine_cam_time(&c) == 30 - i);
+		float sr = (float)(30 - i) / 30.0f;
+		CHECK(near(now.pos[0], 11.0f - 10.0f * (10.0f * sr * sr * sr - 15.0f * sr * sr * sr * sr + 6.0f * sr * sr * sr * sr * sr), 1e-3f) && cine_cam_time(&c) == 30 - i);
 	}
 	CHECK(now.pos[0] == 11.0f && near(now.yaw, 0.5f, 1e-6f));
 	cine_cam_tick(&c);
 	CHECK(cine_cam_pose(&c).pos[0] == 11.0f && cine_cam_time(&c) == 0);                      /* arrived: holds */
-	/* smooth: slower at the ends, equal at the middle, monotone */
+	/* slower at the ends, equal at the middle, monotone */
 	cine_cam_set(&c, &p0, 30, CINE_EASE_SMOOTH);
 	{
 		float last = c.cur.pos[0], x7 = 0, x15 = 0;
@@ -280,7 +281,7 @@ static int check_camera(void)
 			if (i == 7) x7 = last;
 			if (i == 15) x15 = last;
 		}
-		CHECK(near(x15, 6.0f, 1e-4f) && x7 > 11.0f - 10.0f * (7.0f / 30.0f));      /* started slower than linear */
+		CHECK(near(x15, 6.0f, 0.05f) && x7 > 11.0f - 10.0f * (7.0f / 30.0f));      /* started slower than linear */
 		CHECK(last == 1.0f);
 	}
 	/* a cut */
@@ -291,6 +292,30 @@ static int check_camera(void)
 	for (i = 0; i < 10; i++) cine_cam_tick(&c);
 	cine_cam_set(&c, &t, 10, CINE_EASE_LINEAR);
 	CHECK(near(cine_cam_pose(&c).pos[0], 6.0f, 1e-4f));
+	/* a retarget in mid flight keeps the velocity and the acceleration: no kink in the speed */
+	{
+		cine_pose far = p0, back = p0;
+		float prev, v_before = 0, v_after = 0, v2;
+		far.pos[0] = 101.0f;
+		back.pos[0] = 51.0f;
+		cine_cam_set(&c, &p0, 0, CINE_EASE_LINEAR);
+		cine_cam_set(&c, &far, 40, CINE_EASE_LINEAR);
+		for (i = 0; i < 15; i++) cine_cam_tick(&c);
+		prev = cine_cam_pose(&c).pos[0];
+		cine_cam_tick(&c);
+		v_before = cine_cam_pose(&c).pos[0] - prev;
+		prev = cine_cam_pose(&c).pos[0];
+		cine_cam_set(&c, &back, 40, CINE_EASE_LINEAR);                 /* turn round */
+		cine_cam_tick(&c);
+		v_after = cine_cam_pose(&c).pos[0] - prev;
+		prev = cine_cam_pose(&c).pos[0];
+		cine_cam_tick(&c);
+		v2 = cine_cam_pose(&c).pos[0] - prev;
+		CHECK(v_before > 1.0f && fabsf(v_after - v_before) < 0.25f * v_before);        /* it keeps going the old way first */
+		CHECK(fabsf(v2 - v_after) < 0.25f * v_before);
+		for (i = 0; i < 80; i++) cine_cam_tick(&c);
+		CHECK(near(cine_cam_pose(&c).pos[0], 51.0f, 1e-3f));
+	}
 	/* the shortest way round: yaw 3.0 to -3.0 passes through pi, never through 0 */
 	{
 		cine_pose a = p0, b = p0;

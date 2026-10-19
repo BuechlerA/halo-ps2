@@ -59,6 +59,7 @@ typedef struct {
 	uint16_t  anim_class;                   /* resolved animation class index (ASTB) of the current posture block */
 	int16_t   custom_anim;                  /* script / command-list animation index in the unit's graph, -1 none */
 	float     custom_frame_scale;
+	int16_t   rm_frame;                     /* last frame of the custom animation whose root motion has been applied (-1 none) */
 	uint32_t  spawn_tick;
 	float     stun;                         /* ticks of flinch left */
 	/* ---- internals of units.c (pointer-free; the AI may read them) ---- */

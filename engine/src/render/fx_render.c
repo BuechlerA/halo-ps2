@@ -51,13 +51,19 @@ void fx_render_pass(void *user, render_ctx_t *rc)
 		if (a < 2) continue;
 		life_t = p->life ? (float)p->age / (float)p->life : 0.0f;
 		size = p->size0 + (p->size1 - p->size0) * life_t;
+		if (p->blend == FXD_BLEND_ADD) size *= r->add_size;
 		if (!project(rc, p->pos, size, &it->cx, &it->cy, &it->half, &it->depth) || it->depth < 0.35f) continue;
 		if (it->half < 0.75f) it->half = 0.75f;
 		if (it->half > 40.0f) it->half = 40.0f;             /* effects are tuned for a third-person-ish camera: cap the near-camera blow-up */
+		if (it->cx + it->half < 0.0f || it->cx - it->half > (float)VIDEO_WIDTH || it->cy + it->half < 0.0f || it->cy - it->half > (float)VIDEO_HEIGHT) continue;   /* off screen: far coordinates wrap in the GS */
 		if (!fxdef_sprite(fx->def, p->bitmap, p->seq, (uint32_t)((float)p->age * p->anim_rate), &sp) || sp.texture == 0xFFFFu) continue;
 		it->sprite_tex = sp.texture; it->u0 = sp.u0; it->v0 = sp.v0; it->u1 = sp.u1; it->v1 = sp.v1;
 		it->rgba = (uint32_t)p->rgba[0] | (uint32_t)p->rgba[1] << 8 | (uint32_t)p->rgba[2] << 16 | (uint32_t)a << 24;
 		it->blend = (uint8_t)blend_of(p->blend); it->decal = 0;
+		if (it->blend == SPR_BLEND_ADD && r->add_gain != 1.0f) {
+			unsigned c;
+			for (c = 0; c < 3; c++) { unsigned v = (unsigned)((float)((it->rgba >> (8 * c)) & 0xFFu) * r->add_gain); it->rgba = (it->rgba & ~(0xFFu << (8 * c))) | ((v > 255u ? 255u : v) << (8 * c)); }
+		}
 		if (it->blend == SPR_BLEND_ALPHA && it->half > 12.0f) it->rgba = (it->rgba & 0x00FFFFFFu) | (((it->rgba >> 24) * 2u / 5u) << 24);
 		if (it->blend == SPR_BLEND_MULTIPLY) { it->blend = SPR_BLEND_ALPHA; it->rgba = 0x10u | 0x10u << 8 | 0x10u << 16 | (((it->rgba >> 24) * 3u / 5u) << 24); }
 		n++;
@@ -106,6 +112,12 @@ void fx_render_pass(void *user, render_ctx_t *rc)
 		if (!tex0) { r->st_skipped++; continue; }
 		if (z > 0xFFFFFFu) z = 0xFFFFFFu;
 		spr_state(&spr, tex0, it->blend, 1);
+		if (r->halo > 0.0f && it->blend == SPR_BLEND_ADD && it->half >= 16.0f && !it->decal) {      /* the bloom: a wider, bluer, fainter copy under the sprite */
+			float h = it->half * 2.2f;
+			unsigned c0 = (unsigned)((float)(it->rgba & 0xFFu) * 0.35f * r->halo), c1 = (unsigned)((float)((it->rgba >> 8) & 0xFFu) * 0.65f * r->halo), c2 = (unsigned)((float)((it->rgba >> 16) & 0xFFu) * r->halo);
+			uint32_t hc = (c0 > 255u ? 255u : c0) | (c1 > 255u ? 255u : c1) << 8 | (c2 > 255u ? 255u : c2) << 16 | (it->rgba & 0xFF000000u);
+			spr_quad(&spr, it->cx - h, it->cy - h, it->cx + h, it->cy + h, it->u0 * (float)img.w, it->v0 * (float)img.h, it->u1 * (float)img.w, it->v1 * (float)img.h, z, hc);
+		}
 		spr_quad(&spr, it->cx - it->half, it->cy - it->half, it->cx + it->half, it->cy + it->half,
 		         it->u0 * (float)img.w, it->v0 * (float)img.h, it->u1 * (float)img.w, it->v1 * (float)img.h, z, it->rgba);
 		if (it->decal) r->st_decals++; else r->st_particles++;

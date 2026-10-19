@@ -5,6 +5,7 @@
  *   test_host_misc ASSET_DIR CINE_PACK       (skips with a message when the packs are missing) */
 #include "audio/stream.h"
 #include "script/hs_host_misc.h"
+#include "world/mouth.h"
 #include "test_host_misc_fixture.h"
 #ifdef HM_WITH_OBJ
 #include "script/hs_host_obj.h"
@@ -103,19 +104,21 @@ static void test_camera(void)
 	fresh();
 	CHECK(X.dev.camera_count > 4 && X.dev.flag_count > 4);
 	c = devdef_get_camera(&X.dev, 3);
-	a[0] = hv(3, 13); a[1] = sv(30);
+	a[0] = hv(3, 13); a[1] = sv(100);                 /* camera_set lasts 0.9 of its ticks unless measured otherwise (hs_host_misc.c camera_ticks) */
 	call("camera_set", a, 2, HS_VOID);
 	CHECK(X.cine.cam.control && X.cine.cam.mode == CINE_CAM_POSE);
-	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 30);
-	step(15);
-	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 15);
-	r = CALL0("camera_time", HS_REAL); CHECK(NEAR(r.v.f, 15.0f, 0.01f));
-	step(15);
+	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 90);
+	step(45);
+	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 45);
+	r = CALL0("camera_time", HS_REAL); CHECK(NEAR(r.v.f, 45.0f, 0.01f));
+	step(45);
 	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 0);
 	{
 		cine_pose p = cine_cam_pose(&X.cine.cam);
 		CHECK(NEAR(p.pos[0], c.pos[0], 1e-3f) && NEAR(p.pos[1], c.pos[1], 1e-3f) && NEAR(p.pos[2], c.pos[2], 1e-3f));
-		CHECK(NEAR(p.yaw, c.ori[0], 1e-3f) && NEAR(p.pitch, c.ori[1], 1e-3f));
+		float ey, ep, er;
+		cine_halo_euler_to_ypr(c.ori[0], c.ori[1], c.ori[2], &ey, &ep, &er);       /* camera points use Halo's euler convention */
+		CHECK(NEAR(p.yaw, ey, 1e-3f) && NEAR(p.pitch, ep, 1e-3f) && NEAR(p.roll, er, 1e-3f));
 	}
 	/* a cut: zero ticks arrives at once; an unknown point is a no-op */
 	a[0] = hv(5, 13); a[1] = sv(0);
@@ -230,6 +233,7 @@ static int find_dialogue(unsigned skip, uint32_t *tag, uint32_t *tmin, uint32_t 
 			if (t < lo) lo = t;
 			if (t > hi) hi = t;
 		}
+		if (s.max_play_ms) lo = hi = (uint32_t)((uint64_t)s.max_play_ms * 30u / 1000u);      /* the declared length (tag +0x84) is what the Xbox waits for */
 		*tag = s.tag_id; *tmin = lo; *tmax = hi;
 		return 1;
 	}
@@ -278,6 +282,41 @@ static void test_sound(void)
 		call("sound_impulse_stop", b, 1, HS_VOID);
 		CHECK(call("sound_impulse_time", b, 1, HS_SHORT).v.i == 0);
 	}
+	/* lip sync: a line a unit speaks drives its face's talk byte with the line's mouth data, one byte per tick, closing the mouth when it ends */
+	{
+		uint8_t blob[16 + 12 * 8 + 16], *q = blob;
+		strm_sound ss = strm_get_sound(&X.strm, (uint32_t)strm_find(&X.strm, d1));
+		mouth_section ms;
+		unsigned v, k;
+		uint32_t t0;
+		static const uint8_t line[8] = { 0, 40, 255, 130, 5, 0, 90, 200 };
+		CHECK(ss.stream_count >= 1 && ss.stream_count <= 8);
+		memset(blob, 0, sizeof blob);
+		memcpy(q, "MOUT", 4); q[4] = 1; q[8] = (uint8_t)ss.stream_count; q[12] = (uint8_t)(16 + 12 * ss.stream_count);
+		for (v = 0; v < ss.stream_count; v++) {                      /* every take has the same mouth data (the picked take is random) */
+			uint8_t *r = blob + 16 + 12 * v;
+			r[0] = (uint8_t)d1; r[1] = (uint8_t)(d1 >> 8); r[2] = (uint8_t)(d1 >> 16); r[3] = (uint8_t)(d1 >> 24);
+			r[4] = (uint8_t)v; r[6] = 8; r[8] = 0;
+		}
+		memcpy(blob + 16 + 12 * ss.stream_count, line, 8);
+		CHECK(mouth_open(&ms, blob, 16 + 12 * ss.stream_count + 8) == 0);
+		X.m.ow.mouth = &ms;
+		a[0] = hv(d1, 24); a[1] = hv(mission_obj_handle(o), 37); a[2] = rv(1.0f);
+		X.objects.obj[o].face.talk = 77;
+		call("sound_impulse_start", a, 3, HS_VOID);
+		t0 = (uint32_t)call("sound_impulse_time", a, 1, HS_SHORT).v.i;
+		CHECK(t0 > 10);
+		for (k = 1; k < 8; k++) {                                               /* tick k after the start plays byte k */
+			step(1);
+			CHECK(X.objects.obj[o].face.talk == line[k]);
+		}
+		step(1);
+		CHECK(X.objects.obj[o].face.talk == 0);                                 /* past the data: closed */
+		call("sound_impulse_stop", a, 1, HS_VOID);
+		X.m.ow.mouth = NULL;
+		step(1);
+		CHECK(X.objects.obj[o].face.talk == 0);
+	}
 	/* unknown sounds and none: no-ops with time 0 */
 	a[0] = hv(0xE0001234u, 24);
 	call("sound_impulse_start", a, 3, HS_VOID);
@@ -300,6 +339,7 @@ static void test_sound(void)
 					uint32_t tt = (uint32_t)(((uint64_t)p.frames * 30u + p.rate - 1u) / p.rate);
 					if (tt > rtime) rtime = tt;
 				}
+				if (s.max_play_ms) rtime = (uint32_t)((uint64_t)s.max_play_ms * 30u / 1000u);
 				rt = s.tag_id; maxd = s.max_dist;
 			}
 		}

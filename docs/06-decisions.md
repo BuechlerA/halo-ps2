@@ -586,12 +586,211 @@ change colour (picked by a seed from the object index and definition), so where 
 (`chgconv.GREY_ONLY`; the Xbox intro shows grey). The first-person arms pick with seed 1. (2) The object lighting probes (`scenconv.cluster_lights`) use the BSP's tone curve and chroma
 strength (`texconv.lightmap_tone_rgb`) with a gain of 1.7 x 1.8: the linear gain 1.0 they used left characters about 2.5 times darker than the walls they stand against.
 (3) `default.xbe` was analysed (docs/36-xbe-analysis.md, `tools/xbe/`).
-**Why**: the Xbox intro shows red / yellow / orange / purple crew jumpsuits, khaki-free skin tones and a captain as bright as the bulkheads; here they were black, pink and charcoal.
+**Why**: the Xbox intro shows red / yellow / orange / purple crew jumpsuits, skin tones and a captain as bright as the bulkheads; here they were black, pink and charcoal.
 The tag data answered colour change completely; the executable showed that Halo assembles its combiner programs at runtime and that its environment pass adds the lightmap to a vertex term instead
 of doubling it.
 **Consequences**: object packs must be rebuilt (`objpack.py` / `build-world.sh`; the `OTEX` and `SCEN` sections change, a `CCHG` section is new, a pack without it still loads with no tints);
 models are not duplicated (the second pass reuses the part's batches), the cost is one more draw of the tinted parts (crew, marines' faces, props with a change colour) and ~0.4 MiB of `OTEX` on a10.
 Marine armour, rifles, Cortana's hologram colour and the screen filters are still open (ADR-064).
+
+## ADR-063 Halo's euler convention, widescreen camera, observer interpolation, declared sound lengths, held weapons
+**Decision**: (1) Scenario placements and camera points use Halo's `euler_angles3d_to_matrix` (XBE 0xb67f0: yaw about z, then pitch and roll about the *world* y and x), implemented as
+`mat4_from_euler_halo` and `cine_halo_euler_to_ypr` (forward = row 0, up = row 2); objects' roots and `camera_set` points go through them. (2) The 512x448 buffer is shown 16:9 (cfg `widescreen`,
+default 1): the vertical field of view is kept and the horizontal one widened. (3) `camera_set` is Halo's observer, not a lerp: every channel (position, an orientation rotation vector from the
+target, field of view) is the quintic `c3 s^3 + c4 s^4 + c5 s^5` of the remaining fraction `s`, with coefficients chosen so that offset, velocity and acceleration at the retarget equal what the camera
+had (XBE 0x11cda0 evaluate, 0x11c500 setup); velocity and acceleration are finite differences over the last three ticks (`cine_camera.hist`). The `ease` argument is ignored; a relative camera runs the
+polynomial in the anchor's frame. (4) `sound_impulse_time` is the sound tag's declared maximum play time (tag +0x84 ms x 30 / 1000), not the decoded length (8/9 of it). (5) Weapons held by units are
+spawned as objects attached to the hand marker (`OBJ_F_HELD`, never picked up).
+**Why**: the first shots of the intro were rotated wrongly (halo ring edge-on, Cortana's room sideways), the camera moves started and stopped with a cubic ease while the Xbox's speed is continuous through retargets
+(phase correlation of the PS2 and reference motion: both bell-shaped, the PS2 one with a kink at the retarget), the bridge scene ended about 4 s early, and marines held nothing.
+**Consequences**: packs need no rebuild for this; `cine_cam_set*` callers get the new motion for free. Remaining differences from the intro comparison are listed in ADR-061/062 (hangar holes from the EE clip budget,
+sky/galaxy brightness, planet crescent, exhaust glow, screen filters, marine armour colour, first-person hands, close-up clipping). UNVERIFIED: the field-of-view script command still uses a linear ramp.
+
+## ADR-064 EE clip culling and priority, sky textures at full size, interior sky yaw, multiply-only transparent shaders
+**Decision**: (1) The EE clipper (`gather_clipped`) no longer spends its budget on geometry that cannot show: a batch whose box lies wholly outside one plane of the guard band
+(near, left, right, top, bottom) is dropped (`batch_unsafe` returns 2), a triangle wholly outside one plane is dropped before its attributes are built (`clip_outside`, host-tested against
+`clip_polygon`), z is computed only for triangles that really need clipping, and the batches are visited by the distance to the nearest point of their box instead of to their centre (a hangar
+floor triangle under the camera is "far" by its centre). (2) Sky bitmaps (path `sky\...`) are converted at their full size (up to 256) with a 256 colour palette (they are dark gradients that 16 colours
+band into blocks), and the dome's nebula bitmap gets a gain of 2.5 (`objtex.SKY_GAIN`, measured against the Xbox intro: a 1x additive layer shows about 2.5 to 3 times brighter there; the Xbox path is not
+decoded). `scripts/paths/a10mission.cfg` sets `sky 0 0 0` (the default fill colour 20 24 40 added a blue haze to every additive sky) and `skyyaw 90` (the palette-0 sky, the windows of the ship's interior,
+is turned a quarter turn more than the exterior dome: the planet fills the bridge window beside Keyes as on the Xbox). (3) An additive `sotr` shader whose stages only multiply its maps with each other
+(`texconv.sotr_product`: the Autumn's engine exhaust = glow x glow x blue band, the bridge's command-display lines) is baked as the product of its maps, scaled to full range (`texconv.product_texture`, objects
+and BSP). Debug keys: `hideobj N`, `skyhide mask` (bit r: region r; bit 8+p: part p; bit 30: log the parts).
+**Why**: the hangar floor lost its far half (a navy hole under the marines) because 160 of 215 batches that need clipping were skipped after the 6 ms budget; the scan costs the same in PCSX2 at
+speed 1 and 8 (the figures are the emulated EE's own cycle counter), so this is a real shortfall, not a measuring artefact. The intro's first 100 s are space shots: a flat blue background with blocky patches
+against the Xbox's smooth magenta nebula and a bright galaxy band.
+**Consequences**: `a10.obj.hp2` and `a10.tex.hp2` must be rebuilt (`scripts/build-world.sh a10`); other maps gain the same sky texture quality and the clip savings; the clip budget still skips
+the farthest batches in the busiest hangar frames (about 100 of 209 at tick 4980) but the skipped ones are the small far ones. Not done (found by the same comparison, unchanged): Cortana's hologram colour, marine armour hue
+and forearm skin (the Xbox adds an environment reflection we do not draw), the random pick of crew jumpsuit colours (the Xbox's random numbers are not reproduced), the bloom of the engine exhaust, the glow of the
+planet at the bridge window, the bridge's cool colour cast.
+
+## ADR-065 Cut timing measured on the Xbox video, object draw order and Z, back faces of near surfaces, cube map layers, animation root motion
+**Decision**: (1) `camera_set` durations (`hs_host_misc.c camera_ticks`): the Xbox's director counts its remaining time down by speed x dt per update (XBE 0x120a90; `camera_time` = remaining x 30,
+0xed5e0), and the transitions the scripts wait for with `camera_time` last 200 -> 180, 300 -> 270, 180 -> 180 ticks in the bridge and cryo bay but 300 -> 295, 500 -> 481 in the hangar (BSP 8) in the
+Xbox video (ratio 0.90 light, 0.96 .. 0.98 heavy scenes: probably its frame time); other lengths take 0.9 (0.97 in the hangar). `sound_impulse_time` is the remaining time of the sound (XBE 0xef0a0): already so.
+With that every cut of the intro lies within a few ticks of the video's from tick 690 to 6980 (`scripts/paths/a10intro.cfg`, difficulty 3: the hangar and cryo scripts differ per difficulty and the video's cut times
+match the legendary branch). (2) Objects: visible objects are drawn nearest first (the batch budget runs out in busy scenes and must cost the far ones, not the highest indices), blended parts (alpha / additive,
+not alpha tested) never write Z and are drawn in a second pass far to near (`draw_model` pass 0 / 1): the command display's glass wrote Z in front of Keyes and hid him for 12 seconds. (3) The EE clip path drops
+the back faces of single-sided surfaces (`cull_sign`, orientation of the (x, y, w) rows, valid behind the eye; cfg `cullsign 0` turns it off): a camera inside a beam or wall (the hangar fly-in, the bridge window shot)
+saw its inside as a black screen. The VU1 path still draws back faces of triangles that need no clipping. (4) A transparent shader whose map is a cube map (cryo glass) is drawn as nothing (`texconv.blank_texture`)
+instead of flat white. (5) A scripted animation moves its unit by the animation's root motion (frame info dx, dy, dyaw; vertical motion ignored): `units.c custom_root_motion`. (6) A shader_model with an environment reflection (cube map at +0x164, brightness +0x144 / +0x154, tint +0x148 / +0x158) and a multipurpose map gets the reflection baked into its colour map: base + brightness x tint x (mean colour of the cube's six faces) x the multipurpose RED channel (`objtex.soso_reflect`): the marines' armour reflects the sage coloured armour cube (143, 155, 137) at 0.6, which is what makes the Xbox marines olive grey instead of rust brown; no runtime cost.
+**Why**: the cut times drifted 20 .. 90 ticks over the intro against the video; Keyes was missing in the hologram briefing; two shots were black.
+**Consequences**: rebuild `a10.obj.hp2` / `a10.tex.hp2`. UNVERIFIED: the dependence of the camera ratio on the scene (three light and two heavy measurements), the cull sign on maps other than a10, root motion of
+non-unit objects (not done). Still different in the intro comparison: crew jumpsuit colours (random on the Xbox), the red alert lighting of the bridge (dynamic lights are not modelled), the
+hologram's cyan overlay on Keyes, steam and engine particle systems and light attachments (object attachments are not created), planet glow at the windows.
+
+## ADR-066 Object attachments (FXAT): particle systems and looping effects, planet gain, colour change picks
+**Decision**: (1) `fxconv.py` reads every object tag's attachments block (+0x140, 72 B rows: tag reference, marker name; verified on a10 a30 b30: all 258 references resolve to a tag of
+their group) and writes the particle-system and effect attachments as an `FXAT` section next to `FXD0` / `FXTX` (rows of object tag, attached tag, kind, marker; sorted by object tag;
+`engine/src/sim/fx.c fx_set_attachments`, host test `test_fxat.c`). The effects an attachment names, and the particle systems with their physics and bitmaps, join the closure. (2) The runtime
+(`hs_host_obj.c update_object_fx`, `fx_attach_update`) runs one instance per (object, row) for every visible object whose tag has rows, at the row's marker (the object's origin when the
+name is empty), along its forward axis: a particle system walks its types' states (ON / OFF ...) by their duration bounds and emits `creation_rate` particles a second; a looping effect fires
+every 2.5 s. A particle is a billboard that lives the sum of the transition times of its particle states but the last, grows from the first state's scale to the middle one's (x 80 world units
+per tag unit, measured on the cryo steam), takes the middle state's colours and drifts along the marker with a fixed jet speed. APPROXIMATE: the tags' physics, constants and multipliers are not
+simulated (docs/22 lists them as unverified). (3) `anim_find_name` ignores case (scripts say "ct-driver unarmed idle", the tag "CT-driver unarmed idle": the Chief stood in his cryo tube's
+T-pose-less default instead of sitting), and a looping seat idle ("...driver... idle") custom animation is held until the script changes it. (4) The sky's non-additive parts (the planet) can
+take a colour gain (`skyplanet`, 1.7 in the a10 configs: the planet at the bridge windows is washed out on the Xbox). (5) `ccperm "obj:perm ..."` picks colour change a's permutation per object index;
+the a10 configs set the bridge crew's from the Xbox video (the Xbox draws its own random numbers).
+**Why**: steam at the cryo tubes, exhaust and smoke were missing (the engine created particle systems nowhere), and the Chief in the pod stood upright.
+**Consequences**: rebuild `a10.fx.hp2` (`scripts/build-world.sh a10`; the pack loads without FXAT). The ccperm picks are per object index of a10's placements: they are valid for that map only.
+(6) Light attachments (FXAT kind 3, only on scenery / device tags: weapon, projectile and vehicle lights are switched by functions we do not model) are drawn as additive glow discs at their
+marker (the soft disc of `plasma burn outer glow`, tag id in the FXAT v2 header): half size = max(0.12 x radius, 9 % of the distance to the camera, up to 90 wu), colour 55 % tag colour + 45 % white, pulled
+towards the camera by their size so the fixture does not hide half of them; this is the exhaust bloom of the Autumn's engines and the small lamps. Off-screen sprites are culled (their far coordinates wrapped
+in the GS and drew a band across the frame).
+(7) CORRECTION to (6) and to the earlier `parse_light`: the light tag's colours are at +0x38 (lower) and +0x48 (upper), not +0x34 / +0x44 (every light was turned by one channel: the alert lights read green,
+the assault rifle's flash cyan). Lights with flag bit 0 (dynamic) register as point lights (`fx_dynlight`, reach = tag radius x 2.5, up to 16) and light the objects near them in `obj_render light_at` (ambient
++ half of it on the sun colour, falloff (1 - d / reach)^2, strength 0.55): this is the red alert wash on the crew and Keyes in the bridge and corridor, and the teal glow of the command display; walls are lit
+by the baked lightmaps and stay unlit by them (the Xbox lights them too). Dynamic lights do not bloom (the alert lamps have none on the Xbox).
+(8) Cortana's body and hair (additive `sotr` shaders, three stage combiner programs): their first map is a grey noise mask that the Xbox multiplies into the colour map, and the converter took the mask, so
+she was invisible. `objtex.BITMAP_OVERRIDE` swaps in the shader's own purple bitmaps (body 512 x 512, hair 128 x 256) with a gain (`objtex.TINT`, chosen by eye against the video; the combiner programs are not
+decoded). Rendered with the new debug key `spawnobj <exact definition name>` / `spawnat <tick>` (an object 1.6 wu in front of the cinematic camera): she shows as a translucent purple figure as in the video.
+(9) Follow-ups: objects take the dynamic light's colour by blending toward it (weight 0.9 for a steady light such as the command display, down to 0.35 for a reddish alarm lamp) instead of adding, which turns
+Keyes teal in front of the display; a very faint wide disc of the light's colour stands in for the wall wash (the lightmaps cannot take it); glows of bloom lights grow 13 % of the distance beyond 12 wu (the
+engine bells now match the video's bloom); steam puffs expand 2.2x and rise; the attachment pool holds 128 systems (24 starved the steam jets once the lights took slots).
+(10) KEYES' HOLOGRAM OVERLAY FOUND: it is the command display model itself (`levels\a10\devices\command display`): its additive parts (grid, numbers, radar, trajectory lines) form a flat
+panel 0.19 wu in front of the briefing camera, so the camera looks through it. Two things hid it: (a) the VU1 object program drops every triangle with a vertex in front of the near plane or beyond the
+guard band, and the panel sits at w = 0.05 (our cinematic near floor) with corners far outside: `cinenear 0.03` (cfg; set in the a10 configs) lowers the floor and `modelconv.SUBDIVIDE_MODELS` cuts the
+panel's triangles into pieces of at most 0.2 wu; (b) the blended pass ran out of batch budget (it now has its own extra quarter). The overlay now shows the numbers, the radar and the trajectory lines over
+Keyes. The converted display maps are green: a TINT entry with a fourth value copies green into blue (`objtex.TINT`, cyan radar); the video is whiter and its diagonal beams thinner and brighter (the `trajectory` parts).
+Still different: the overlay's whiteness and diagonal beam brightness, real per-pixel wall lighting by dynamic lights, steam
+wind (the particle system physics constants are not decoded), and the exact purple of Cortana (by eye).
+
+## ADR-067 Recorded animation events wait BEFORE they fire (XBE 0x119690)
+**Decision**: the stream of a recorded animation (`recording_play`, `cinconv` / `cinedef` events) is (type, wait) pairs where an event fires when `wait` ticks have passed since the previous event (the Xbox loop at
+0x119690: `while (event.wait <= elapsed) { apply; elapsed -= wait }`), not `wait` ticks AFTER it as `cinconv.play` and `cine.c play_advance` assumed. `play_advance`, the Python reference `cinconv.play`, the C test's independent hash
+and the synthetic fixtures (`test_cinconv.py` streams, `test_cinedef.c`) follow it; the totals are unchanged (the type-1 end event still closes the recording at length).
+**Why**: the hangar tracking shot (tick 4490 .. 4700) shows marines marching past the camera at floor level on the Xbox, and ours showed bare floor: `pep_run` (throttle (1, 0), waits 9 / 21 / 9 / 195) ran 9 ticks under the
+old reading and 30 under the new one, enough to carry the marines through the camera's field of view. After the change their boots and shins are where the video has them.
+**Consequences**: every recording's timing shifts by one event (movement of walking actors, Keyes' paths, vehicles driven by recordings); `scripts/cmp-intro.sh` cuts were rechecked.
+
+## ADR-068 Dynamic lights on the BSP: in-place vertex colour patches
+**Decision**: the dynamic point lights of attached fixtures (`fx_dynamic_lights`, ADR-066) are handed to the BSP renderer (`bsp_render_set_dynamic_lights`). `dl_apply` finds the batches whose box a light reaches (up to 96) and rewrites
+their vertex colour stream (`bsp_batch_streams.col`, 4 bytes per vertex, 0x80 = 1.0) in place, blending each vertex toward the light's normalised colour by (1 - d / reach)^2 x 0.33 with d the distance to the decoded vertex position;
+the original bytes are kept and restored when the set of lights changes (a hash of the rows), and the touched ranges are `SyncDCache`d because the DMA reads RAM. The packets are static, so a patch costs nothing per frame; a moving light
+re-patches when its hash changes (about 0.2 ms for a few batches on the host build). The stand-in wash disc of ADR-066 is removed.
+**Why**: the bridge and corridors are washed red on the Xbox by the alert lamps; with only the objects lit the walls stayed neutral grey.
+**Consequences**: vertex colour is shared by the base and the lightmap pass, so a patched surface takes the tint in both (strength tuned by eye against the video); no normals, so the light reaches the backs of walls it is not facing. UNVERIFIED on hardware (cache sync).
+
+## ADR-069 Particle system physics read from the executable (jet creation physics)
+**Decision**: the steam's creation physics `jet` is decoded from `default.xbe` (0x10f150, called through the table at 0x1ee70c; the update loop is 0x10f950, creation 0x10f620): a new particle's velocity is
+`(c1 x random unit vector + (1 - c1) x emission direction) x c0 / 30` per second plus the system's own velocity, with the type's physics constants c0 = 45 and c1 = 0.0355 (our `pctl_types` constants), i.e. a tight 1.5 wu/s jet
+(2 degrees of spread), not the 0.84 wu/s cone of 24 degrees of ADR-066. `fx.c spawn_pctl_particle` uses it and the particle states' point physics (air friction, gravity scale of the pphy tag) like the effect emitters;
+the per-tick motion of the Xbox is that point physics step (0x110320 -> 0x80720) with the creation rate accumulating per second (the integer part of rate x dt spawns, the fraction carries). Wind: the point physics flags (simple / damped wind)
+are not read by our pphy conversion, so steam does not drift with a wind (the a10 hangar has none).
+**Fix to the above**: the point physics block (gravity, friction) was missing from `spawn_pctl_particle` after the jet rewrite, so every steam particle had friction 0 and stopped at once (the steam was a few puffs on the pod). With it restored
+the jet streams out as a wispy cloud like the video's. The point physics step (0x80720) relaxes a particle's velocity toward the wind by min(1, dt / (density x size term) x speed term x friction) per tick; with the steam's friction of 10.0 and its tiny size term the coefficient reaches 1 in a tick on paper, which the video contradicts, so one of the factors (a x87 register I could not track) is not what I read. The pphy air friction of the steam is 10.0, above our 5.0 sanity guard, so friction stays 1.0 (UNVERIFIED unit of the tag's friction: a decay of 10 / s would stop the jet in 0.1 s, which
+the video contradicts). The pool is 560 particles (was 320).
+**Still approximate**: sprite size (120 x the tag scale), emission rate (2 x the tag's), lifetime (1.8 x the states' transitions) and alpha are tuned against the cryo steam of the video by measuring the bright-pixel share left of the pod (0.24 .. 0.53 against 0.52 .. 0.59 in frames 6900 and 6940, which vary run to run with the random numbers); the particle state / system state transition timing is ours (durations as bounds).
+
+## ADR-070 Cortana's texture: UVs were right, the body map was not (alpha ignored)
+**Answer to the report "Cortana's texture on PS2 is broken"**: the UVs are taken over exactly (checked against the tag: body u .002 .. .978, v 1.004 .. 2.0, hair u 0 .. 1, v 1 .. 2; the model's V runs 1 .. 2, which the 16-bit
+quantiser and the `uv_shift` keep; the shader's own map scales (body 1 x 4 noise, 5 x 5 and 4 x 4 particle streams) belong to the layers we do not draw). The break was the colour map: `cortana_body` is a 512 x 512 atlas of black circuitry
+whose ALPHA (mean 60) is the circuit shape, with the face at its lower right; the Xbox's combiner uses that alpha, the engine's additive blend ignores it, so the whole atlas (face and circuit patches) showed as speckled noise. The
+converter now adds a uniform purple base (`objtex.HOLOGRAM_FILL`, (22, 6, 46)) to the body map so she draws as the video's smooth translucent purple figure with the circuit lines on it; the tint gains are re-calibrated against the video
+at the same moment (tick 3202: about (195, 129, 235) against (168, 109, 216) in the video, within 15 %; the figure covers more area than the video's wispy one because the combiner's two particle-stream layers are not drawn).
+Hair (a plain purple strand map) was fine. Fill sweep against the video at tick 3202 (purple pixel count left of Keyes, video 5184, colour (168, 109, 216)): fill (22, 6, 46) 19508, (14, 3, 34) 16176, (6, 1, 18) 9926, (0, 0, 8) 7054; the last is kept: 36 % over the video's count, colour (178, 123, 228). Her body shader's two `particle_stream` layers (5 x 5 and 4 x 4 UV scale) are now drawn as static additive layers (`objtex.CORTANA_LAYERS`, `resolve_layer` handles sotr map strides), which adds the streaky texture of the video; they scroll on the Xbox and are static here.
+
+## ADR-070 addendum: Cortana's body shader decoded and baked (no chosen constants left)
+The three stage combiner program of `cortana_body` was read from the tag's stage records (112 B each; colour inputs at +0x3C, enum 5..8 map colour 0..3, 11 scratch colour 0, 13 constant colour 0, 16 map alpha 1, 21 scratch alpha 0): stage 0
+`scratch0 = map1.alpha x map2.rgb + (1 - map1.alpha) x map3.rgb`, stage 1 `scratch0 += constant0 x map1.rgb` (constant0 white .. 0.87 grey), stage 2 `scratch0 x= scratch alpha 0` (0.85). The maps are 0 noise, 1 `cortana_body`
+(colour; its alpha is the circuit shape), 2 and 3 `particle_stream` at uv scales 5 x 5 and 4 x 4. `objtex.bake_cortana_body` bakes exactly that into the body texture (streams static, tiled in the body's uv space); the base fill, the tint
+gains and the extra layers of the sweep above are gone. Measured against the video at tick 3202: purple pixels 3913 (video 5184), average (148, 112, 176) against (168, 109, 216): 12 % dimmer in red, 19 % in blue, no constant fitted.
+The hair shader was not decoded (it keeps its plain strand map, untinted).
+
+## ADR-071 What the Xbox particle system renderer does (XBE 0x1105e0), and what is still unknown
+Found through the particle array globals (0x2fab44 systems, 0x2fab40 particles): the iteration is 0x110c80, the per-system draw is `0x1105e0`, the billboard emit is 0x59a20 (flag bit 7 of the type: additive-ish mode 3).
+Per particle it computes, with t = remaining / duration of its current particle state (0 .. 1) between the current and the next particle state: size = lerp(state.scale, next.scale) x the system state's scale multiplier;
+colour and ALPHA = lerp(state colour (A R G B), next state colour) x the system state's colour multiplier (A R G B), and for blend function 0 (alpha blend, the steam) the RGB is further multiplied by the system's own tint (+0x48..0x50);
+the sprite frame is random in the sequence. The a10 steam therefore has alpha = 0 (`steam jet`) -> 0.25 .. 0.35 (`steam cloud`) -> 0 (`death`) x 0.5 (state colour multiplier A) = at most 0.15 and a size of
+0.0065 .. 0.0085 x 1.0: both multiplied by factors this engine fits (alpha x 3.4, size x 120): the unit of the size handed to 0x59a20 / 0x59550 (a distance-faded perspective sprite, `FUN_000b2880`) and the framebuffer / overbright
+of the Xbox are not decoded, and our two-key fade stands in for the three-state alpha ramp. The creation rate is the integer part of rate x dt per tick with the fraction carried (0x10f620), already as ours.
+**Update (0x59550 / 0x59090 decoded)**: the quad's world width is `particle size x the bitmap image width in pixels` (0x59090: `size * (short)image[+4]`), corners from the sprite rectangle: for the steam cloud (256 px, scale 0.0065 .. 0.0085) a half width of
+0.83 .. 1.1 wu, i.e. `STEAM_SIZE = 128` (= 256 / 2) instead of the fitted 120; the life (sum of the transition times, 1.0 x) and the creation rate (1.0 x) are the tag's own too. The ALPHA is the tag's ramp x 0.5 (no floor, no multiplier) in
+the Xbox, and that alone is too faint here (coverage 0.16 .. 0.22 against 0.52 .. 0.59): the one factor still fitted is `STEAM_ALPHA` 4 (the framebuffer / sprite alpha scale of the Xbox, not decoded).
+**Second update**: the steam bitmap's own RGB is dark (mean 55 / 255, alpha 76), which drew grey streaks; the Xbox shows white steam, so `fxconv` now keeps only the alpha of maps drawn with the framebuffer alpha blend by particle systems
+(`pctl_alpha_maps`: RGB = 255). With that, the size / life / rate decoded above and `STEAM_ALPHA` 3, the jet at tick 6900 is a wispy white stream of the video's shape and length. A destroyed and recreated object in the same slot (a script's
+`object_create_anew`) now restarts its attached effects (`object_t.serial` in the attachment key): the cryo steam starts at the shot's beginning as in the video instead of continuing a random ON / OFF phase. My coverage metric
+(bright pixels left of the pod) is dominated by the hangar behind it (0.16 even without steam), so the comparison is by eye.
+**Consequence**: the steam multipliers stay measured, but they are now known to stand for two specific unknown units (sprite size unit, framebuffer alpha scale), not for missing tag data.
+
+## ADR-072 Additive object parts are not lit by the object lighting
+**Decision**: a part drawn with the additive blend (`mat_binding_t.add`: holograms, glows, the command display, flames, exhaust) takes full white vertex light (ambient 128 = 1.0, sun 0) instead of the object's cluster lighting
+(`obj_render.c draw_model`, cfg `unlitadd`, default 1); lit parts get their light back.
+**Why**: an additive shader is self lit on the Xbox. Cortana's measured colour at tick 3202 was 12 % / 19 % dim in red / blue (ADR-070), which I had put down to an undecoded framebuffer step; it was our own lighting multiplying her
+(ambient < 1 in that corridor). Unlit: (161, 119, 206) against the video's (168, 109, 216), within 6 %, no constant fitted. The same reasoning applies to the steam alpha scale (not to the sprites, which are not lit): that one stays fitted.
+
+## ADR-073 Captain's animation: the face (emotion + lip sync) was missing; hero textures for the displays
+**Answer to "the captain's animations are not taken over correctly"**: the body animation is the Xbox data (18 animated nodes of `well_thats_it_then`, decoded and quantised to 0.18 degrees); what the Xbox adds at run time and we did not
+play is the FACE: two overlay animations of the unit's own graph (`stand emotions`, 6 frames; `stand talk`, 1 frame) whose channels the tag flags as animated (eyelids, jaw, brows, lips) are deltas composed onto the pose
+(`base * overlay`), the emotion frame chosen by `unit_set_emotion` (Keyes: 3, then 5 = heavy lids during "that's it then", then 3) and the jaw scaled by the line's mouth data (one loudness byte per tick, `snd!` permutation +0x54,
+verified on the 293 byte line `cor05b`). Ours froze the face at the rest pose (a smile). Now: `animconv` keeps only the driven channels of face overlays (`encode_animation(overlay=True)`), `anim_overlay_modes` gives the mask,
+`objects_pose_model_face` composes them, `unit_set_emotion` stores the frame, the object pack gets a `MOUT` section (4658 lines on a10, 242 KB; `mouthconv.py`) and `sound_impulse_start` with a unit as source drives `face.talk` per tick
+(docs/12-anim-section.md 9a). The composition order was settled against the video (frames 2830 .. 2910): `base * overlay` opens the mouth and drops the lids like the video's Keyes, `overlay * base` twists the lips (cfg `facecompose 0` shows it).
+**Not done / unknown**: `stand look` (head aim, 9 frames) is not played (no aim source in a cinematic); the shot's camera at ticks 2807+ (points 47 / 101) frames the room differently from the video (a window where the video has the hologram sphere):
+not investigated; Keyes' face and uniform are lit greener / darker than the video.
+**Texture resolution ("the displays and holograms are so low res, can a higher mip be streamed in?")**: every object texture is halved and capped by the budget's `dim` (128 on a10), so a 512 x 512 display map is 128 x 128 (4 x down).
+Streaming a high LOD in on demand would need a hi-res companion pack read from disc at shot boundaries; what limits it is not the GS (the texture cache already uploads only what a frame uses: 140 of 271 cache pages free at the end of the intro) but
+the EE arena (24 MB, high water 24072 KB: only ~500 KB of headroom), which holds every source mip resident, and a disc read in the frame loop (real hardware, deferred by ADR-022). So the first step is static: `objtex.HERO` lists the surfaces a
+cinematic shows large (the command display's hologram layers, Cortana, the uniforms of Keyes, the marines, the pilot and the crew, the Halo close-up) with their own allowance (`HERO_BUDGET` 640 KB) and a full-resolution target (<= 256, the
+display layers at 16 colours = 43 KB each instead of 21 KB at 128 x 128 x 256 colours), so the other textures keep their size. a10: OTEX 2.54 -> 2.92 MiB of pixels. A real LOD stream (hi-res variants in a companion section, loaded into a
+small slot pool when a shot's camera comes close, drawn through the same texture cache) remains a design, not code.
+**The wall monitors** (BSP textures, `levels\a10\shaders\monitors`, a 1024 x 256 strip of three screens, the blue and red displays of every console shot) were 256 x 64 (the whole of "the displays are so low res"): the TEXS format now allows 512 on a side
+(`TEX_MAX_DIM`, `texconv.MAX_TEX_FORMAT`; the converter's own cap stays 256) and `texconv.HERO_BITMAPS` gives that bitmap 512 x 128 (+65 KB): the red text and "NAV 3" labels of the close-up at tick 3020 are legible. The texture cache needed no change
+(8 KB pages, no size assumption). Memory: a10's arena high water went from 24072 to 24514 KB of the (now 25 MB, was 24) arena: `arena_mb` default 25, 1 MB of margin. Other maps' packs were not rebuilt (no MOUT there: their dialogue stays lip-less until
+`scripts/build-world.sh` is run for them).
+
+## ADR-073 addendum: the video is the 4:3 render stretched to 16:9; `widescreen` is off by default
+ADR-063 (2) assumed the Xbox 16:9 mode (vertical field kept, horizontal 70 -> 86 degrees) because the video is 16:9. Measured instead: 45 frames of the intro (ticks 60 .. 3700, step 80), PS2 frame against the video frame at the same time, edge-map
+cross-correlation with shifts of up to 40 px: the 4:3 render stretched horizontally (hfov 70, `widescreen 0`) is the best of three variants in 38 of 45 frames (mean correlation about 0.38, against 0.21 for the old 16:9 mode and 0.25 for
+"hfov 70 across 16:9"). So the video is 4:3 gameplay stretched, and the framings that looked "wrong" (the shot at ticks 2807+ showed a window where the video showed the hologram sphere: too wide a field) were the field of view, not the camera
+points. `widescreen` now defaults to 0 (the PS2 output is 4:3 anyway), 1 keeps the 16:9 variant, 2 is the debug "hfov kept". `scripts/cmp-intro.sh` still stretches the buffer to 16:9 to compare with the video.
+
+## ADR-074 Streamed high resolution object textures; cinematic object lighting
+**Decision**: (1) `objpack.py` writes `<map>.hires.hp2` next to the object pack: for every object texture whose source has more detail than the resident copy a variant at the source's resolution (256 per side, 512 for the HERO set; one mip level; <= 128 KB of pixels;
+16 colours where the hero entry says so), as a TEXS section of textures only plus HMAP (base texture -> variant), stored uncompressed (a10: 169 variants of 181 textures, 6.9 MiB). (2) `world/hires.c`: only the tables are resident; `hires_load` reads CLUT + pixels of one variant
+(one contiguous range) from the pack through a callback into a ring of three staging slots (129 KB each on a10: the DMA reads a slot at the end of the frame, so it must live two frames), at most one load per frame (`hiresloads`). (3) `obj_render.c`: an object whose on-screen
+diameter (640 px scale) is at least `hirespx` (200) asks for the variant of each of its textures: if the GS texture cache already holds it (`tc_find`, a new non-touching lookup) it is drawn at once, otherwise it is loaded and uploaded through `rb_extra_tex0` under a key range of its own
+(`bsp_render_reserve_keys`); until then, or over the frame's load budget, the resident texture is used. The VRAM cache stays the only LRU. (4) `tex_open_tables` opens a TEXS whose pixel data is not in memory; `TEX_MAX_DIM` is 512 (ADR-073).
+**Why**: the arena has no room for resident full resolution textures (high water 24.9 of 25.6 MB with this); close-ups (Keyes, the command display, Cortana) are what needs detail, and only for a few frames at a time. Measured on the a10 intro (ticks 60 .. 3500): 110 loads, 10.4 MB read, 838 refused
+for the frame budget; the uniform's badge and trim, Keyes' hologram beams and the display layers are sharp in the close-ups (frames against the video at 2700 .. 3340).
+**Unmeasured**: the cost of the reads on a real disc (a first close-up needs about ten 64 .. 128 KB reads spread over as many frames); no prefetch hook yet (a shot's cut could request the textures of the objects it is about to show); PCSX2 reads from the host file system. UNVERIFIED on hardware (ADR-022).
+(5) **Cinematic object lighting**: the cluster light probes leave objects 1.2 .. 2.4 x darker than the video (Keyes' cheek (100, 93, 51) against (144, 121, 81), his shirt (54, 70, 47) against (133, 137, 110)); during a cinematic the engine multiplies the probes by (2.5, 2.3, 2.6)
+and the ambient by 1.3 more (cfg `objlight`, `objamb`; gameplay keeps the probes: gain 1). Face now (141, 121, 77) / shirt (100, 115, 91): a fit, not the Xbox's object lighting, which is not decoded. `dlobj`, `dlwall`, `objchroma` are the other knobs.
+**Prefetch (addendum)**: an object whose diameter is between half of `hirespx` and `hirespx` (approaching) already loads and uploads its variants (drawn with the resident texture until it counts), so a camera move or a cut onto a growing object finds them in VRAM. On the a10 intro 202 loads / 21.7 MB read (ticks 60 .. 3500), 2679 refusals for the one-load-a-frame budget (the ring of three slots must outlive two frames, so more loads a frame need more slots: memory).
+(6) All ten maps now have converted packs in the worktree (`scripts/build-world.sh` for a50 b30 c10 c20 c40 d20 d40 completed with no failed converter). Boot smoke tests on the headless interpreter: c10 runs 300 ticks with 0 script errors; b30 (the large outdoor map) does not fit
+the arena (`no scratch room for COL0 (1248597 bytes)` with 24.6 MB used of 25.6). **Fixed afterwards**: the hires staging ring is now opened after the BSP (above its mark, reopened on a BSP switch) and dropped when less than 1 MB of the arena is left after it (`[hires] dropped: 955 KB left`): b30 boots (301 ticks, 0 script errors; high water 25471 of 25600 KB, so it has no margin: the 26 MB arena of a trial failed in `out of memory for chains`, the heap outside the arena is what limits it, and a10 keeps the ring. Early ticks (the "sync offset" of ticks 300 .. 540): the video has a 1.1 .. 1.5 s lead-in (our cut at tick 691 is the video's frame 725: offset 1.13 s; the only cut in the video's first 40 s); frame correlation of the sparse space shots between 100 and 650 jumps around (best ref frame 374 for tick 100), so a finer offset cannot be read from them, and the drift of 0.6 .. 1.5 s inside the slow camera moves is the camera ease (our `camera_ticks` 0.9 factor stands for a front loaded ease): not a structural error.
+The sphere behind Keyes (tick 2830): it is the command display model's hologram layer (hiding object 429 removes the sphere, the cyan planes and the numbers); it is drawn, but over a brighter BSP ceiling than the video's dark one, so the additive wireframe loses contrast: the bridge walls are lit brighter and greener than the video there (the lightmap / object lighting differences above), not a geometry error.
+Engine bells: the white discs and the cyan puffs are fx particles (`fxparticles 0` removes both, a bloom size multiplier on blue lights changed nothing); additive particles in a cinematic are now drawn at 0.55 of their colour (cfg `fxadd`, `fxaddsize`), so the bells keep a blue-white tint instead of saturating to white; the video's wide blue halo is approximated by a second, 2.2 x wider, bluer, fainter copy under each large additive sprite (`fxhalo` 0.5, cinematics only: `fx_render.c`); the bell's grey rim (the model's own shading) is still different. Left as is,
+steam wind (no wind data in a10 and no `wind` string in the executable: nothing to read), the steam alpha scale (the unit is not decoded).
+(7) a30 and b40 object packs were rebuilt (MOUT, face overlays, hires); the other six maps have no converted packs at all.
+
+## ADR-075 What the executable says about object lighting (partial decode)
+Console variables found in the debug table (0x220900 ..): `object_light_ambient_base` = 0.03 (0x1fcbf4), `object_light_ambient_scale` = 0.4 (0x1fcbf8), `object_light_secondary_scale` = 1.0 (0x1fcbfc), `object_light_interpolate` (flag), `rasterizer_model_lighting_ambient`,
+`rasterizer_lightmap_ambient`. `FUN_00091660` builds an object's light record from the ambient colour A and a light colour L of its lightmap probe: ambient = 0.4 x A + 0.03 per channel; secondary light colour = 1.0 x L x luminance(A) (weights 0.299, 0.587, 0.114);
+the direction is the probe's (negated); a per channel fill term `clamp(2 x A + 0.25) x clamp(3 L + 0.5)`-shaped values and a hemisphere split (a 0.707 clamp of the horizontal component) follow. `FUN_000930c0` fills it: it casts a ray (the table at 0x1e9d04 / 0x1e9d10: one direction, or four for
+flagged objects) against the BSP from the object's position, takes the hit triangle's lightmap vertex data barycentrically (`FUN_00091d60` decodes it), and falls back to a default record (0x1e9c90) when the object has no cluster. So the Xbox lights an object from the lightmap of the surface
+under it, not from a per cluster average. Not decoded: the scale of A (the lightmap's HDR range), the pixel / vertex shader that consumes the record, and `FUN_000523d0`'s ray set. Our probes (scenconv `cluster_lights`) average the cluster's lightmap; the cinematic gain of ADR-074 (2.5 / 2.3 / 2.6, ambient x 1.3) stays a fit
+for the missing HDR range; a faithful version would sample the lightmap under each object at run time (a downward ray into the BSP's lightmap pages, which the EE has) and apply 0.4 A + 0.03.
 
 ## Open decisions
 None.

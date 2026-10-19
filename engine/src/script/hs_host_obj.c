@@ -464,6 +464,85 @@ BI(objects_detach)
 	return 0;
 }
 
+/* Weapons in hands: an armed unit gets a weapon object (the weapon's own model) whose "right hand" marker (else its origin) sits on the unit's
+ * "right hand" marker in the unit's current pose, so a marine in a cinematic holds his rifle like the Xbox's. The object is hidden for a dead
+ * unit and destroyed when the weapon is gone; OBJ_F_HELD keeps the player from picking it up. */
+static int marker_by_names(const mission_t *M, const object_t *o, const char *a, const char *b)
+{
+	int mk = marker_index(M, o, a);
+	return mk >= 0 || !b ? mk : marker_index(M, o, b);
+}
+
+static void update_held_weapons(mission_t *M)
+{
+	mission_hostobj *h = &M->hobj;
+	unsigned ui;
+	if (!M->units || !M->game || !M->game->weap || !M->ow.scen) return;
+	for (ui = 0; ui < UNIT_MAX; ui++) {
+		const unit_t *u = &M->units->u[ui];
+		int slot = h->held[ui] - 1;
+		object_t *po, *co;
+		weap_weapon wd;
+		mat4 hand, grip, inv, out;
+		int pm, cm;
+		if (!u->active || u->weapon < 0 || u->obj < 0 || is_player(M, u->obj) || !(po = obj_of(M, u->obj)) || po->model < 0
+		    || !weap_get_weapon(M->game->weap, (uint32_t)u->weapon, &wd)) {
+			if (slot >= 0 && mission_object_live(M, slot)) { M->objects->obj[slot].flags |= OBJ_F_HIDDEN; objects_destroy(M->objects, (unsigned)slot); }
+			h->held[ui] = 0;
+			continue;
+		}
+		if (slot < 0 || !mission_object_live(M, slot) || !(M->objects->obj[slot].flags & OBJ_F_HELD)) {
+			int def = scen_find_def(M->ow.scen, wd.tag_id);
+			if (def < 0) { h->held[ui] = 0; continue; }
+			slot = objects_spawn_def(M->objects, &M->ow, (unsigned)def, po->pos, 0.0f);
+			if (slot < 0) { h->held[ui] = 0; continue; }
+			M->objects->obj[slot].flags |= OBJ_F_HELD;
+			h->held[ui] = (int16_t)(slot + 1);
+		}
+		co = &M->objects->obj[slot];
+		if (M->game->unit_state[u->obj].dead || (po->flags & OBJ_F_HIDDEN)) co->flags |= OBJ_F_HIDDEN; else co->flags &= ~OBJ_F_HIDDEN;
+		pm = marker_by_names(M, po, "right hand", NULL);
+		if (pm < 0 || !marker_world(M, po, pm, &hand)) continue;
+		cm = marker_by_names(M, co, "right hand", "primary trigger");
+		if (cm >= 0 && marker_world(M, co, cm, &grip)) {            /* the weapon's grip marker (in its own pose) lands on the hand */
+			mat4 gl;
+			co->root = (mat4){ { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } } };
+			marker_world(M, co, cm, &gl);
+			mat4_rigid_inverse(&inv, &gl);
+			mat4_mul(&out, &inv, &hand);
+		} else out = hand;
+		co->root = out;
+		co->pos[0] = out.m[3][0]; co->pos[1] = out.m[3][1]; co->pos[2] = out.m[3][2];
+	}
+}
+
+/* Particle systems and looping effects attached to objects (scenery steam jets, smoke and fire emitters): the FXAT rows of the object's tag, at the row's marker
+ * (the object's origin when the marker name is empty or unknown), along the marker's forward axis. */
+static void update_object_fx(mission_t *M)
+{
+	unsigned i;
+	if (!M->fx || !M->fx->attach_count || !M->ow.scen) return;
+	for (i = 0; i < M->objects->count && i < 1280u; i++) {
+		object_t *o = &M->objects->obj[i];
+		uint32_t first, k, n;
+		scen_def d;
+		if (o->model < 0 || (o->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
+		d = scen_get_def(M->ow.scen, (uint32_t)o->def);
+		n = fx_attachments_of(M->fx, d.tag_id, &first);
+		for (k = 0; k < n && k < 8; k++) {
+			fx_attach_row r = fx_attachment(M->fx, first + k);
+			float pos[3] = { o->pos[0], o->pos[1], o->pos[2] }, dir[3] = { o->root.m[0][0], o->root.m[0][1], o->root.m[0][2] };
+			int mk = r.marker[0] ? marker_index(M, o, r.marker) : -1;
+			mat4 w;
+			if (mk >= 0 && marker_world(M, o, mk, &w)) {
+				pos[0] = w.m[3][0]; pos[1] = w.m[3][1]; pos[2] = w.m[3][2];
+				dir[0] = w.m[0][0]; dir[1] = w.m[0][1]; dir[2] = w.m[0][2];
+			}
+			fx_attach_update(M->fx, (int32_t)((i * 8u + k) | (uint32_t)o->serial << 16), first + k, pos, dir);
+		}
+	}
+}
+
 static void update_attachments(mission_t *M)
 {
 	mission_hostobj *h = &M->hobj;
@@ -483,6 +562,7 @@ static void update_attachments(mission_t *M)
 		}
 		i++;
 	}
+	update_held_weapons(M);
 }
 
 /* ---- visibility and distance --------------------------------------------------------------------------------------------- */
@@ -745,7 +825,16 @@ BI(unit_doesnt_drop_items) { ENTER(unit_doesnt_drop_items); for_list(M, A(0), se
 BI(object_set_collideable) { ENTER(object_set_collideable); return 0; }
 BI(unit_open) { ENTER(unit_open); return 0; }
 BI(unit_close) { ENTER(unit_close); return 0; }
-BI(unit_set_emotion) { ENTER(unit_set_emotion); return 0; }
+/* A frame of the unit's "stand emotions" overlay (-1 = none, "other values depend on unit", XBE 0x220df0): its face's eyelids, brows and lips. */
+BI(unit_set_emotion)
+{
+	int slot, e;
+	ENTER(unit_set_emotion);
+	slot = obj_arg(M, A(0), 0);
+	e = argi(A(1));
+	if (slot >= 0 && (unsigned)slot < M->objects->count) M->objects->obj[slot].face.emotion = (uint8_t)(e < 0 ? 0 : e > 254 ? 255 : e + 1);
+	return 0;
+}
 BI(unit_solo_player_integrated_night_vision_is_active) { ENTER(unit_solo_player_integrated_night_vision_is_active); ret_bool(r, 0); return 0; }
 BI(units_set_desired_flashlight_state) { ENTER(units_set_desired_flashlight_state); return 0; }
 BI(vehicle_hover) { ENTER(vehicle_hover); return 0; }
@@ -921,6 +1010,7 @@ static int start_custom(mission_t *M, int slot, uint32_t graph_tag, const char *
 			unit_t *u = &M->units->u[ui];
 			unsigned skip = (unsigned)((float)frame / tps);
 			o->frame = (float)frame;
+			u->rm_frame = (int16_t)frame;                 /* the skipped frames do not move the unit */
 			u->action_ticks = (uint16_t)(skip < t ? t - skip : 1u);
 		}
 		return 1;
@@ -1378,6 +1468,7 @@ void hs_host_obj_post(mission_t *M)
 	uint32_t i;
 	int slot;
 	update_attachments(M);
+	update_object_fx(M);
 	for (i = 0; i < h->suspend_count; i++) {
 		object_t *o = obj_of(M, h->suspend[i].obj);
 		int ui = unit_of(M, h->suspend[i].obj);

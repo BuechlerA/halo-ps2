@@ -13,6 +13,11 @@ void mat4_from_trs(mat4 *o, const float q[4], const float t[3], float s);
 /* Object placement: yaw about +z (counter-clockwise from +x), then pitch about the object's y axis
  * (positive pitch tips +x up), then roll about its x axis, then translate. Radians. */
 void mat4_from_ypr(mat4 *o, float yaw, float pitch, float roll, const float t[3]);
+/* Halo's euler_angles3d_to_matrix (the Xbox executable's 0xb67f0; scenario object placements, cutscene camera points): rows forward / left / up with
+ *   forward = (cy cp, sy cr - sp sr cy, sy sr + sp cr cy), left = (-sy cp, cy cr + sp sr sy, cy sr - sp cr sy), up = (-sp, -cp sr, cp cr).
+ * Yaw turns about +z first; pitch and roll then act about the WORLD y and x axes, not the object's: a vehicle placed facing -y with "pitch" 20 is banked,
+ * not nosed down. Radians. */
+void mat4_from_euler_halo(mat4 *o, float yaw, float pitch, float roll, const float t[3]);
 void mat4_mul(mat4 *o, const mat4 *a, const mat4 *b);      /* o may alias a or b */
 /* Inverse of a rotation (times uniform scale s: pass the matrix as is) plus translation: exact for what skeletons use. */
 void mat4_rigid_inverse(mat4 *o, const mat4 *m);

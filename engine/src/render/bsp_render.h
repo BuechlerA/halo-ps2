@@ -53,14 +53,16 @@ typedef struct {
 	u32 portals_tested, portals_passed, camera_cluster_valid;
 	u32 uploads, upload_bytes, tex_hits, tex_misses, tex_deferred, tex_failed, pages_free;
 	u32 chain_qw, chain_overflow, untextured_batches;
-	u32 clip_batches, clip_tris, clip_polys, clip_dropped, clip_skipped_batches;     /* triangles clipped on the EE, polygons drawn, dropped for lack of room */
-	float vis_ms, build_ms, clip_ms, emit_clip_ms;
+	u32 clip_batches, clip_tris, clip_polys, clip_dropped, clip_skipped_batches, clip_culled_batches, clip_culled_back;     /* triangles clipped on the EE, polygons drawn, dropped for lack of room */
+	float vis_ms, build_ms, clip_ms, emit_clip_ms, clip_scan_ms, clip_gather_ms;
 } render_stats_t;
 
 typedef struct {
 	int   textures, lightmaps, fog;
 	int   only_batch, only_batch_hi;     /* debug: draw only batches lo..hi (only_batch -1 = all) */
 	int   unused_only;                    /* debug: draw only this batch index (-1 = all) */
+	int   cull_sign;                    /* back face culling: 0 off, +1 / -1 = which orientation is the back */
+	int   clip_debug;                    /* debug: log full-screen clipped polygons */
 	float clip_budget_ms;                /* EE time allowed for clipping near triangles per frame */
 	int   debug;                         /* bit 0: skip pass-1 batches, 1: skip pass 2, 2: skip overlay */
 	float fog_near, fog_far;
@@ -68,6 +70,12 @@ typedef struct {
 	u8    sky_rgb[3];                    /* sky colour at the top of the screen */
 	u8    horizon_rgb[3];                /* sky colour at the horizon (and below it) */
 } render_options_t;
+
+/* Dynamic point lights (the red alert lamps, the command display): `n` rows of x y z r g b reach, r g b 0..1. The vertex colours of the batches they reach are rewritten
+ * in place (the packets are static, so a patched batch stays patched until the light set changes) to blend toward the light's colour with a (1 - d / reach)^2 falloff:
+ * walls are lit by baked lightmaps, this is their only dynamic term. n = 0 restores every batch. */
+void bsp_render_set_dynamic_lights(const float (*rows)[7], unsigned n);
+void bsp_render_set_dl_gain(float g);   /* default 0.33 */
 
 /* One-time: VU1 microprogram, double buffer, chain memory (the single boot-time malloc). */
 int  bsp_render_init(const video_t *v);

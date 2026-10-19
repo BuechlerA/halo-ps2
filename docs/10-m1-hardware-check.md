@@ -84,7 +84,7 @@ ignored unless the config had one).
 | `pack <path>` | BSP pack (BSPS v2) | `assets/hp2/a10.hp2` |
 | `tex <path>` | TEXS + LMn pack; omitted = everything flat | none |
 | `bsp <n>` | BSP index inside the pack | 0 |
-| `arena_mb <n>` | level arena size (the one boot-time malloc) | 24 |
+| `arena_mb <n>` | level arena size (the one boot-time malloc) | 25 |
 | `camera x y z yaw pitch` | start pose (degrees) | centre of the BSP bounds |
 | `pathkey t x y z yaw pitch` | scripted camera keys (seconds, looped, up to 24) | none |
 | `frames <n>` | stop after n frames, print `[done]` | run forever |

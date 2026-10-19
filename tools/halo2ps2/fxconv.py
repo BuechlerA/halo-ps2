@@ -97,8 +97,10 @@ decal (``deca``, 268 B)
     layers 0..2, map reference in the first position of every one]
 light (``ligh``, 352 B)
     +0x00 u32 flags (bit 0 dynamic, ...), +0x04 f32 radius, +0x08 f32 radius modifier bounds, +0x10 f32 falloff angle,
-    +0x14 f32 cutoff angle (3.1416 = omnidirectional), +0x30 u32 colour interpolation flags, +0x34 f32[4] colour lower
-    bound (A, R, G, B), +0x44 colour upper bound, +0xF4 f32 duration, +0xFA u16 falloff function.
+    +0x14 f32 cutoff angle (3.1416 = omnidirectional), +0x30 u32 colour interpolation flags, +0x38 f32[4] colour lower
+    bound (A, R, G, B), +0x48 colour upper bound (CORRECTED 2026-10-19: the earlier +0x34 / +0x44 read a pad word too early and turned every light's colour
+    by one channel: muzzle flashes cyan, the alert lights green; at +0x48 the assault rifle's flash is (0, 0.96, 0.91, 0.69), the frag explosion (1, 1, 0.81, 0.36),
+    the burning flame (1, 1, 0.98, 0.32)), +0xF4 f32 duration, +0xFA u16 falloff function.
     [verified on 507 light tags: struct size 352; radius 0.5..15 wu (muzzle flash 2, explosion 10), colours 0..1, falloff
     function 0..4, cut-off angle pi on the light effects (spot cones 0.35..1.57 rad on flashlights and headlights, which
     effects do not create); duration 0 on lights without one and 3..180 on explosion lights, unit unverified (seconds)]
@@ -462,6 +464,7 @@ class FxSet:
     objects: list[int]                          # object tags created by parts (not converted, models exported)
     problems: list[str] = field(default_factory=list)
     stats: Counter = field(default_factory=Counter)
+    attach: list[tuple[int, int, int, str]] = field(default_factory=list)   # (object tag, kind ATT_*, attached tag, marker name): FXAT
 
 
 # ---- tag region access ---------------------------------------------------------------------------------------------
@@ -576,6 +579,39 @@ class TagMemory:
         return out
 
 
+# object attachments (FXAT): the object tag's attachments block (+0x140 reflexive, 72 B each: +0x00 tag reference (group, path ptr, len, id), +0x10 char[32]
+# marker name, then the primary / secondary scale functions) [verified on a10 a30 b30: every reference resolves to a tag of its group on the 258 attachments;
+# groups ligh 144, lsnd 77, cont 28, effe 24, pctl 4, mgs2 1]. Kept: particle systems and effects (what the engine can draw).
+ATT_PCTL, ATT_EFFE, ATT_LIGH = 1, 2, 3
+GLOW_BITMAP = "effects\\decals\\bullet holes\\bitmaps\\plasma burn outer glow"      # the soft disc the engine draws light attachments with
+OBJECT_GROUPS = ("scen", "vehi", "bipd", "mach", "ctrl", "lifi", "eqip", "weap", "garb", "proj", "ssce", "plac")
+ATTACH_OFF, ATTACH_SIZE = 0x140, 72
+STATIC_LIGHT_GROUPS = ("scen", "mach", "ctrl", "lifi", "ssce", "plac")
+
+
+def read_attachments(m: texconv.MapData) -> list[tuple[int, int, int, str]]:
+    out = []
+    for e in m.index.entries:
+        if e.group not in OBJECT_GROUPS or not e.data_address:
+            continue
+        b = m.tag_off(e)
+        if b < 0 or b + ATTACH_OFF + 8 > len(m.region):
+            continue
+        n, a = struct.unpack_from("<II", m.region, b + ATTACH_OFF)
+        if not 0 < n < 16 or not 0 <= a - m.base < len(m.region) - n * ATTACH_SIZE:
+            continue
+        for k in range(n):
+            raw = m.region[a - m.base + k * ATTACH_SIZE:a - m.base + (k + 1) * ATTACH_SIZE]
+            grp, tid = raw[:4][::-1].decode("latin1"), struct.unpack_from("<I", raw, 12)[0]
+            t = m.by_id.get(tid)
+            if t is None or t.group != grp or grp not in ("pctl", "effe", "ligh"):
+                continue
+            if grp == "ligh" and e.group not in STATIC_LIGHT_GROUPS:
+                continue                         # weapon / projectile / vehicle / unit lights are driven by functions (firing, headlights switch): not always on
+            out.append((e.tag_id, {"pctl": ATT_PCTL, "effe": ATT_EFFE, "ligh": ATT_LIGH}[grp], tid, raw[0x10:0x30].split(b"\0")[0].decode("latin1")))
+    return sorted(out)
+
+
 def effect_closure(m: texconv.MapData, all_effects: bool = False) -> tuple[list[int], list[int]]:
     """(effect tag ids, object tag ids created by their parts), both sorted. See the module docstring."""
     mem = TagMemory(m)
@@ -596,6 +632,9 @@ def effect_closure(m: texconv.MapData, all_effects: bool = False) -> tuple[list[
         for e in m.index.entries:
             if e.group == "effe":
                 add(e.tag_id)
+    for _o, kind, tid, _mk in read_attachments(m):
+        if kind == ATT_EFFE:
+            add(tid)
     objects: set[int] = set()
     seen_tags: set[int] = set()
     while queue:
@@ -794,7 +833,7 @@ def parse_light(r: Region, e: tagindex.TagEntry, problems: list[str], stats: Cou
     flags = r.u("<I", b)[0]
     return LightDef(e.tag_id, e.path, flags, _f(r, b + 4, what, problems), _bounds(r, b + 8, what, problems, stats),
                     _f(r, b + 0x10, what, problems), _f(r, b + 0x14, what, problems), r.u("<I", b + 0x30)[0],
-                    _fvec(r, b + 0x34, 4, what, problems), _fvec(r, b + 0x44, 4, what, problems),  # type: ignore[arg-type]
+                    _fvec(r, b + 0x38, 4, what, problems), _fvec(r, b + 0x48, 4, what, problems),  # type: ignore[arg-type]
                     _f(r, b + 0xF4, what, problems), _angle_ok(r.u("<H", b + 0xFA)[0], 0, 15, what + " falloff function"))
 
 
@@ -945,6 +984,22 @@ def collect(m: texconv.MapData, all_effects: bool = False) -> FxSet:
                     particles[c.particle_tag] = pd
                     want_bitmap(pd.bitmap_tag)
                     want_physics(pd.physics_tag)
+    attach = read_attachments(m)
+    for _o, kind, tid, _mk in attach:
+        if kind == ATT_LIGH:
+            if tid not in lights:
+                lights[tid] = parse_light(r, m.by_id[tid], problems, stats)
+            for e in m.index.entries:
+                if e.group == "bitm" and e.path == GLOW_BITMAP:
+                    want_bitmap(e.tag_id)
+        if kind == ATT_PCTL and tid not in pctls:
+            pc = parse_pctl(r, m.by_id[tid], problems, stats)
+            pctls[tid] = pc
+            want_physics(pc.physics_tag)
+            for t in pc.types:
+                for ps in t.pstates:
+                    want_bitmap(ps.bitmap_tag)
+                    want_physics(ps.physics_tag)
     # the effect references of particles must resolve inside the output (or be dropped)
     out_effects = {e.tag_id for e in effects}
     for pd in particles.values():
@@ -957,7 +1012,7 @@ def collect(m: texconv.MapData, all_effects: bool = False) -> FxSet:
     return FxSet(effects, sorted(particles.values(), key=lambda x: x.tag_id), sorted(phys.values(), key=lambda x: x.tag_id),
                  sorted(decals.values(), key=lambda x: x.tag_id), sorted(lights.values(), key=lambda x: x.tag_id),
                  sorted(pctls.values(), key=lambda x: x.tag_id), sorted(bmps.values(), key=lambda x: x.tag_id),
-                 object_ids, problems, stats)
+                 object_ids, problems, stats, attach)
 
 
 def object_models(m: texconv.MapData, objects: list[int]) -> set[int]:
@@ -1031,6 +1086,7 @@ def build_textures(m: texconv.MapData, fx: FxSet, budget: int = FX_DEFAULT_BUDGE
             for ps in t.pstates:
                 if ps.bitmap_tag != NULL_ID:
                     blend_of.setdefault(ps.bitmap_tag, ps.blend)
+    pctl_alpha_maps = {ps.bitmap_tag for pc in fx.pctl for t in pc.types for ps in t.pstates if ps.bitmap_tag != NULL_ID and ps.blend == 0}
     for bd in fx.bitmaps:
         images = bitmaps.parse_images(m.region, m.base, m.by_id[bd.tag_id].data_address)
         for seq in bd.sequences:
@@ -1061,6 +1117,8 @@ def build_textures(m: texconv.MapData, fx: FxSet, budget: int = FX_DEFAULT_BUDGE
             skipped[f"image failed to decode: {exc}"] += 1
             continue
         found = texconv.alpha_class(rgba)
+        if key[0] in pctl_alpha_maps:                       # a particle system map drawn with alpha blend: its RGB is dark intensity (the steam cloud averages 55 of 255, its alpha 76) and the Xbox shows white steam, so only its alpha is kept
+            rgba = bytes(255 if i & 3 != 3 else v for i, v in enumerate(rgba))
         rgba = texconv.resample_rgba(rgba, w, h, tw, th, found != texconv.CLASS_OPAQUE)
         tex = texconv.convert_rgba(key[0], rgba, tw, th, found)
         if sheet:
@@ -1390,13 +1448,33 @@ def describe(m: texconv.MapData, fx: FxSet, tx: FxTextures | None = None) -> str
     return "\n".join(L)
 
 
+FXAT_MAGIC, FXAT_REC = b"FXAT", 32
+
+
+def build_attachments(fx: FxSet) -> bytes:
+    """FXAT: 'FXAT', u32 version 2, u32 count, u32 tag id of the glow bitmap (0xFFFFFFFF none), then count x { u32 object tag, u32 attached tag, u8 kind, 3 pad, char[20] marker }, sorted by object tag.
+    Only attachments whose tag is in the FXD0 (an effect or particle system that was converted) are kept."""
+    have_e = {e.tag_id for e in fx.effects}
+    have_p = {p.tag_id for p in fx.pctl}
+    have_l = {p.tag_id for p in fx.lights}
+    rows = [a for a in fx.attach if (a[1] == ATT_PCTL and a[2] in have_p) or (a[1] == ATT_EFFE and a[2] in have_e) or (a[1] == ATT_LIGH and a[2] in have_l)]
+    glow = NULL_ID
+    for b in fx.bitmaps:
+        if b.path == GLOW_BITMAP:
+            glow = b.tag_id
+    out = bytearray(FXAT_MAGIC + struct.pack("<III", 2, len(rows), glow))
+    for obj, kind, tid, marker in rows:
+        out += struct.pack("<IIB3x20s", obj, tid, kind, marker.encode("latin1")[:19])
+    return bytes(out)
+
+
 def convert_map(path: Path, all_effects: bool = False, budget: int = FX_DEFAULT_BUDGET
                 ) -> tuple[bytes, FxSet, FxTextures, texconv.MapData]:
     m = texconv.MapData.open(path)
     fx = collect(m, all_effects)
     tx = build_textures(m, fx, budget)
     fxd = build(fx, tx.tex_index)
-    pack = hp2.build(path.stem, [("FXD0", fxd), ("FXTX", tx.blob)])
+    pack = hp2.build(path.stem, [("FXD0", fxd), ("FXTX", tx.blob), ("FXAT", build_attachments(fx))])
     return pack, fx, tx, m
 
 

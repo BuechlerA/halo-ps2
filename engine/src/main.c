@@ -40,6 +40,7 @@
 #include "sim/objects.h"
 #include "render/selftest.h"
 #include "world/world.h"
+#include "world/hires.h"
 
 static video_t    s_video;
 static cfg_t      s_cfg;
@@ -52,7 +53,16 @@ static text_batch_t s_text;
 static object_table_t s_objects;
 static fpview_t   s_fp;
 static lodctl_t   s_lod;
+static float s_cine_light[3] = { 1.0f, 1.0f, 1.0f }, s_cine_amb = 1.0f;     /* cinematic object lighting gains (cfg objlight / objamb) */
 static obj_render_t s_objr;
+static hires_t s_hires;
+static int s_hires_open;
+static float s_cine_fxadd = 1.0f, s_cine_halo = 0.0f;
+static uint32_t s_hires_loads = 1;
+static float s_hires_px;
+static char s_hires_path[160];
+
+static int hires_file_read(void *user, uint32_t offset, void *dst, uint32_t bytes) { (void)user; return file_read_at(s_hires_path, (long)offset, dst, bytes); }
 static int        s_have_objects;
 static gamedata_t s_gd;
 static game_t     s_game;
@@ -74,6 +84,7 @@ static int        s_stream_on;
 static int        s_paused;
 static uint32_t   s_unit_hud;
 static fx_render_t s_fxr;
+static float cine_near_floor = CAMERA_NEAR_DEFAULT;     /* cfg cinenear: the lowest near plane of a cinematic camera */
 
 static void overlay_pass(void *u, struct render_ctx *rc)
 {
@@ -115,6 +126,9 @@ static void apply_options(void)
 	o.debug = (int)cfg_int(&s_cfg, "debug", 0);
 	if (cfg_floats(&s_cfg, "onlybatch", f, 2) >= 1) { o.only_batch = (int)f[0]; o.only_batch_hi = cfg_floats(&s_cfg, "onlybatch", f, 2) == 2 ? (int)f[1] : (int)f[0]; }
 	if (cfg_floats(&s_cfg, "clipbudget", f, 1) == 1) o.clip_budget_ms = f[0];
+	o.clip_debug = (int)cfg_int(&s_cfg, "clipdebug", 0);
+	{ float nf; cine_near_floor = cfg_floats(&s_cfg, "cinenear", &nf, 1) == 1 ? nf : CAMERA_NEAR_DEFAULT; }
+	o.cull_sign = (int)cfg_int(&s_cfg, "cullsign", 1);      // single-sided surfaces are not drawn from behind (the camera inside a beam saw its inside)
 	if (cfg_floats(&s_cfg, "fog", f, 6) >= 1 && f[0] != 0.0f) {
 		o.fog = 1;
 		if (cfg_floats(&s_cfg, "fog", f, 6) >= 3) { o.fog_near = f[1]; o.fog_far = f[2]; }
@@ -270,8 +284,36 @@ static void check_bsp_switch(void)
 	}
 }
 
+/* Streamed high resolution object textures (ADR-074): <obj pack>.hires.hp2 next to the object pack. Its staging ring lives above the BSP mark (a BSP switch frees it and this reopens it)
+ * and is kept only when the arena still has 1 MB after it: b30 (the largest map) has no room for it, a10 does. */
+#define HIRES_MARGIN (1024u * 1024u)
+static void open_hires(void)
+{
+	const char *obj = cfg_str(&s_cfg, "obj", "");
+	const char *dot = strstr(obj, ".obj.hp2");
+	size_t mark;
+	s_hires_open = 0; s_objr.hires = NULL;
+	if (!s_have_objects || !cfg_int(&s_cfg, "hires", 1) || !dot || (size_t)(dot - obj) + 11u >= sizeof s_hires_path) return;
+	memcpy(s_hires_path, obj, (size_t)(dot - obj)); strcpy(s_hires_path + (dot - obj), ".hires.hp2");
+	{
+		long fsz = file_size_of(s_hires_path);
+		if (fsz <= 0) { printf("[hires] none (%s)\n", s_hires_path); return; }
+		mark = arena_mark(&s_arena);
+		if (hires_open(&s_hires, &s_arena, hires_file_read, NULL, (size_t)fsz, (unsigned)cfg_int(&s_cfg, "hiresslots", 3)) != 0) { arena_release(&s_arena, mark); printf("[hires] unusable (%s)\n", s_hires_path); return; }
+	}
+	if (arena_free(&s_arena) < HIRES_MARGIN) { printf("[hires] dropped: %u KB left after the staging ring (needs %u KB)\n", (unsigned)(arena_free(&s_arena) / 1024u), (unsigned)(HIRES_MARGIN / 1024u)); arena_release(&s_arena, mark); return; }
+	s_hires_px = 200.0f;
+	cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
+	s_hires_loads = (uint32_t)cfg_int(&s_cfg, "hiresloads", 1);
+	s_hires.max_loads = s_hires_loads;
+	s_hires_open = 1;
+	s_objr.hires = &s_hires; s_objr.hires_px = s_hires_px;
+	printf("[hires] %s: %u variants of %u textures, %u slots of %u KB, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (unsigned)s_hires.slots, (unsigned)(s_hires.slot_bytes / 1024u), (double)s_hires_px);
+}
+
 static int load_bsp(int idx)
 {
+	s_objr.hires = NULL; s_hires_open = 0;
 	arena_release(&s_arena, s_bsp_mark);
 	if (world_load_bsp(&s_world, &s_arena, s_pack, s_tex, idx)) return -1;
 	if (bsp_render_set_world(&s_arena, &s_world.bsp, &s_world.source)) return -1;
@@ -280,6 +322,7 @@ static int load_bsp(int idx)
 		gamedata_load_bsp(&s_gd, &s_arena, cfg_str(&s_cfg, "game", NULL), idx);
 		if (s_game_on) game_set_collision(&s_game, s_gd.has_coll ? &s_gd.coll : NULL);
 	}
+	open_hires();
 	return 0;
 }
 
@@ -294,7 +337,7 @@ int main(int argc, char *argv[])
 	printf("halo-ps2 phase 1 boot\n");
 	load_config();
 
-	arena_bytes = (size_t)cfg_int(&s_cfg, "arena_mb", 24) * 1024u * 1024u;
+	arena_bytes = (size_t)cfg_int(&s_cfg, "arena_mb", 25) * 1024u * 1024u;
 	heap = malloc(arena_bytes);                         /* the one boot-time allocation (ADR-006) */
 	if (!heap) { printf("[err] cannot allocate %u MB arena\n", (unsigned)(arena_bytes >> 20)); return 1; }
 	arena_init(&s_arena, "level", heap, arena_bytes);
@@ -339,7 +382,7 @@ int main(int argc, char *argv[])
 		const char *obj = cfg_str(&s_cfg, "obj", NULL);
 		if (obj && world_load_objects(&s_world, &s_arena, obj) == 0) {
 			object_world_t ow;
-			ow.scen = &s_world.scen; ow.models = &s_world.models; ow.anims = s_world.anims.graph_count ? &s_world.anims : NULL;
+			ow.scen = &s_world.scen; ow.models = &s_world.models; ow.anims = s_world.anims.graph_count ? &s_world.anims : NULL; ow.mouth = s_world.mouth.count ? &s_world.mouth : NULL;
 			objects_clear(&s_objects);
 			objects_spawn_all(&s_objects, &ow, (int)cfg_int(&s_cfg, "objhidden", 0));
 			printf("[obj] %u objects placed in all BSPs (skipped: %u no model, %u hidden, %u over capacity)\n",
@@ -381,7 +424,37 @@ int main(int argc, char *argv[])
 			s_objr.draw_objects = (int)cfg_int(&s_cfg, "objects", 1);
 			s_objr.draw_fp = (int)cfg_int(&s_cfg, "fp", 1);
 			s_objr.cchg = &s_world.cchg;
+			{ float sr[3]; if (cfg_floats(&s_cfg, "skyrot", sr, 3) == 3) { s_objr.sky_rot[0] = sr[0] * 0.01745329f; s_objr.sky_rot[1] = sr[1] * 0.01745329f; s_objr.sky_rot[2] = sr[2] * 0.01745329f; } }
 			s_objr.sky_model = -1;
+			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
+			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
+			s_objr.unlit_add = (int)cfg_int(&s_cfg, "unlitadd", 1);
+			{
+				float v[3] = { 1.0f, 1.0f, 1.0f };
+				s_objr.dl_gain = 1.0f; cfg_floats(&s_cfg, "dlobj", &s_objr.dl_gain, 1);
+				/* cinematic object lighting, measured against the video (ADR-073): the cluster probes alone leave objects 1.2 .. 2.4 x darker than the Xbox shows them; gameplay keeps the probes as they are */
+				s_cine_light[0] = 2.5f; s_cine_light[1] = 2.3f; s_cine_light[2] = 2.6f; s_cine_amb = 1.3f; s_objr.light_chroma = 1.0f;
+				cfg_floats(&s_cfg, "objamb", &s_cine_amb, 1); cfg_floats(&s_cfg, "objchroma", &s_objr.light_chroma, 1);
+				if (cfg_floats(&s_cfg, "objlight", v, 3) == 3) { s_cine_light[0] = v[0]; s_cine_light[1] = v[1]; s_cine_light[2] = v[2]; }
+				s_objr.light_gain[0] = s_objr.light_gain[1] = s_objr.light_gain[2] = 1.0f; s_objr.amb_gain = 1.0f;
+				{ float g = 0.33f; if (cfg_floats(&s_cfg, "dlwall", &g, 1) == 1) bsp_render_set_dl_gain(g); }
+			}
+			g_face_compose = (int)cfg_int(&s_cfg, "facecompose", g_face_compose);
+			memset(s_objr.cc_perm, 0xFF, sizeof s_objr.cc_perm);
+			{                                                      /* cfg ccperm "508:3 223:5": colour change permutations read off the Xbox video */
+				const char *cp = cfg_str(&s_cfg, "ccperm", "");
+				while (*cp) {
+					char *end;
+					long oi = strtol(cp, &end, 10), pi;
+					if (end == cp || *end != ':') break;
+					pi = strtol(end + 1, &end, 10);
+					if (oi >= 0 && oi < 1280 && pi >= 0 && pi < 8) s_objr.cc_perm[oi] = (uint8_t)pi;
+					cp = end;
+					while (*cp == ' ' || *cp == ',') cp++;
+				}
+			}
+			{ float pg; s_objr.sky_planet_gain = cfg_floats(&s_cfg, "skyplanet", &pg, 1) == 1 ? pg : 1.0f; }
+			{ float yv; s_objr.sky_yaw0 = cfg_floats(&s_cfg, "skyyaw", &yv, 1) == 1 ? yv * 0.01745329f : 0.0f; }
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
 			s_objr.sky_model2 = -1;
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag2) s_objr.sky_model2 = model_find(&s_world.models, s_world.sky.model_tag2);
@@ -409,6 +482,7 @@ int main(int argc, char *argv[])
 	apply_options();   /* every config, with or without an object pack (ADR-059); `skyfog` reads s_world.sky, loaded with the obj pack above */
 	if (s_have_objects) {
 		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
+		s_objr.hires_key_base = bsp_render_reserve_keys(s_world.obj_tex.has ? s_world.obj_tex.tex.texture_count : 0);       /* the key range is reserved whether or not the staging ring fits */
 		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
 		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
@@ -470,8 +544,13 @@ int main(int argc, char *argv[])
 			}
 			if (s_gd.has_fx && s_gd.fx_tex.has) {
 				fx_init(&s_fx, &s_gd.fx, s_game.globals.gravity > 0.0f ? s_game.globals.gravity * 900.0f : 3.2f, (uint32_t)cfg_int(&s_cfg, "seed", 1) + 99u);
+				fx_set_attachments(&s_fx, s_gd.fxat, s_gd.fxat_size);
+				s_objr.fx = &s_fx;
+				s_fx.dbg = (int)cfg_int(&s_cfg, "fxdbg", 0);
 				s_fxr.fx = &s_fx; s_fxr.tex = &s_gd.fx_source;
 				s_fxr.key_base = bsp_render_reserve_keys(s_gd.fx_tex.tex.texture_count);
+				s_cine_fxadd = 0.55f; cfg_floats(&s_cfg, "fxadd", &s_cine_fxadd, 1); s_cine_halo = 0.5f; cfg_floats(&s_cfg, "fxhalo", &s_cine_halo, 1);          /* additive particles in a cinematic: the engine bells saturate to white at 1.0 where the video keeps a blue tint (ADR-074) */
+				s_fxr.add_gain = 1.0f; s_fxr.add_size = 1.0f; cfg_floats(&s_cfg, "fxaddsize", &s_fxr.add_size, 1);
 				s_fxr.enabled = (int)cfg_int(&s_cfg, "fx", 1); s_fxr.decals = (int)cfg_int(&s_cfg, "fxdecals", 1); s_fxr.particles = (int)cfg_int(&s_cfg, "fxparticles", 1);
 			}
 			bsp_render_set_overlay_pass(overlay_pass, NULL);
@@ -553,6 +632,14 @@ int main(int argc, char *argv[])
 						default: break;
 						}
 					}
+					{                                              /* dynamic lights of attached fixtures: objects take them in obj_render, the BSP's vertex colours in bsp_render */
+						static float rows[16][7];
+						const fx_dynlight *dl;
+						unsigned dn = fx_dynamic_lights(&s_fx, &dl), di, dq;
+						for (di = 0; di < dn && di < 16; di++) { for (dq = 0; dq < 3; dq++) { rows[di][dq] = dl[di].pos[dq]; rows[di][3 + dq] = dl[di].rgb[dq]; } rows[di][6] = dl[di].radius; }
+						bsp_render_set_dynamic_lights((const float (*)[7])rows, dn < 8 ? dn : 8);
+					}
+					s_fx.cam[0] = s_cam.pos[0]; s_fx.cam[1] = s_cam.pos[1]; s_fx.cam[2] = s_cam.pos[2];
 					fx_tick(&s_fx);
 				}
 				p2_add(P2_FX, tp);
@@ -608,6 +695,22 @@ int main(int argc, char *argv[])
 						}
 					}
 				}
+				if (s_have_objects && mapp_active() && cfg_str(&s_cfg, "spawnobj", NULL) && s_tick == (uint32_t)cfg_int(&s_cfg, "spawnat", 3000)) {   /* debug: an object whose definition name contains the string, placed 2.5 wu in front of the cinematic camera */
+					const cine_state *cs = mapp_mission()->cine;
+					cine_pose cp = cine_cam_pose(&cs->cam);
+					unsigned di, nd = s_objr.world.scen ? (unsigned)s_objr.world.scen->def_count : 0;
+					for (di = 0; di < nd; di++) {
+						scen_def d = scen_get_def(s_objr.world.scen, di);
+						if (strcmp(d.name, cfg_str(&s_cfg, "spawnobj", "")) == 0) {
+							float p[3] = { cp.pos[0] + 1.6f * cosf(cp.yaw) - 0.7f * sinf(cp.yaw), cp.pos[1] + 1.6f * sinf(cp.yaw) + 0.7f * cosf(cp.yaw), cp.pos[2] - 0.8f };
+							float fixp[3];
+							if (cfg_floats(&s_cfg, "spawnpos", fixp, 3) == 3) { p[0] = fixp[0]; p[1] = fixp[1]; p[2] = fixp[2]; }
+							int slot = objects_spawn_def(&s_objects, &s_objr.world, di, p, cp.yaw + 3.1416f);
+							printf("[obj] spawned %s as %d\n", d.name, slot);
+							break;
+						}
+					}
+				}
 				if (s_have_objects && mapp_active() && cfg_int(&s_cfg, "nearlog", 0) && s_tick == (uint32_t)cfg_int(&s_cfg, "nearlog", 0)) {   /* objects around the cinematic camera */
 					const cine_state *cs = mapp_mission()->cine;
 					cine_pose cp = cine_cam_pose(&cs->cam);
@@ -632,6 +735,8 @@ int main(int argc, char *argv[])
 					       s_game.player.pos[2], s_game.vitals.health, s_game.vitals.shield, (unsigned)s_game.st_shots, (unsigned)s_game.st_projectiles,
 					       (unsigned)s_game.st_hits, (unsigned)s_game.st_kills);
 			}
+			if (s_have_objects && cfg_int(&s_cfg, "hideobj", -1) >= 0 && (unsigned)cfg_int(&s_cfg, "hideobj", -1) < s_objects.count)       /* debug: never draw this object */
+				s_objects.obj[cfg_int(&s_cfg, "hideobj", -1)].flags |= OBJ_F_HIDDEN;
 			sim_done:
 			game_camera(&s_game, &s_cam);
 			s_cam.near_z = CAMERA_NEAR_DEFAULT;
@@ -642,9 +747,15 @@ int main(int argc, char *argv[])
 				if (cs && cs->cam.control && cs->cam.mode == CINE_CAM_POSE) {
 					cine_pose cp = cine_cam_pose(&cs->cam);
 					cine_pose_to_camera(&cp, &s_cam);
+					s_cam.pitch += (float)cfg_int(&s_cfg, "campitch", 0) * 0.01745329f;                  /* debug */
+					{ int cperm = (int)cfg_int(&s_cfg, "camperm", 0);                       /* debug: try other angle conventions for cutscene cameras */
+					  if (cperm) { float y = s_cam.yaw, pi = s_cam.pitch, ro = s_cam.roll;
+						if (cperm & 4) { float t = pi; pi = ro; ro = t; }
+						if (cperm & 1) pi = -pi; if (cperm & 2) ro = -ro; if (cperm & 8) y = -y;
+						s_cam.yaw = y; s_cam.pitch = pi; s_cam.roll = ro; } }
 					/* The intro asks for near 0.01 (and 0.0625 -> 0.01 in the bridge); the VU1 object program drops every object below about 0.04 (a
 					 * captain 0.27 away vanishes, found against the Xbox intro), so the script's value is raised to the engine's default. */
-					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip > CAMERA_NEAR_DEFAULT ? cs->cam.near_clip : CAMERA_NEAR_DEFAULT;
+					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip > cine_near_floor ? cs->cam.near_clip : cine_near_floor;
 				}
 			}
 		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
@@ -669,7 +780,43 @@ int main(int argc, char *argv[])
 			}
 			bsp_render_set_void_view(in_void);
 		}
-		bsp_render_build(frame, &s_cam, &s_text);          /* overlaps the GS drawing frame-1 */
+		{
+			camera_t rcam = s_cam;
+			if (mapp_active()) {                                       /* cinematic object lighting vs gameplay */
+				int cin = mapp_mission()->cine && mapp_mission()->cine->screen.cinematic;
+				unsigned lk;
+				for (lk = 0; lk < 3; lk++) s_objr.light_gain[lk] = cin ? s_cine_light[lk] : 1.0f;
+				s_objr.amb_gain = cin ? s_cine_amb : 1.0f;
+				s_fxr.add_gain = cin ? s_cine_fxadd : 1.0f;
+				s_fxr.halo = cin ? s_cine_halo : 0.0f;
+			}
+			if (cfg_int(&s_cfg, "widescreen", 0) == 2) {              /* debug: the horizontal field of view kept (70 degrees across the 16:9 picture) */
+				rcam.aspect = 16.0f / 9.0f;
+			} else if (cfg_int(&s_cfg, "widescreen", 0)) {                 /* 1: 16:9 with the 4:3 vertical field of view kept (hfov 70 -> 86 degrees, anamorphic buffer). Off by default: measured against the Xbox video (ADR-073) the picture is the 4:3 render, hfov 70 */
+				rcam.hfov = 2.0f * atanf(tanf(s_cam.hfov * 0.5f) * ((16.0f / 9.0f) / s_cam.aspect));
+				rcam.aspect = 16.0f / 9.0f;
+			}
+			if (s_have_objects && cfg_int(&s_cfg, "objlabel", 0)) {   /* debug: the index of every unit (type 1, 5, 2) at its projected position, to read colour-change picks off a frame */
+				float m[4][4];
+				unsigned oi;
+				text_batch_clear(&s_text);
+				camera_clip_matrix(&rcam, m);
+				for (oi = 0; oi < s_objects.count; oi++) {
+					const object_t *ob = &s_objects.obj[oi];
+					float c[4], x = ob->pos[0], y = ob->pos[1], z = ob->pos[2] + 0.8f;
+					char buf[12];
+					int k, sx, sy;
+					if (ob->model < 0 || ob->type != 1 || (ob->flags & (OBJ_F_FREE | OBJ_F_HIDDEN | OBJ_F_INACTIVE))) continue;
+					for (k = 0; k < 4; k++) c[k] = m[0][k] * x + m[1][k] * y + m[2][k] * z + m[3][k];
+					if (c[3] < 0.1f) continue;
+					sx = 256 + (int)(256.0f * c[0] / c[3]); sy = 224 - (int)(224.0f * c[1] / c[3]);
+					if (sx < 0 || sx > 500 || sy < 0 || sy > 440) continue;
+					snprintf(buf, sizeof buf, "%u", oi);
+					text_batch_print(&s_text, sx, sy, 0xFFFF00, buf);
+				}
+			}
+			bsp_render_build(frame, &rcam, &s_text);           /* overlaps the GS drawing frame-1 */
+		}
 		t1 = timer_cycles();
 		{                                                  /* `prof2 1`: where the EE prep time goes (sim tick / object animation / render build), averaged per 60 frames */
 			static float acc[3]; static unsigned n; static int on = -1;
@@ -734,6 +881,7 @@ int main(int argc, char *argv[])
 				       (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024), (unsigned)(s_arena.high / 1024),
 				       (unsigned)rs->pages_free, (unsigned)bsp_render_cache_pages());
 			}
+			if (s_hires_open) printf("[hires] %u loads, %u KB read, %u refused (over the per frame budget)\n", (unsigned)s_hires.loads, (unsigned)(s_hires.bytes_read / 1024u), (unsigned)s_hires.refused);
 			printf("[done] frames=%u dropped=%u (%.2f%%)\n", s_prof.frames, s_prof.dropped,
 			       100.0f * (float)s_prof.dropped / (float)(s_prof.frames ? s_prof.frames : 1));
 			if (cfg_int(&s_cfg, "hold", 0)) {

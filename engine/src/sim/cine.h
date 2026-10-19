@@ -82,7 +82,7 @@ typedef struct { float pos[3]; float yaw, pitch, roll, fov; } cine_pose;
 typedef struct { float pos[3]; float yaw; } cine_frame;                /* the object a relative camera hangs on */
 
 enum { CINE_CAM_PLAYER = 0, CINE_CAM_POSE, CINE_CAM_FIRST_PERSON, CINE_CAM_DEAD };
-enum { CINE_EASE_LINEAR = 0, CINE_EASE_SMOOTH };                       /* smooth = 3u^2 - 2u^3 */
+enum { CINE_EASE_LINEAR = 0, CINE_EASE_SMOOTH };                       /* accepted for compatibility; the observer ignores it (see cine_cam_set) */
 
 typedef struct {
 	uint8_t   control;               /* camera_control: scripts own the camera */
@@ -94,8 +94,13 @@ typedef struct {
 	float     fov_from, fov_to;
 	cine_pose from, to;              /* transition ends (relative to `anchor` when `relative`) */
 	cine_pose cur;                   /* evaluated pose, world space */
+	cine_pose rel_cur;               /* the same in the transition's space (relative to the anchor for a relative camera) */
 	cine_pose player;                /* the player camera pose, kept up to date by the host (start of a transition) */
 	cine_frame anchor;
+	cine_pose hist[3];               /* the last three evaluated poses (newest first) in the transition's space: the retarget velocity and acceleration */
+	uint8_t   hist_n, hist_rel;      /* how many are valid; whether they are relative to the anchor */
+	float     coef[7][3];            /* quintic coefficients (s^3, s^4, s^5) of the position, orientation vector and field of view offsets */
+	float     qt[4];                 /* target orientation */
 	float     near_clip;             /* cinematic_set_near_clip_distance, 0 = the engine's default */
 } cine_camera;
 
@@ -105,7 +110,8 @@ void cine_cam_set_player_pose(cine_camera *c, const cine_pose *p);
 /* camera_control on / off. On: the camera stays where it is (mode POSE holding the player's pose the first time); off: back to
  * the player camera. */
 void cine_cam_control(cine_camera *c, int on);
-/* camera_set: move to `to` in `ticks` ticks (0 = cut). Implies control on. */
+/* camera_set: move to `to` in `ticks` ticks (0 = cut). Implies control on. The motion is Halo's observer: a quintic (minimum jerk) from the
+ * current pose to `to`, started with the velocity and acceleration the camera had when it was retargeted (XBE 0x11cda0 / 0x11c500). */
 void cine_cam_set(cine_camera *c, const cine_pose *to, uint32_t ticks, int ease);
 /* camera_set_relative: `rel` is in the frame of an object (x forward of `anchor`); the host refreshes the anchor every tick with
  * cine_cam_set_anchor. Yaw is added to the anchor yaw, the position rotated by it about z (the object's pitch and roll are
@@ -133,6 +139,9 @@ void cine_track_world(const cine_track_pose *tp, const float origin[3], float ya
 /* Quaternion (x y z w, Hamilton, engine convention) helpers. */
 void cine_ypr_to_quat(float yaw, float pitch, float roll, float q[4]);
 void cine_quat_to_ypr(const float q[4], float *yaw, float *pitch, float *roll);
+/* A scenario / camera-point euler triple (Halo's euler_angles3d_to_matrix, see core/mat.h) as the yaw, pitch and bank of camera_t: forward is its first row,
+ * up its third. */
+void cine_halo_euler_to_ypr(float yaw, float pitch, float roll, float *oy, float *op, float *orr);
 
 /* ---- 4. screen state ------------------------------------------------------------------------------------------------- */
 typedef struct {
@@ -145,6 +154,8 @@ typedef struct {
 	float    fade_alpha;             /* 0 clear .. 1 covered */
 	float    fade_from, fade_to;
 	uint32_t fade_ticks, fade_elapsed;
+	uint8_t  effect;                 /* cinematic_screen_effect_start / _stop: the hologram look of the briefing (hud_render draws a teal wash and scan bars) */
+	uint32_t effect_ticks;
 } cine_screen;
 
 /* ---- 5. titles and messages ------------------------------------------------------------------------------------------ */

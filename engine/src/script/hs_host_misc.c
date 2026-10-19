@@ -6,6 +6,7 @@
 #include "script/hs_host_misc.h"
 #include "audio/stream.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 /* The default easing of camera_set (UNVERIFIED: the original's curve is not documented). */
@@ -111,6 +112,25 @@ static uint32_t misc_rand(mission_t *m)
 	return x;
 }
 
+/* camera_set's duration as the Xbox runs it. The director's remaining time (seconds, ticks / 30) falls by speed x dt per update (XBE 0x120a90, camera_time = remaining x 30), and
+ * dt is not exactly a tick. Measured against the cut times of the Xbox intro video (scripts/cmp-intro.sh, ADR-065): the transitions the scripts wait for with camera_time last
+ * 200 -> 180, 300 -> 270 and 180 -> 180 ticks in the bridge and the cryo bay, but 300 -> 295 and 500 -> 481 in the hangar (BSP 8): the ratio is 0.9 in light scenes and 0.96 ..
+ * 0.98 in the heavy one, which looks like the Xbox's frame time. Other lengths take 0.9 (0.97 in the hangar). */
+static uint32_t camera_ticks(const mission_t *m, int64_t n)
+{
+	static const struct { int64_t n, eff; } light[] = { { 180, 180 }, { 200, 180 }, { 300, 270 } };
+	static const struct { int64_t n, eff; } heavy[] = { { 300, 295 }, { 500, 481 } };
+	int bsp = m->want_bsp >= 0 ? m->want_bsp : m->cur_bsp;
+	unsigned i;
+	if (n <= 0) return 0u;
+	if (bsp == 8) {
+		for (i = 0; i < sizeof heavy / sizeof heavy[0]; i++) if (heavy[i].n == n) return (uint32_t)heavy[i].eff;
+		return (uint32_t)((n * 97 + 50) / 100);
+	}
+	for (i = 0; i < sizeof light / sizeof light[0]; i++) if (light[i].n == n) return (uint32_t)light[i].eff;
+	return (uint32_t)((n * 9 + 5) / 10);
+}
+
 /* ---- camera ---------------------------------------------------------------------------------------------------------------------------- */
 static int cam_point_pose(const mission_t *m, int64_t idx, cine_pose *p)
 {
@@ -118,7 +138,7 @@ static int cam_point_pose(const mission_t *m, int64_t idx, cine_pose *p)
 	if (idx < 0 || !m->dev || (uint64_t)idx >= m->dev->camera_count) return 0;
 	c = devdef_get_camera(m->dev, (uint32_t)idx);
 	p->pos[0] = c.pos[0]; p->pos[1] = c.pos[1]; p->pos[2] = c.pos[2];
-	p->yaw = c.ori[0]; p->pitch = c.ori[1]; p->roll = c.ori[2];
+	cine_halo_euler_to_ypr(c.ori[0], c.ori[1], c.ori[2], &p->yaw, &p->pitch, &p->roll);       /* Halo's euler convention (ADR-063) */
 	p->fov = c.fov > 0.05f && c.fov < 3.0f ? c.fov : CINE_DEFAULT_FOV;
 	return 1;
 }
@@ -152,7 +172,12 @@ BI(camera_set)
 	if (!m || !m->cine || !cam_point_pose(m, argh(a, n, 0), &p)) { if (m) mission_note_missing(m, "camera_set"); return 0; }
 	refresh_player_pose(m);
 	m->misc.cam_anchor_obj1 = 0;
-	cine_cam_set(&m->cine->cam, &p, (uint32_t)(argi(a, n, 1, 0) > 0 ? argi(a, n, 1, 0) : 0), MISC_CAMERA_EASE);
+	if (m->log) {
+		devdef_camera dc = devdef_get_camera(m->dev, (uint32_t)(argh(a, n, 0) & 0xFFFF));
+		printf("[camset] t%u point %d ticks %d pos %.2f %.2f %.2f ori %.3f %.3f %.3f -> ypr %.3f %.3f %.3f fov %.3f\n", m->tick, (int)(argh(a, n, 0) & 0xFFFF), (int)argi(a, n, 1, 0),
+		       (double)p.pos[0], (double)p.pos[1], (double)p.pos[2], (double)dc.ori[0], (double)dc.ori[1], (double)dc.ori[2], (double)p.yaw, (double)p.pitch, (double)p.roll, (double)p.fov);
+	}
+	cine_cam_set(&m->cine->cam, &p, camera_ticks(m, argi(a, n, 1, 0)), MISC_CAMERA_EASE);
 	return 0;
 }
 
@@ -167,7 +192,7 @@ BI(camera_set_relative)
 	if (!object_frame(m, obj, &f)) { mission_note_missing(m, "camera_set_relative"); return 0; }
 	refresh_player_pose(m);
 	m->misc.cam_anchor_obj1 = (int16_t)(obj + 1);
-	cine_cam_set_relative(&m->cine->cam, &p, (uint32_t)(argi(a, n, 1, 0) > 0 ? argi(a, n, 1, 0) : 0), MISC_CAMERA_EASE, &f);
+	cine_cam_set_relative(&m->cine->cam, &p, camera_ticks(m, argi(a, n, 1, 0)), MISC_CAMERA_EASE, &f);
 	return 0;
 }
 
@@ -272,8 +297,8 @@ BI(fade_in)
 }
 
 /* Screen effects (blur / filter / convolution of the cinematic renderer) have no PS2 counterpart: only the on / off state is kept. */
-BI(cinematic_screen_effect_start) { ENTER(cinematic_screen_effect_start); if (m) m->misc.screen_effect = (uint8_t)argb(a, n, 0, 0); return 0; }
-BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) m->misc.screen_effect = 0; return 0; }
+BI(cinematic_screen_effect_start) { ENTER(cinematic_screen_effect_start); if (m) { m->misc.screen_effect = (uint8_t)argb(a, n, 0, 0); if (m->cine) { if (!m->cine->screen.effect && m->misc.screen_effect) m->cine->screen.effect_ticks = 0; m->cine->screen.effect = m->misc.screen_effect; } } return 0; }
+BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) { m->misc.screen_effect = 0; if (m->cine) m->cine->screen.effect = 0; } return 0; }
 NOOP(cinematic_screen_effect_set_convolution)
 NOOP(cinematic_screen_effect_set_filter)
 NOOP(cinematic_screen_effect_set_filter_desaturation_tint)
@@ -362,7 +387,7 @@ BI(sound_impulse_start)
 	const snd_section *sn = NULL;
 	snd_sound snd;
 	misc_impulse *im;
-	unsigned i;
+	unsigned i, take = 0;
 	ENTER(sound_impulse_start);
 	if (!m || tag == HS_HANDLE_NONE || tag == 0) return 0;
 	obj = n > 1 ? mission_resolve_object(m, &a[1], 0) : -1;
@@ -378,9 +403,10 @@ BI(sound_impulse_start)
 		strm_sound ssn = strm_get_sound(ss, (uint32_t)si);
 		unsigned variant = ssn.stream_count ? misc_rand(m) % ssn.stream_count : 0;
 		strm_stream st = strm_get_stream(ss, ssn.stream_first + variant);
+		take = variant;
 		float gain, pan, cg = class_gain(m, kind_group(ssn.kind));
 		slot = kind_slot(ssn.kind);
-		dur = frames_to_ticks(st.frames, st.rate);
+		dur = ssn.max_play_ms ? (uint32_t)((uint64_t)ssn.max_play_ms * 30u / 1000u) : frames_to_ticks(st.frames, st.rate);   /* the Xbox: tag +0x84 ms * 30 / 1000 (0x2b9d0) */
 		spatial(m, obj, ssn.min_dist, ssn.max_dist, scale * cg, &gain, &pan);
 		for (i = 0; i < MISC_IMPULSES; i++)                         /* the slot's previous sound is replaced: its time is over */
 			if (m->misc.imp[i].used && m->misc.imp[i].slot == slot && m->misc.imp[i].tag != tag) { m->misc.imp[i].slot = -1; m->misc.imp[i].end_tick = m->tick; }
@@ -392,7 +418,7 @@ BI(sound_impulse_start)
 				uint32_t t = frames_to_ticks(pm.frames, pm.rate);
 				if (t > dur) dur = t;
 			}
-			if (!dur && snd.max_play_ms) dur = (snd.max_play_ms * 30u + 999u) / 1000u;
+			if (snd.max_play_ms) dur = (uint32_t)((uint64_t)snd.max_play_ms * 30u / 1000u);     /* the declared length wins, as on the Xbox (decoded frames are 8/9 of it) */
 		}
 		if (m->misc_env.play) {
 			float gain, pan;
@@ -400,8 +426,9 @@ BI(sound_impulse_start)
 			if (gain > 0.001f) m->misc_env.play(m->misc_env.user, tag, obj >= 0 ? pos : NULL, gain);
 		}
 	}
+	if (m->log) printf("[camset] t%u impulse %08x dur %u slot %d resident %d\n", m->tick, (unsigned)tag, (unsigned)dur, slot, resident);
 	im = imp_alloc(m, tag);
-	im->used = 1; im->tag = tag; im->obj = (int16_t)obj; im->slot = (int8_t)slot; im->end_tick = m->tick + dur;
+	im->used = 1; im->tag = tag; im->obj = (int16_t)obj; im->slot = (int8_t)slot; im->end_tick = m->tick + dur; im->start_tick = m->tick; im->variant = (uint16_t)take;
 	m->misc.impulses_started++;
 	return 0;
 }
@@ -961,9 +988,32 @@ NOOP(render_lights)
 NOOP(rasterizer_lights_reset_for_new_map)
 
 /* ---- per tick service, registration, statistics ------------------------------------------------------------------------------------------ */
+/* Lip sync: the mouth data of a line a unit speaks (sound_impulse_start with the unit as source) is one loudness byte per tick; the face's talk
+ * overlay is scaled by it (sim/objects.c apply_face). Every tick the speakers are zeroed first, so a line that ended or was cut closes the mouth. */
+static void lipsync(mission_t *m)
+{
+	unsigned i;
+	if (!m->objects) return;
+	for (i = 0; i < MISC_IMPULSES; i++) {
+		const misc_impulse *p = &m->misc.imp[i];
+		if (p->used && p->obj >= 0 && (unsigned)p->obj < m->objects->count) m->objects->obj[p->obj].face.talk = 0;
+	}
+	if (!m->ow.mouth) return;
+	for (i = 0; i < MISC_IMPULSES; i++) {
+		const misc_impulse *p = &m->misc.imp[i];
+		unsigned len = 0, k;
+		const uint8_t *mouth;
+		if (!p->used || p->obj < 0 || (unsigned)p->obj >= m->objects->count || m->tick < p->start_tick || m->tick >= p->end_tick) continue;
+		mouth = mouth_find(m->ow.mouth, p->tag, p->variant, &len);
+		k = m->tick - p->start_tick;
+		if (mouth && k < len) m->objects->obj[p->obj].face.talk = mouth[k];
+	}
+}
+
 void misc_tick(mission_t *m)
 {
 	if (!m) return;
+	lipsync(m);
 	refresh_player_pose(m);
 	if (m->misc.cam_anchor_obj1 > 0 && m->cine) {
 		cine_frame f;

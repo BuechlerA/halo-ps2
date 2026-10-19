@@ -1,7 +1,9 @@
 #include "render/obj_render.h"
 #include "render/gs.h"
 #include "platform/timer.h"
+#include <kernel.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #define VU_MODEL_BASE 136
@@ -149,7 +151,7 @@ static unsigned pick_lod(const model_section *ms, const model_info *mi, const ui
 /* Change colours of an object: tint[c] (rgb 0..255) is valid when has[c] (c = 0..3 for change colour a..d). */
 typedef struct { uint8_t rgb[CCHG_MAX_CHANGE][3]; uint8_t has[CCHG_MAX_CHANGE]; } cc_tints;
 
-static void cc_pick(const obj_render_t *o, int model, uint32_t seed, cc_tints *t)
+static void cc_pick(const obj_render_t *o, int model, uint32_t seed, cc_tints *t, int obj)
 {
 	const uint8_t *rec;
 	unsigned c;
@@ -157,15 +159,54 @@ static void cc_pick(const obj_render_t *o, int model, uint32_t seed, cc_tints *t
 	if (!o->cchg || !o->world.models || model < 0) return;
 	rec = cchg_find(o->cchg, model_get(o->world.models, (uint32_t)model).tag_id);
 	if (!rec) return;
-	for (c = 0; c < CCHG_MAX_CHANGE; c++) t->has[c] = (uint8_t)cchg_tint(rec, c + 1, seed, t->rgb[c]);
+	for (c = 0; c < CCHG_MAX_CHANGE; c++) {
+		if (c == 0 && obj >= 0 && obj < OBJ_MAX && o->cc_perm[obj] != 0xFFu) t->has[c] = (uint8_t)cchg_tint_perm(rec, 1, o->cc_perm[obj], seed, t->rgb[c]);     /* picked from the Xbox video (cfg ccperm) */
+		else t->has[c] = (uint8_t)cchg_tint(rec, c + 1, seed, t->rgb[c]);
+	}
+}
+
+/* Does any part of the model at this lod draw blended (alpha / additive, not alpha tested)? Decides whether the object gets the second, far-to-near pass. */
+static int model_has_blend(const obj_render_t *o, int model, const uint16_t *perm, unsigned regions, unsigned lod)
+{
+	const model_section *ms = o->world.models;
+	model_info mi = model_get(ms, (uint32_t)model);
+	unsigned r, p;
+	for (r = 0; r < regions; r++) {
+		model_part_range pr = model_parts(ms, &mi, perm[r], lod);
+		for (p = 0; p < pr.part_count; p++) {
+			model_part part = model_get_part(ms, (uint32_t)pr.first_part + p);
+			mat_binding_t mb = { -1, 0, 0, { 1.0f, 1.0f }, 0, -1 };
+			if (o->textures && o->textures->binding && o->textures->binding(o->textures->user, part.shader_id, &mb) != 0) mb.tex = -1;
+			if (((mb.flags & MAT_BLEND) != 0 || (part.flags & 2)) && !((mb.flags & MAT_ALPHA_TEST) != 0 || (part.flags & 1))) return 1;
+		}
+	}
+	return 0;
+}
+
+/* GS TEX0 of the streamed high resolution variant of object texture `tex`, or 0 (none, not yet loaded, over this frame's load budget): the caller falls back to the resident one. */
+static u64 hires_tex0(obj_render_t *o, int tex)
+{
+	hires_view v;
+	tex_image_t img;
+	if (!o->hires || tex < 0 || hires_info(o->hires, (unsigned)tex, &v) != 0) return 0;
+	if (!rb_extra_resident(o->hires_key_base, (unsigned)tex)) {
+		if (hires_load(o->hires, (unsigned)tex, &v) != 0) return 0;
+		SyncDCache((void *)v.clut, (u8 *)v.pixels + v.pixel_bytes);       /* the DMA reads RAM, not the cache */
+	}
+	img.pixels = v.pixels; img.clut = v.clut; img.pixel_bytes = v.pixel_bytes; img.clut_bytes = v.clut_bytes; img.w = v.w; img.h = v.h; img.psm = v.psm;
+	{
+		u64 t0 = rb_extra_tex0(o->hires_key_base, (unsigned)tex, &img, 0);
+		return o->want_hi == 2 ? 0 : t0;
+	}
 }
 
 static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, const uint16_t *perm, unsigned regions,
-                           const object_nodes_t *nodes, unsigned lod, const scen_light *light, unsigned budget, const cc_tints *cc)
+                           const object_nodes_t *nodes, unsigned lod, const scen_light *light, unsigned budget, const cc_tints *cc, int pass)
 {
 	const model_section *ms = o->world.models;
 	model_info mi = model_get(ms, (uint32_t)model);
 	unsigned i, r, p, bi, emitted = 0;
+	int unlit = 0;
 	if (nodes->count == 0 || budget == 0) return 0;
 	for (i = 0; i < nodes->count; i++) skel_palette_entry(s_pal[i], &nodes->skin[i], rc->clip, light->sun_dir);
 	s_pal_serial++;                                   /* new palette contents: the VU1 copy is stale */
@@ -183,9 +224,19 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 			if (o->textures && o->textures->binding && o->textures->binding(o->textures->user, part.shader_id, &mb) != 0) mb.tex = -1;
 			blend = (mb.flags & MAT_BLEND) != 0 || (part.flags & 2);
 			atest = (mb.flags & MAT_ALPHA_TEST) != 0 || (part.flags & 1);
+			if ((pass == 0 && blend && !atest) || (pass == 1 && !(blend && !atest))) continue;
+			if (mb.add != unlit && o->unlit_add) {              /* an additive part (a hologram, a glow) is self lit: the Xbox does not light it, so it gets full white vertex light, the lit parts their light back */
+				scen_light full = *light;
+				if (mb.add) { full.ambient[0] = full.ambient[1] = full.ambient[2] = 128; full.sun[0] = full.sun[1] = full.sun[2] = 0; emit_light(rc->chain, &full); }
+				else emit_light(rc->chain, light);
+				unlit = mb.add;
+			}     /* pass 0: opaque and alpha tested parts, pass 1: blended parts (no Z write, far to near) */
 			if (rc->opt->textures && mb.tex >= 0 && o->textures && o->textures->texture) {
 				tex_image_t img;
-				if (o->textures->texture(o->textures->user, mb.tex, &img) == 0) tex0 = rb_object_tex0((unsigned)mb.tex, &img, 0);
+				if (o->textures->texture(o->textures->user, mb.tex, &img) == 0) {
+					if (o->want_hi) tex0 = hires_tex0(o, mb.tex);
+					if (!tex0) tex0 = rb_object_tex0((unsigned)mb.tex, &img, 0);
+				}
 			}
 			if (tex0) {
 				ad[n].data = tex0;                          ad[n++].addr = GS_A_TEX0_1;
@@ -194,7 +245,7 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 			}
 			ad[n].data = mb.add ? GS_ALPHA(0, 2, 2, 1, 0x80) : GS_ALPHA(0, 1, 0, 1, 0); ad[n++].addr = GS_A_ALPHA_1;
 			ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 2); ad[n++].addr = GS_A_TEST_1;
-			ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, 0); ad[n++].addr = GS_A_ZBUF_1;
+			ad[n].data = GS_ZBUF(*rb_zbuf_page_ptr(), GS_PSMZ24, blend && !atest ? 1 : 0); ad[n++].addr = GS_A_ZBUF_1;     /* a blended part never writes Z: it would hide what is drawn after it */
 			emit_part_state(rc->chain, ad, n, mb.uv_scale[0] / (float)(1u << part.uv_shift), mb.uv_scale[1] / (float)(1u << part.uv_shift),
 			                GS_PRIM(GSX_PRIM_TRIANGLE, 1, tex0 ? 1 : 0, rc->opt->fog, blend, 0, 0, 0, 0));
 			for (bi = 0; bi < part.batch_count; bi++) {
@@ -236,6 +287,7 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 			}
 		}
 	}
+	if (unlit) emit_light(rc->chain, light);
 	o->st_batches += emitted;
 	return emitted;
 }
@@ -245,6 +297,37 @@ static void light_at(const obj_render_t *o, const float pos[3], scen_light *l)
 	int cl = o->bsp ? bsp_find_cluster(o->bsp, pos) : -1;
 	if (cl >= 0 && o->world.scen) scen_cluster_light(o->world.scen, (uint32_t)o->bsp_index, (uint32_t)cl, l);
 	else scen_cluster_light(o->world.scen, (uint32_t)o->bsp_index, 0xFFFFu, l);   /* neutral default */
+	{                                                         /* the cluster probe averages a lightmap whose hue is stronger than the Xbox's object lighting: pull toward grey (light_chroma 1 = unchanged), then the gain */
+		unsigned k;
+		float la = 0.30f * l->ambient[0] + 0.59f * l->ambient[1] + 0.11f * l->ambient[2], ls = 0.30f * l->sun[0] + 0.59f * l->sun[1] + 0.11f * l->sun[2];
+		for (k = 0; k < 3; k++) {
+			float a = (la + ((float)l->ambient[k] - la) * o->light_chroma) * o->light_gain[k] * o->amb_gain, s = (ls + ((float)l->sun[k] - ls) * o->light_chroma) * o->light_gain[k];
+			l->ambient[k] = (uint8_t)(a > 255.0f ? 255.0f : a < 0.0f ? 0.0f : a); l->sun[k] = (uint8_t)(s > 255.0f ? 255.0f : s < 0.0f ? 0.0f : s);
+		}
+	}
+	if (o->fx) {                                              /* dynamic point lights of attached fixtures: the red alert of the bridge colours the people in it, the command display turns Keyes teal */
+		const fx_dynlight *dl;
+		unsigned n = fx_dynamic_lights(o->fx, &dl), i, k;
+		for (i = 0; i < n; i++) {
+			float dx = pos[0] - dl[i].pos[0], dy = pos[1] - dl[i].pos[1], dz = pos[2] - dl[i].pos[2], d = sqrtf(dx * dx + dy * dy + dz * dz), a, mx;
+			if (d >= dl[i].radius) continue;
+			a = 1.0f - d / dl[i].radius;
+			a *= a;
+			mx = dl[i].rgb[0] > dl[i].rgb[1] ? dl[i].rgb[0] : dl[i].rgb[1];
+			if (dl[i].rgb[2] > mx) mx = dl[i].rgb[2];
+			if (mx < 0.05f) continue;
+			{                                                 /* weight of the light's own (normalised) colour in what lights the object near it: a pulsing alarm lamp averages about 0.4 of its colour, a hologram projector is steady */
+				float red = (dl[i].rgb[0] - 0.5f * (dl[i].rgb[1] + dl[i].rgb[2])) / mx;
+				if (red < 0.0f) red = 0.0f;
+				a *= (0.6f - 0.3f * red) * o->dl_gain; if (a > 1.0f) a = 1.0f;
+			}
+			for (k = 0; k < 3; k++) {
+				float c = dl[i].rgb[k] / mx * 255.0f;
+				l->ambient[k] = (uint8_t)((float)l->ambient[k] * (1.0f - a) + c * a * 0.7f);
+				l->sun[k] = (uint8_t)((float)l->sun[k] * (1.0f - a * 0.7f) + c * a * 0.5f);
+			}
+		}
+	}
 }
 
 void obj_render_pass(void *user, render_ctx_t *rc)
@@ -262,52 +345,69 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	if (!o->world.models || !o->world.scen) return;
 	camera_basis(cam, right, up, fwd);
 	emit_model_setup(rc->chain, rc);
+	if (o->hires) hires_begin_frame(o->hires);
+	o->want_hi = 0;
 
-	/* pass 1: cull and rank by distance; pass 2: pose and draw nearest first until the batch cap is spent, so the cap drops the far clutter
-	 * (not whatever comes last in the table) and the objects it drops cost no pose, lighting or model walk at all (ADR-063) */
+	/* Visible objects are drawn nearest first: the batch budget runs out in busy scenes (the bridge sees 80 objects, the hangar's crowd among them) and the
+	 * objects that go missing must be the far ones, not the ones with the highest index (Keyes, index 508, vanished in the hologram shot). */
 	{
-		static struct { float dist; uint16_t index; } cand[OBJ_MAX];
-		unsigned n = 0, k;
+		static uint16_t cand[OBJ_MAX];
+		static float    cand_key[OBJ_MAX];
+		unsigned n_cand = 0, k, j;
+		int pass;
 		if (o->lod) budget = lodctl_batch_cap(o->lod, budget);
 		for (i = 0; o->draw_objects && o->table && i < o->table->count && i < OBJ_MAX; i++) {
 			const object_t *ob = &o->table->obj[i];
 			model_info mi;
-			float c[3], d[3], dist, w, diameter, key;
+			float c[3], d[3], dist, w, diameter;
 			if (ob->model < 0 || (ob->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
 			mi = model_get(o->world.models, (uint32_t)ob->model);
 			mat4_transform_point(&ob->root, mi.centre, c);
 			d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
 			dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
 			w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+			if (o->dbg_obj == (int)i) printf("[dbg] obj %u dist %.2f radius %.2f w %.2f maxd %.1f frustum %d\n", i, (double)dist, (double)ob->radius, (double)w, (double)maxd, frustum_sphere(rc->frustum, c, ob->radius));
 			if (dist - ob->radius > maxd || !frustum_sphere(rc->frustum, c, ob->radius)) { o->st_culled++; continue; }
 			diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
 			if (diameter < 3.0f && dist > ob->radius * 2.0f) { o->st_culled++; continue; }   /* sub-pixel clutter */
-			key = dist - ob->radius;                                                          /* the nearest surface, so a big object close by is not ranked behind a small one */
-			for (k = n; k > 0 && cand[k - 1].dist > key; k--) cand[k] = cand[k - 1];          /* insertion sort: n is a few dozen */
-			cand[k].dist = key; cand[k].index = (uint16_t)i;
-			n++;
+			{
+				float key = dist - ob->radius;
+				for (j = n_cand; j > 0 && cand_key[j - 1] > key; j--) {              /* insertion sort: a few dozen candidates */
+					cand_key[j] = cand_key[j - 1];
+					cand[j] = cand[j - 1];
+				}
+				cand_key[j] = key;
+			}
+			cand[j] = (uint16_t)i;
+			n_cand++;
 		}
-		for (k = 0; k < n; k++) {
-			const object_t *ob = &o->table->obj[cand[k].index];
-			model_info mi;
-			float c[3], d[3], w, diameter;
-			scen_light light;
-			unsigned lod;
-			if (o->st_batches >= budget) { o->st_skipped += n - k; break; }
-			mi = model_get(o->world.models, (uint32_t)ob->model);
-			mat4_transform_point(&ob->root, mi.centre, c);
-			d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
-			w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
-			diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
-			lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
-			if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { o->st_culled++; continue; }
-			light_at(o, c, &light);
-			o->st_visible++;
-			cc_pick(o, ob->model, (uint32_t)cand[k].index * 2654435761u + (uint32_t)ob->def * 40503u, &cc);
-			if (draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget - o->st_batches, &cc) == 0 && o->st_batches >= budget) o->st_skipped++;
+		for (pass = 0; pass < 2; pass++) {
+			for (k = 0; k < n_cand; k++) {
+				unsigned kk = pass ? n_cand - 1 - k : k;                                   /* the blended pass runs far to near */
+				const object_t *ob = &o->table->obj[cand[kk]];
+				model_info mi = model_get(o->world.models, (uint32_t)ob->model);
+				float c[3], d[3], w, diameter;
+				scen_light light;
+				unsigned lod, em;
+				mat4_transform_point(&ob->root, mi.centre, c);
+				d[0] = c[0] - cam->pos[0]; d[1] = c[1] - cam->pos[1]; d[2] = c[2] - cam->pos[2];
+				w = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+				diameter = 2.0f * ob->radius * 320.0f * kx / (w > cam->near_z ? w : cam->near_z);
+				lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
+				o->want_hi = o->hires == NULL ? 0 : diameter >= o->hires_px ? 1 : diameter >= 0.5f * o->hires_px ? 2 : 0;      /* 2: approaching, load and upload the variant now, draw the resident one until it counts */
+				if (pass && !model_has_blend(o, ob->model, ob->perm, ob->region_count, lod)) continue;
+				if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { if (!pass) o->st_culled++; continue; }
+				light_at(o, c, &light);
+				if (!pass) o->st_visible++;
+				cc_pick(o, ob->model, (uint32_t)cand[kk] * 2654435761u + (uint32_t)ob->def * 40503u, &cc, (int)cand[kk]);
+				em = draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, (pass ? budget + budget / 4u : budget) > o->st_batches ? (pass ? budget + budget / 4u : budget) - o->st_batches : 0, &cc, pass);       /* the blended pass has its own quarter on top: glass and holograms are drawn last and must not starve */
+				if (o->dbg_obj == (int)cand[kk]) printf("[dbg] obj %u pass %d lod %u emitted %u budget %u used %u\n", (unsigned)cand[kk], pass, lod, em, budget, o->st_batches);
+				if (em == 0 && !pass && o->st_batches >= budget) { o->st_skipped++; }
+			}
 		}
 	}
 
+	o->want_hi = 0;
 	if (o->draw_fp && !o->hide_fp && o->fp && o->fp->active) {
 		const fpview_t *f = o->fp;
 		scen_light light;
@@ -323,16 +423,16 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 		mi = model_get(o->world.models, (uint32_t)f->arms_model);
 		model_select_permutations(o->world.models, &mi, NULL, perm);
 		for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
-		cc_pick(o, f->arms_model, 1u, &cc);
+		cc_pick(o, f->arms_model, 1u, &cc, -1);
 		draw_model(o, rc, f->arms_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS,
-		           &f->arms_nodes, 0, &light, 400, &cc);
+		           &f->arms_nodes, 0, &light, 400, &cc, 2);
 		if (f->weapon_model >= 0) {
 			object_nodes_t wn;
 			mi = model_get(o->world.models, (uint32_t)f->weapon_model);
 			model_select_permutations(o->world.models, &mi, NULL, perm);
 			for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) if (perm[r] >= mi.permutation_count) perm[r] = 0;
 			if (objects_pose_model(&o->world, f->weapon_model, f->weapon_graph, f->weapon_anim, f->weapon_frame, &f->weapon_root, &wn))
-				draw_model(o, rc, f->weapon_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS, &wn, 0, &light, 400, NULL);
+				draw_model(o, rc, f->weapon_model, perm, mi.region_count < OBJ_MAX_REGIONS ? mi.region_count : OBJ_MAX_REGIONS, &wn, 0, &light, 400, NULL, 2);
 		}
 	}
 	o->st_ms = timer_ms(t0, timer_cycles());
@@ -390,8 +490,10 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 	unsigned r, p, bi, t, k, j;
 	u32 t0 = timer_cycles();
 	int sky = o->sky_model;
+	float sky_yaw = 0.0f;
 	o->sky_ms = 0.0f;
 	if (rc->sky_index == 1 && o->sky_model2 >= 0) sky = o->sky_model2;       /* palette entry 1: a10's exterior (the intro's space shots) */
+	if (sky == o->sky_model) sky_yaw = o->sky_yaw0;      /* palette entry 0 (cfg skyyaw): a10's windows need a quarter turn, see ADR-063 */
 	if (sky < 0 || !ms || !rc->sky_visible) return;                 /* no visible cluster sees the sky: nothing to draw */
 	mi = model_get(ms, (uint32_t)sky);
 	model_select_permutations(ms, &mi, NULL, perm);
@@ -401,6 +503,7 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 	for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) {
 		model_part_range pr;
 		unsigned lod;
+		if (o->sky_hide & (1u << r)) continue;
 		if (perm[r] >= mi.permutation_count) perm[r] = 0;
 		for (lod = 0; lod < MODEL_LODS && !model_parts(ms, &mi, perm[r], lod).part_count; lod++) {}
 		if (lod == MODEL_LODS) continue;
@@ -418,9 +521,17 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 			 * the bind-pose inverse. a10's sky node is yawed by 90 degrees by default, which turns the dome, planet and galaxy by -90: only then
 			 * the intro's planet stands left of the Autumn as on the Xbox. */
 			node_bind_inverse(ms, &mi, part.rigid_node, &nw);
+			if (o->sky_rot[0] != 0.0f || o->sky_rot[1] != 0.0f || o->sky_rot[2] != 0.0f || sky_yaw != 0.0f) {
+				static const float zero[3] = { 0.0f, 0.0f, 0.0f };
+				mat4 er;
+				mat4_from_ypr(&er, o->sky_rot[0] + sky_yaw, o->sky_rot[1], o->sky_rot[2], zero);
+				mat4_mul(&nw, &nw, &er);
+			}
 			if (o->textures && o->textures->binding && o->textures->binding(o->textures->user, part.shader_id, &mb) != 0) mb.tex = -1;
 			blend = (mb.flags & MAT_BLEND) != 0 || (part.flags & 2);
 			atest = (mb.flags & MAT_ALPHA_TEST) != 0 || (part.flags & 1);
+			if (o->sky_hide & 0x40000000u) printf("[sky] region %u part %u shader %08x tex %d flags %x add %d blend %d uv %.2f %.2f batches %u\n", r, p, (unsigned)part.shader_id, mb.tex, (unsigned)mb.flags, mb.add, blend, (double)mb.uv_scale[0], (double)mb.uv_scale[1], (unsigned)part.batch_count);
+			if (o->sky_hide & (0x100u << p)) continue;
 			if (rc->opt->textures && mb.tex >= 0 && o->textures && o->textures->texture) {
 				tex_image_t img;
 				if (o->textures->texture(o->textures->user, mb.tex, &img) == 0) tex0 = rb_object_tex0((unsigned)mb.tex, &img, 0);
@@ -458,7 +569,8 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 						clip_project(rc->clip, wp, &tri[k]);
 						memset(tri[k].a, 0, sizeof tri[k].a);
 						tri[k].a[0] = (float)uvk[0] * su; tri[k].a[1] = (float)uvk[1] * sv;
-						tri[k].a[4] = tri[k].a[5] = tri[k].a[6] = tri[k].a[7] = 128.0f;
+						tri[k].a[4] = tri[k].a[5] = tri[k].a[6] = 128.0f * (mb.add ? 1.0f : o->sky_planet_gain);   /* the planet billboards (double multiply on the Xbox) */
+						tri[k].a[7] = 128.0f;
 					}
 					cnt = (unsigned)clip_polygon(tri, rc->cam->near_z, out);
 					if (cnt >= 3 && filled + cnt <= 24 * CLIP_MAX_VERTS) {

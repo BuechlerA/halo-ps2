@@ -44,3 +44,22 @@ int cchg_tint(const uint8_t *rec, unsigned source, uint32_t seed, uint8_t rgb[3]
 	}
 	return 1;
 }
+
+int cchg_tint_perm(const uint8_t *rec, unsigned source, unsigned perm, uint32_t seed, uint8_t rgb[3])
+{
+	const uint8_t *ch;
+	unsigned n, k, t;
+	if (!rec || source < 1 || source > CCHG_MAX_CHANGE) return 0;
+	ch = rec + 4 + (size_t)(source - 1) * 68;
+	n = ch[0];
+	if (n == 0 || n > CCHG_MAX_PERM) return 0;
+	if (perm >= n) perm = n - 1;
+	seed = seed * 2654435761u + source * 40503u;
+	seed ^= seed >> 15; seed *= 2246822519u; seed ^= seed >> 13;
+	t = (seed >> 8) & 255u;
+	for (k = 0; k < 3; k++) {
+		unsigned lo = ch[5 + 8 * perm + k], hi = ch[8 + 8 * perm + k];
+		rgb[k] = (uint8_t)((lo * (255u - t) + hi * t + 127u) / 255u);
+	}
+	return 1;
+}

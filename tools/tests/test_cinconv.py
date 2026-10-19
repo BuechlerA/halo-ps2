@@ -32,16 +32,17 @@ def streams() -> list[tuple[str, int, cc.Ctl, bytes]]:
     """(name, control data version, initial state, stream) of the four recordings."""
     ev = cc.encode_event
     a_init = cc.Ctl(mode=3, flags=0x0300, weapon=-1, extra_a=-1, extra_b=-1, yaw=100, pitch=0)
-    a = (ev(cc.T_THROTTLE, 1, struct.pack("<2f", 1.0, 0.0)) +
-         ev(cc.T_AIM_SMALL, 0, struct.pack("<2b", 3, -2)) +
-         ev(cc.T_FLAGS, 4, struct.pack("<H", 0x0800)) +
-         ev(cc.T_AIM_LARGE, 300, struct.pack("<2h", 1950, 5)) +
-         ev(cc.T_WEAPON, 0, struct.pack("<h", 1)) +
-         ev(cc.T_WAIT, 20))                                   # waits 1 + 0 + 4 + 300 + 0 + 20: 326 ticks
+    # an event's wait is the delay BEFORE it (XBE 0x119690): the events below fire at ticks 0, 1, 1, 5, 305 and 325
+    a = (ev(cc.T_THROTTLE, 0, struct.pack("<2f", 1.0, 0.0)) +
+         ev(cc.T_AIM_SMALL, 1, struct.pack("<2b", 3, -2)) +
+         ev(cc.T_FLAGS, 0, struct.pack("<H", 0x0800)) +
+         ev(cc.T_AIM_LARGE, 4, struct.pack("<2h", 1950, 5)) +
+         ev(cc.T_WEAPON, 300, struct.pack("<h", 1)) +
+         ev(cc.T_WAIT, 20))                                   # waits 0 + 1 + 0 + 4 + 300 + 20: 326 ticks
     b_init = cc.Ctl(mode=3, flags=0x0300, weapon=0, extra_a=1, yaw=-1000, pitch=-500)
-    b = ev(cc.T_AIM_SMALL, 10, struct.pack("<2b", -1, -1))      # yaw wraps to 999, pitch stays clamped: 11 ticks
+    b = ev(cc.T_AIM_SMALL, 0, struct.pack("<2b", -1, -1)) + ev(cc.T_WAIT, 10)      # yaw wraps to 999, pitch stays clamped: 11 ticks
     c_init = cc.Ctl(mode=0, flags=0x12, weapon=-1, yaw=0, pitch=0)
-    c = ev(cc.T_MODE, 0, bytes([3])) + ev(cc.T_THROTTLE, 2, struct.pack("<2f", 0.5, -0.5))      # 3 ticks
+    c = ev(cc.T_MODE, 0, bytes([3])) + ev(cc.T_THROTTLE, 0, struct.pack("<2f", 0.5, -0.5)) + ev(cc.T_WAIT, 2)      # 3 ticks
     return [("rec_a", 4, a_init, a), ("rec_b", 3, b_init, b), ("rec_c", 0, c_init, c), ("rec_a", 4, a_init, a)]
 
 
@@ -190,7 +191,7 @@ def check_collect() -> cc.CineSet:
     assert len(cs.problems) == 1 and "string index 9" in cs.problems[0]
     assert [x.name for x in cs.recordings] == ["rec_a", "rec_b", "rec_c", "rec_a"]
     assert [x.length for x in cs.recordings] == LENGTHS and [x.ctl_version for x in cs.recordings] == [4, 3, 0, 4]
-    assert [x.events for x in cs.recordings] == [6, 1, 2, 6]
+    assert [x.events for x in cs.recordings] == [6, 2, 3, 6]
     assert cs.recordings[0].init.yaw == 100 and cs.recordings[2].init.flags == 0x12
     # tracks: sorted by tag id, conjugated orientation: the first point looks down (+90 degrees about y, forward (0, 0, -1))
     assert len(cs.tracks) == 2 and cs.tracks[0].tag_id < cs.tracks[1].tag_id

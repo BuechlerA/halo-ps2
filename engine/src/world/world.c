@@ -182,6 +182,9 @@ int world_load_objects(world_t *w, arena_t *a, const char *obj_path)
 	if (sec && anim_open(&w->anims, sec, raw) == ANIM_OK)
 		printf("[obj] %s ANIM: %u graphs, %u animations, %u KB\n", obj_path, (unsigned)w->anims.graph_count, (unsigned)w->anims.anim_count, (unsigned)(raw / 1024));
 	else memset(&w->anims, 0, sizeof w->anims);
+	sec = world_load_section(a, obj_path, "MOUT", &raw, 1);
+	if (!sec || mouth_open(&w->mouth, sec, raw) != 0) memset(&w->mouth, 0, sizeof w->mouth);
+	else printf("[obj] %s MOUT: %u dialogue lines with mouth data, %u KB\n", obj_path, (unsigned)w->mouth.count, (unsigned)(raw / 1024));
 	sec = world_load_section(a, obj_path, "OTEX", &raw, 1);
 	w->obj_tex.has = 0;
 	if (sec && tex_open(&w->obj_tex.tex, sec, raw) == TEX_OK) {

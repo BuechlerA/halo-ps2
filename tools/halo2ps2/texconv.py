@@ -83,6 +83,10 @@ GROUP_CODES = {"senv": 1, "sotr": 2, "schi": 3, "sgla": 4, "swat": 5}
 FLAT_GREY = 0x80808080               # RGBA8, alpha on the PS2 0x80 = 1.0 scale
 
 MAX_TEX, MIN_TEX, MAX_MIPS = 256, 8, 4
+MAX_TEX_FORMAT = 512       # the TEXS format allows 512 on a side; the converter's default cap is MAX_TEX, only HERO_BITMAPS go above it (ADR-073)
+# Bitmaps (tag paths) of surfaces a cinematic shows large that a half resolution strip would smear: the a10 command wall's monitors (1024 x 256, three screens side by side)
+# get 512 x 128 instead of 256 x 64.
+HERO_BITMAPS = {"levels\\a10\\bitmaps\\monitors": 512}
 LM_BUDGET_BYTES = 512 * 1024         # per BSP, after conversion (see docs/09-tex-section.md)
 LM_DEFAULT_GAIN = 1.0
 CHROMA_STRENGTH = 0.4                # how much of the lightmap colour reaches the vertices and the object lighting (1.0 = all of it)
@@ -165,6 +169,10 @@ class ShaderInfo:
     mask_bitmap: int | None = None       # its mask: the blue channel of this bitmap becomes the alpha of the base map in that pass
     texture2: int = 0xFFFF               # the second pass's texture: the base map with the mask as alpha (NO_TEXTURE: none)
     texture: int = NO_TEXTURE            # filled when the texture table is built
+    tint: tuple = ()                     # objtex.TINT: rgb multiplier baked into the colour map
+    reflect: tuple = ()                  # objtex.soso_reflect: (mask bitmap tag id, (r, g, b) added where the mask is 1): the environment reflection baked into the base map
+    blank: bool = False                  # a transparent shader whose map is not a 2D image (a cube map reflection): drawn as nothing, not as flat grey
+    product: tuple = ()                  # objtex.sotr_product: bitmap tag ids whose product is the texture (a multi-map transparent generic shader)
 
 
 def _read(region: bytes, off: int, fmt: str):
@@ -365,10 +373,10 @@ def resample_rgba(rgba: bytes, w: int, h: int, tw: int, th: int, alpha_weighted:
     return bytes(out)
 
 
-def target_size(w: int, h: int) -> tuple[int, int]:
-    """Half resolution, power of two, 8..256 per side."""
+def target_size(w: int, h: int, cap: int = MAX_TEX) -> tuple[int, int]:
+    """Half resolution, power of two, 8..cap (256) per side."""
     tw, th = max(MIN_TEX, w // 2), max(MIN_TEX, h // 2)
-    while tw > MAX_TEX or th > MAX_TEX:
+    while tw > cap or th > cap:
         tw, th = max(MIN_TEX, tw // 2), max(MIN_TEX, th // 2)
     return tw, th
 
@@ -691,7 +699,7 @@ def convert_texture(m: MapData, img: bitmaps.BitmapImage, source_id: int, klass_
     """Decode, shrink and quantise one bitmap image. ``klass_cap`` is the strongest alpha class the
     shader allows: CLASS_OPAQUE drops alpha, CLASS_PUNCH thresholds it, CLASS_BLEND keeps it; the
     class actually used is the lesser of that and what the pixels contain."""
-    tw, th = target_size(img.width, img.height)
+    tw, th = target_size(img.width, img.height, HERO_BITMAPS.get(m.by_id[source_id].path, MAX_TEX))
     level = 1 if img.mip_count >= 1 and img.width >> 1 >= tw and img.height >> 1 >= th else 0
     w, h, rgba = bitmaps.decode_level(img, m.pixels(img), level)
     if key_opaque and klass_cap == CLASS_PUNCH:
@@ -946,7 +954,7 @@ def parse_texs(data: bytes) -> TexsView:
             TEXTURE_FMT, data, to + i * TEXTURE_REC)
         bits = {PSMT8: 8, PSMT4: 4}.get(psm)
         if bits is None or not (1 <= mips <= MAX_MIPS) or w & (w - 1) or h & (h - 1) \
-                or not MIN_TEX <= w <= MAX_TEX or not MIN_TEX <= h <= MAX_TEX:
+                or not MIN_TEX <= w <= MAX_TEX_FORMAT or not MIN_TEX <= h <= MAX_TEX_FORMAT:
             raise TexError(f"texture {i}: bad format or size")
         if ce != (256 if psm == PSMT8 else 16) or co % 16 or po % 16 or co < do or co + ce * 4 > po \
                 or po + pb > len(data):
@@ -1037,6 +1045,65 @@ def klass_cap_for(info: ShaderInfo) -> int:
     return CLASS_BLEND if info.keep_alpha else CLASS_OPAQUE
 
 
+# ---- sotr shaders that multiply their maps ----------------------------------------------------
+STAGE_SIZE, STAGE_INPUT_A, STAGE_INPUT_B = 112, 0x3C, 0x40
+STAGE_MAP_INPUTS = (5, 6, 7, 8, 11, 12)           # map colour 0..3, scratch colour 0 / 1 (shader_transparent_generic_stage input enum)
+PRODUCT_KEY = 1 << 40
+
+
+def _u16(m: MapData, off: int) -> int:
+    return struct.unpack_from("<H", m.region, off)[0]
+
+
+def sotr_product(m: MapData, shader_id: int) -> tuple[int, ...]:
+    """Bitmaps of an additive `sotr` shader whose stages only multiply its maps with each other (the Autumn's engine exhaust: a radial glow, a
+    second glow and a blue band; the command displays' indicator lines): the Xbox shows their product. () for any other shader."""
+    e = m.by_id.get(shader_id)
+    if e is None or e.group != "sotr":
+        return ()
+    block = m.tag_off(e)
+    if _u16(m, block + TRANSPARENT_BLEND) != 3:
+        return ()
+    mcount, maddr = struct.unpack_from("<II", m.region, block + TRANSPARENT_MAPS)
+    scount, saddr = struct.unpack_from("<II", m.region, block + 0x60)
+    size, _us, _vs, ref = SOTR_MAP
+    if not 2 <= mcount <= 4 or scount != mcount - 1 or not 0 <= maddr - m.base < len(m.region) - mcount * size:
+        return ()
+    if not 0 <= saddr - m.base < len(m.region) - scount * STAGE_SIZE:
+        return ()
+    for i in range(scount):
+        so = saddr - m.base + i * STAGE_SIZE
+        if _u16(m, so + STAGE_INPUT_A) not in STAGE_MAP_INPUTS or _u16(m, so + STAGE_INPUT_B) not in STAGE_MAP_INPUTS:
+            return ()
+    ids = [_bitmap_ref(m, maddr - m.base, i * size + ref) for i in range(mcount)]
+    return tuple(ids) if all(i is not None for i in ids) else ()
+
+
+def blank_texture(source_id: int, additive: bool) -> Ps2Texture:
+    """8 x 8 texture that draws nothing: black for an additive shader, fully transparent for an alpha blended one."""
+    px = bytes([0, 0, 0, 255 if additive else 0] * 64)
+    return convert_rgba(source_id, px, 8, 8, CLASS_OPAQUE if additive else CLASS_BLEND, 4, 128)
+
+
+def multiply_normalise(layers: list[bytes]) -> bytes:
+    """Channel-wise product of equally sized RGBA layers, scaled so the brightest colour channel reaches 255; alpha 255."""
+    acc = list(layers[0])
+    for rgba in layers[1:]:
+        acc = [a * b // 255 if i & 3 != 3 else 255 for i, (a, b) in enumerate(zip(acc, rgba))]
+    peak = max((v for i, v in enumerate(acc) if i & 3 != 3), default=0) or 1
+    return bytes(min(255, v * 255 // peak) if i & 3 != 3 else 255 for i, v in enumerate(acc))
+
+
+def product_texture(m: MapData, imgs: list, source_id: int, tw: int, th: int, force_bits: int = 8) -> Ps2Texture:
+    """The product of several maps at tw x th, scaled so its brightest channel reaches 255 (an emissive glow: the Xbox's stage arithmetic is not
+    as dark as the product in 8 bits). Opaque: the shader is additive."""
+    layers = []
+    for img in imgs:
+        w, h, rgba = bitmaps.decode_level(img, m.pixels(img), 0)
+        layers.append(resample_rgba(rgba, w, h, tw, th, False))
+    return convert_rgba(source_id, multiply_normalise(layers), tw, th, CLASS_OPAQUE, force_bits, 128)
+
+
 def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_GAIN,
                 bsp_filter: list[int] | None = None) -> ConvertResult:
     t0 = time.time()
@@ -1053,14 +1120,29 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
             continue
         images = m.images(s.bitmap_id)
         if not images or not images[0].decodable:
+            if s.group in ("sotr", "schi") and s.blend in (BLEND_ADD, BLEND_ALPHA):
+                add = s.blend == BLEND_ADD
+                key = (PRODUCT_KEY * 2 + int(add), 0)
+                if key not in seen:
+                    seen[key] = len(textures)
+                    textures.append(blank_texture(s.bitmap_id, add))
+                s.texture, s.blank = seen[key], True
+                reasons["cube map reflection layer drawn as nothing"] += 1
+                continue
             s.bitmap_id, s.flags, s.note = None, s.flags | BF_UNTEXTURED, "base map is not a decodable 2D image"
             reasons[s.note] += 1
             continue
         cap = klass_cap_for(s)
-        key = (s.bitmap_id, cap)
+        prod = sotr_product(m, s.shader_id)
+        key = (s.bitmap_id, cap) if not prod else (PRODUCT_KEY | prod[-1], cap)
         if key not in seen:
             try:
-                tex = convert_texture(m, images[0], s.bitmap_id, cap, key_opaque=s.alpha_test)
+                if prod:
+                    pimgs = [m.images(b)[0] for b in prod]
+                    tw, th = target_size(max(i.width for i in pimgs), max(i.height for i in pimgs))
+                    tex = product_texture(m, pimgs, s.bitmap_id, max(tw, 32), max(th, 32))
+                else:
+                    tex = convert_texture(m, images[0], s.bitmap_id, cap, key_opaque=s.alpha_test)
             except bitmaps.BitmapError as exc:
                 s.bitmap_id, s.flags, s.note = None, s.flags | BF_UNTEXTURED, f"base map failed to decode: {exc}"
                 reasons["base map failed to decode"] += 1

@@ -75,7 +75,7 @@ static uint32_t play_hash(const cinedef_section *s, uint32_t rec)
 	cinedef_event ev;
 	int have = cinedef_next_event(st, bytes, &pos, &ev);
 	for (tick = 0; tick < r.length; tick++) {
-		while (have && next <= tick) {
+		while (have && next + ev.wait <= tick) {                   /* a wait is the delay before its event */
 			cinedef_apply_event(&c, &ev);
 			next += ev.wait;
 			have = cinedef_next_event(st, bytes, &pos, &ev);
@@ -167,7 +167,7 @@ static int check_synthetic(const uint8_t *raw, size_t rawn)
 	static const char *const names[4] = { "rec_a", "rec_b", "rec_c", "rec_a" };
 	static const uint32_t lens[4] = { 326, 11, 3, 326 };
 	static const uint8_t vers[4] = { 4, 3, 0, 4 };
-	static const uint32_t events[4] = { 6, 1, 2, 6 };
+	static const uint32_t events[4] = { 6, 2, 3, 6 };
 	for (i = 0; i < 4; i++) {
 		cinedef_rec r = cinedef_get_rec(&s, i);
 		CHECK(strcmp(r.name, names[i]) == 0 && r.length == lens[i] && r.ctl_version == vers[i] && r.events == events[i]);
@@ -194,7 +194,7 @@ static int check_synthetic(const uint8_t *raw, size_t rawn)
 	/* the events of the first recording */
 	static const uint8_t types[6] = { CINEDEF_EV_THROTTLE, CINEDEF_EV_AIM_SMALL, CINEDEF_EV_FLAGS, CINEDEF_EV_AIM_LARGE,
 	                                  CINEDEF_EV_WEAPON, CINEDEF_EV_WAIT };
-	static const uint32_t waits[6] = { 1, 0, 4, 300, 0, 20 };
+	static const uint32_t waits[6] = { 0, 1, 0, 4, 300, 20 };
 	const uint8_t *stream = cinedef_rec_stream(&s, 0, &bytes);
 	c = ra.init;
 	pos = 0;
@@ -213,7 +213,7 @@ static int check_synthetic(const uint8_t *raw, size_t rawn)
 	stream = cinedef_rec_stream(&s, 1, &bytes);
 	c = rb.init;
 	pos = 0;
-	CHECK(cinedef_next_event(stream, bytes, &pos, &ev) && ev.type == CINEDEF_EV_AIM_SMALL && ev.wait == 10);
+	CHECK(cinedef_next_event(stream, bytes, &pos, &ev) && ev.type == CINEDEF_EV_AIM_SMALL && ev.wait == 0);
 	cinedef_apply_event(&c, &ev);
 	CHECK(c.yaw == 999 && c.pitch == -500);
 	/* malformed events are refused, not read */

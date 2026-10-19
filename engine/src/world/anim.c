@@ -239,17 +239,35 @@ anim_info anim_get(const anim_section *s, const anim_graph *g, uint32_t k)
 	return in;
 }
 
+static int lc(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+static int eq_nocase(const char *a, const char *b)
+{
+	while (*a && *b && lc((unsigned char)*a) == lc((unsigned char)*b)) { a++; b++; }
+	return !*a && !*b;
+}
+static int has_nocase(const char *hay, const char *needle)
+{
+	size_t n = strlen(needle), h = strlen(hay), i, j;
+	if (n > h) return 0;
+	for (i = 0; i + n <= h; i++) {
+		for (j = 0; j < n && lc((unsigned char)hay[i + j]) == lc((unsigned char)needle[j]); j++) {}
+		if (j == n) return 1;
+	}
+	return 0;
+}
+
+/* Scripts name animations in a different case than the tags ("ct-driver unarmed idle" vs "CT-driver unarmed idle"): exact name first, then a substring, both ignoring case. */
 int anim_find_name(const anim_section *s, const anim_graph *g, const char *token)
 {
 	uint32_t k;
 	if (!g || !token) return -1;
 	for (k = 0; k < g->anim_count; k++) {
 		const uint8_t *a = anim_rec(s, g, k);
-		if (a && strcmp((const char *)a + A_NAME, token) == 0) return (int)k;
+		if (a && eq_nocase((const char *)a + A_NAME, token)) return (int)k;
 	}
 	for (k = 0; k < g->anim_count; k++) {
 		const uint8_t *a = anim_rec(s, g, k);
-		if (a && strstr((const char *)a + A_NAME, token)) return (int)k;
+		if (a && has_nocase((const char *)a + A_NAME, token)) return (int)k;
 	}
 	return -1;
 }
@@ -479,6 +497,18 @@ void anim_sample(const anim_section *s, const anim_graph *g, uint32_t k, float f
 	}
 	for (; n < nodes; n++) memcpy(&out->node[n], rest + 32u * n, 32);
 	out->count = (uint16_t)nodes;
+}
+
+unsigned anim_overlay_modes(const anim_section *s, const anim_graph *g, uint32_t k, uint8_t out[ANIM_MAX_NODES])
+{
+	const uint8_t *a = anim_rec(s, g, k), *b;
+	uint32_t nn, n;
+	if (!a) return 0;
+	nn = rd16(a + A_NODES);
+	if (nn > ANIM_MAX_NODES) nn = ANIM_MAX_NODES;
+	b = s->pool + rd32(a + A_DATA_OFF);
+	for (n = 0; n < nn; n++) out[n] = (uint8_t)(((b[n] & 3u) ? ANIM_OV_ROT : 0u) | ((b[n] >> 2) & 3u ? ANIM_OV_TRANS : 0u));
+	return nn;
 }
 
 void anim_blend(const anim_pose *a, const anim_pose *b, float t, anim_pose *out)

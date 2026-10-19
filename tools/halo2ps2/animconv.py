@@ -423,6 +423,8 @@ class Decoded:
     trans: list = field(default_factory=list)
     scale: list = field(default_factory=list)
     frame_info: list = field(default_factory=list)
+    driven_rot: frozenset = frozenset()      # nodes whose rotation / translation channel the tag flags as animated (what an overlay animation drives)
+    driven_trans: frozenset = frozenset()
 
 
 def _bits(mask: int, nn: int) -> list[int]:
@@ -448,6 +450,7 @@ def decode(a: Anim) -> Decoded:
         raise ConvertError(f"{a.name}: frame count {fc}")
     d = Decoded(nn, fc, [None] * nn, [None] * nn, [None] * nn)
     rotn, trn, scn = _bits(a.rot_flags, nn), _bits(a.trans_flags, nn), _bits(a.scale_flags, nn)
+    d.driven_rot, d.driven_trans = frozenset(rotn), frozenset(trn)
     if a.flags & F_COMPRESSED:
         return _decode_compressed(a, d, rotn, trn, scn)
     rs, ts, ss = set(rotn), set(trn), set(scn)
@@ -793,10 +796,23 @@ class ErrStats:
         self.trans_n += other.trans_n
 
 
-def encode_animation(d: Decoded, rest: RestPose) -> tuple[bytes, ErrStats]:
+FACE_OVERLAYS = ("stand emotions", "stand talk")
+
+
+def is_face_overlay(a: Anim) -> bool:
+    """The two overlays a talking unit's face plays (`unit_set_emotion` picks a frame of the first, the sound's mouth data scales the second)."""
+    return a.type == 1 and a.name.strip().lower() in FACE_OVERLAYS
+
+
+def encode_animation(d: Decoded, rest: RestPose, overlay: bool = False) -> tuple[bytes, ErrStats]:
     """The data blob of one animation (see the module docstring). Static values equal to the graph's rest
     pose become mode 0; the error numbers are the keyed tracks' maxima against the source frames (the
-    complete figures come from measure_errors)."""
+    complete figures come from measure_errors).
+
+    `overlay` (an animation of type 1): the tag stores a full pose, but only the channels its flags mark as animated are
+    the overlay's (a face overlay moves the eyelids and the jaw, its other channels are the authoring pose). Those channels
+    are written whatever their value (a single frame is a static channel, never the rest shortcut) and every other channel
+    is mode 0 ("not driven"); anim_overlay_modes() in the engine reads the modes back as the mask."""
     nn, fc = d.nn, d.fc
     modes = bytearray(nn)
     parts: list[bytes] = []
@@ -805,13 +821,15 @@ def encode_animation(d: Decoded, rest: RestPose) -> tuple[bytes, ErrStats]:
         # rotation
         r = d.rot[n]
         tr = encode_rot_track(r, fc) if len(r) > 1 else None
-        if len(r) > 1 and tr is not None:
+        if overlay and n not in d.driven_rot:
+            pass
+        elif len(r) > 1 and tr is not None:
             modes[n] |= M_ANIMATED
             parts.append(tr[0])
             st.rot_max = max(st.rot_max, tr[1])
         else:
             q = r[0]
-            if n < len(rest.rot) and qangle(q, rest.rot[n]) <= ROT_STATIC_DEG:
+            if not overlay and n < len(rest.rot) and qangle(q, rest.rot[n]) <= ROT_STATIC_DEG:
                 pass
             else:
                 modes[n] |= M_STATIC
@@ -819,13 +837,15 @@ def encode_animation(d: Decoded, rest: RestPose) -> tuple[bytes, ErrStats]:
         # translation
         t = d.trans[n]
         tt = encode_trans_track(t, fc) if len(t) > 1 else None
-        if len(t) > 1 and tt is not None:
+        if overlay and n not in d.driven_trans:
+            pass
+        elif len(t) > 1 and tt is not None:
             modes[n] |= M_ANIMATED << 2
             parts.append(tt[0])
             st.trans_max = max(st.trans_max, tt[1] * WU_MM)
         else:
             v = t[0]
-            if n < len(rest.trans) and _dist3(v, rest.trans[n]) <= TRANS_STATIC:
+            if not overlay and n < len(rest.trans) and _dist3(v, rest.trans[n]) <= TRANS_STATIC:
                 pass
             else:
                 modes[n] |= M_STATIC << 2
@@ -833,7 +853,9 @@ def encode_animation(d: Decoded, rest: RestPose) -> tuple[bytes, ErrStats]:
         # scale
         s = d.scale[n]
         ts = encode_scale_track(s, fc) if len(s) > 1 else None
-        if len(s) > 1 and ts is not None:
+        if overlay:
+            pass
+        elif len(s) > 1 and ts is not None:
             modes[n] |= M_ANIMATED << 4
             parts.append(ts[0])
             st.scale_max = max(st.scale_max, ts[1])
@@ -974,7 +996,7 @@ def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | Non
                 blob, est = bytes(_pad4(a.node_count)), ErrStats()      # every channel mode 0: the graph's rest pose
             else:
                 d = decode(a)
-                blob, est = encode_animation(d, g.rest)
+                blob, est = encode_animation(d, g.rest, is_face_overlay(a))
             if d.nn > g.node_count:
                 raise ConvertError(f"{g.path}: animation {a.name!r} has {d.nn} nodes, graph {g.node_count}")
             stats.errors.add(est)

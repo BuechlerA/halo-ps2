@@ -30,10 +30,16 @@ int main(void)
 	tc_init(&t, 16, 4, 100, 3 * TC_PAGE_BYTES);
 
 	tc_begin_frame(&t, 10);
+	CHECK(tc_find(&t, 1) == NULL && tc_find(&t, 99) == NULL && tc_find(&t, 5000) == NULL);
 	CHECK(tc_acquire(&t, 1, 4, TC_PAGE_BYTES, &e) == TC_UPLOAD && e->first_page == 0);
 	CHECK(tc_acquire(&t, 2, 4, TC_PAGE_BYTES, &e) == TC_UPLOAD && e->first_page == 4);
 	CHECK(tc_acquire(&t, 1, 4, TC_PAGE_BYTES, &e) == TC_HIT && e->first_page == 0);
 	CHECK(t.hits == 1 && t.misses == 2);
+	{                                                           /* tc_find: no touch, no statistics */
+		uint32_t lu = t.entry[t.map[2] - 1].last_used, h0 = t.hits, m0 = t.misses;
+		CHECK(tc_find(&t, 2) != NULL && tc_find(&t, 2)->first_page == 4 && tc_find(&t, 3) == NULL);
+		CHECK(t.hits == h0 && t.misses == m0 && t.entry[t.map[2] - 1].last_used == lu);
+	}
 	/* Budget: 2 pages already uploaded; one more fits exactly, the next is deferred. */
 	CHECK(tc_acquire(&t, 3, 2, TC_PAGE_BYTES, &e) == TC_UPLOAD);
 	CHECK(tc_acquire(&t, 4, 2, TC_PAGE_BYTES, &e) == TC_DEFER && t.deferred == 1);
