@@ -636,8 +636,8 @@ engine bells now match the video's bloom); steam puffs expand 2.2x and rise; the
 panel 0.19 wu in front of the briefing camera, so the camera looks through it. Two things hid it: (a) the VU1 object program drops every triangle with a vertex in front of the near plane or beyond the
 guard band, and the panel sits at w = 0.05 (our cinematic near floor) with corners far outside: `cinenear 0.03` (cfg; set in the a10 configs) lowers the floor and `modelconv.SUBDIVIDE_MODELS` cuts the
 panel's triangles into pieces of at most 0.2 wu; (b) the blended pass ran out of batch budget (it now has its own extra quarter). The overlay now shows the numbers, the radar and the trajectory lines over
-Keyes. It is green where the video is cyan-white (the converted display maps are green; the TINT table entry for these shaders does not take effect, cause unknown) and the video's diagonal beams are thinner.
-Still different: the overlay's cyan colour (green here), real per-pixel wall lighting by dynamic lights, steam
+Keyes. The converted display maps are green: a TINT entry with a fourth value copies green into blue (`objtex.TINT`, cyan radar); the video is whiter and its diagonal beams thinner and brighter (the `trajectory` parts).
+Still different: the overlay's whiteness and diagonal beam brightness, real per-pixel wall lighting by dynamic lights, steam
 wind (the particle system physics constants are not decoded), and the exact purple of Cortana (by eye).
 
 ## Open decisions

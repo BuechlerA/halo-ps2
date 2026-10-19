@@ -284,7 +284,7 @@ BITMAP_OVERRIDE = {"characters\\cortana\\shaders\\cortana_body": "characters\\co
 TINT = {"characters\\cortana\\shaders\\cortana_body": (2.4, 1.5, 2.0), "characters\\cortana\\shaders\\cortana_hair": (2.2, 1.6, 2.0)}
 # The command display's hologram parts (grid, numbers, radar, trajectory lines): the Xbox shows them cyan-white, their converted maps are green.
 for _n in ("gas giant grid top left", "no 1s", "indicators", "poa peremeter grid", "halo grid", "poa", "trajectory a", "trajectory b", "trajectory c", "trajectory d", "trajectory e"):
-    TINT["levels\\a10\\devices\\command display\\shaders\\" + _n] = (0.55, 1.0, 1.0)
+    TINT["levels\\a10\\devices\\command display\\shaders\\" + _n] = (0.55, 1.0, 1.0, 0.9)      # 4th value: blue = max(blue, 0.9 x green) (cyan from green)
 SKY_GAIN = {"sky\\sky_x10\\bitmaps\\space": 2.5}
 
 
@@ -313,7 +313,11 @@ def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_
         rgba = bytes(rgba)
     rgba = texconv.resample_rgba(rgba, w, h, tw, th, klass != texconv.CLASS_OPAQUE)
     if tint:
-        rgba = bytes(min(255, int(v * tint[i & 3] + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
+        rgba = bytearray(min(255, int(v * tint[i & 3] + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
+        if len(tint) > 3:
+            for q in range(0, len(rgba), 4):
+                rgba[q + 2] = max(rgba[q + 2], int(rgba[q + 1] * tint[3]))
+        rgba = bytes(rgba)
     gain = SKY_GAIN.get(m.by_id[source_id].path)
     if gain:
         rgba = bytes(min(255, int(v * gain + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
@@ -406,7 +410,7 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             else:
                 s.reflect = ()
         if s.tint and not s.product and not s.reflect:
-            plan.setdefault((s.bitmap_id, cap, TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100)), (images[0], cap))
+            plan.setdefault((s.bitmap_id, cap, TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100) | (len(s.tint) > 3) << 30), (images[0], cap))
             used_plain = False
         if used_plain:
             plan.setdefault((s.bitmap_id, cap, 0), (images[0], cap))
@@ -430,7 +434,7 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             continue
         if s.bitmap_id is None:
             continue
-        key = (s.bitmap_id, texconv.klass_cap_for(s), PRODUCT_KEY | s.product[-1] if s.product else REFLECT_KEY | s.reflect[0] if s.reflect else TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100) if s.tint else 0)
+        key = (s.bitmap_id, texconv.klass_cap_for(s), PRODUCT_KEY | s.product[-1] if s.product else REFLECT_KEY | s.reflect[0] if s.reflect else TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100) | (len(s.tint) > 3) << 30 if s.tint else 0)
         if key not in seen:
             img, cap = plan[key]
             try:
