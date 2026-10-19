@@ -370,8 +370,10 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 	unsigned r, p, bi, t, k, j;
 	u32 t0 = timer_cycles();
 	int sky = o->sky_model;
+	float sky_yaw = 0.0f;
 	o->sky_ms = 0.0f;
 	if (rc->sky_index == 1 && o->sky_model2 >= 0) sky = o->sky_model2;       /* palette entry 1: a10's exterior (the intro's space shots) */
+	if (sky == o->sky_model) sky_yaw = o->sky_yaw0;      /* palette entry 0 (cfg skyyaw): a10's windows need a quarter turn, see ADR-063 */
 	if (sky < 0 || !ms || !rc->sky_visible) return;                 /* no visible cluster sees the sky: nothing to draw */
 	mi = model_get(ms, (uint32_t)sky);
 	model_select_permutations(ms, &mi, NULL, perm);
@@ -399,10 +401,10 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 			 * the bind-pose inverse. a10's sky node is yawed by 90 degrees by default, which turns the dome, planet and galaxy by -90: only then
 			 * the intro's planet stands left of the Autumn as on the Xbox. */
 			node_bind_inverse(ms, &mi, part.rigid_node, &nw);
-			if (o->sky_rot[0] != 0.0f || o->sky_rot[1] != 0.0f || o->sky_rot[2] != 0.0f) {
+			if (o->sky_rot[0] != 0.0f || o->sky_rot[1] != 0.0f || o->sky_rot[2] != 0.0f || sky_yaw != 0.0f) {
 				static const float zero[3] = { 0.0f, 0.0f, 0.0f };
 				mat4 er;
-				mat4_from_ypr(&er, o->sky_rot[0], o->sky_rot[1], o->sky_rot[2], zero);
+				mat4_from_ypr(&er, o->sky_rot[0] + sky_yaw, o->sky_rot[1], o->sky_rot[2], zero);
 				mat4_mul(&nw, &nw, &er);
 			}
 			if (o->textures && o->textures->binding && o->textures->binding(o->textures->user, part.shader_id, &mb) != 0) mb.tex = -1;

@@ -511,6 +511,16 @@ def test_real_map() -> None:
     assert tot > 1000 and bad <= tot * 0.01, (bad, tot)
 
 
+def test_product() -> None:
+    white, blue = bytes([255, 255, 255, 255] * 4), bytes([0, 0, 128, 255] * 4)
+    out = tc.multiply_normalise([white, white, blue])
+    assert out == bytes([0, 0, 255, 255] * 4), out                 # blue stays blue and is brought to full range
+    half = bytes([128, 128, 128, 7] * 2)
+    out = tc.multiply_normalise([half, half])
+    assert out[:4] == bytes([255, 255, 255, 255]) and len(out) == 8   # 128 * 128 / 255 = 64 -> peak 255, alpha forced opaque
+    assert tc.multiply_normalise([bytes(8)]) == bytes([0, 0, 0, 255] * 2)    # black stays black without dividing by zero
+
+
 def main() -> None:
     test_clut()
     test_sizes()
@@ -522,6 +532,7 @@ def main() -> None:
     test_vertex_chroma()
     test_sections()
     test_shaders()
+    test_product()
     test_scan_bsp()
     test_real_map()
     print("ok")

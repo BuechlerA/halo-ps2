@@ -154,6 +154,7 @@ def convert_cc_texture(m: texconv.MapData, base: bitmaps.BitmapImage, mask: bitm
 def resolve_object_shader(m: texconv.MapData, shader_id: int) -> texconv.ShaderInfo:
     """Base map, blend state and uv scale of a model part's shader (and its colour change, if any). Never raises."""
     info = _resolve_object_shader(m, shader_id)
+    info.product = texconv.sotr_product(m, shader_id)
     got = soso_change(m, shader_id)
     if got is not None and info.bitmap_id is not None:
         info.change_source, info.mask_bitmap = got
@@ -226,6 +227,14 @@ def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_
     return tex
 
 
+PRODUCT_KEY = texconv.PRODUCT_KEY
+
+
+def convert_product_texture(m: texconv.MapData, imgs: list[bitmaps.BitmapImage], source_id: int, max_dim: int) -> texconv.Ps2Texture:
+    tw, th = target_size(max(i.width for i in imgs), max(i.height for i in imgs), max_dim)
+    return texconv.product_texture(m, imgs, source_id, max(tw, 32), max(th, 32))
+
+
 def estimate_bytes(sizes: list[tuple[int, int]], max_dim: int) -> int:
     """Upper bound of the pixel + CLUT bytes of textures whose source sizes are `sizes`."""
     total = 0
@@ -274,9 +283,18 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             continue
         cap = texconv.klass_cap_for(s)
         plan.setdefault((s.bitmap_id, cap, 0), (images[0], cap))
+        if s.product:
+            try:
+                pimgs = [m.images(b)[0] for b in s.product]
+            except (bitmaps.BitmapError, IndexError):
+                pimgs = []
+            if pimgs and all(i.decodable for i in pimgs):
+                plan.setdefault((s.bitmap_id, cap, PRODUCT_KEY | s.product[-1]), (pimgs, cap))
+            else:
+                s.product = ()
         if s.mask_bitmap:
             plan.setdefault((s.bitmap_id, -1, s.mask_bitmap), (images[0], cap))
-    sizes = [(img.width, img.height) for img, _ in plan.values()]
+    sizes = [(img.width, img.height) for img, _ in ([(i if not isinstance(i, list) else max(i, key=lambda x: x.width), c) for i, c in plan.values()])]
     dim = max_dim
     while dim > MIN_MAX_DIM and estimate_bytes(sizes, dim) > budget:
         dim //= 2
@@ -286,11 +304,11 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
         s = shaders[sid]
         if s.bitmap_id is None:
             continue
-        key = (s.bitmap_id, texconv.klass_cap_for(s), 0)
+        key = (s.bitmap_id, texconv.klass_cap_for(s), PRODUCT_KEY | s.product[-1] if s.product else 0)
         if key not in seen:
             img, cap = plan[key]
             try:
-                tex = convert_object_texture(m, img, s.bitmap_id, cap, dim)
+                tex = convert_product_texture(m, img, s.bitmap_id, dim) if s.product else convert_object_texture(m, img, s.bitmap_id, cap, dim)
             except bitmaps.BitmapError as exc:
                 s.bitmap_id, s.flags, s.note = None, s.flags | texconv.BF_UNTEXTURED, f"base map failed to decode: {exc}"
                 reasons["base map failed to decode"] = reasons.get("base map failed to decode", 0) + 1
