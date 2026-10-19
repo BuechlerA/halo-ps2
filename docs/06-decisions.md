@@ -571,5 +571,23 @@ spawned as objects attached to the hand marker (`OBJ_F_HELD`, never picked up).
 **Consequences**: packs need no rebuild for this; `cine_cam_set*` callers get the new motion for free. Remaining differences from the intro comparison are listed in ADR-061/062 (hangar holes from the EE clip budget,
 sky/galaxy brightness, planet crescent, exhaust glow, screen filters, marine armour colour, first-person hands, close-up clipping). UNVERIFIED: the field-of-view script command still uses a linear ramp.
 
+## ADR-064 EE clip culling and priority, sky textures at full size, interior sky yaw, multiply-only transparent shaders
+**Decision**: (1) The EE clipper (`gather_clipped`) no longer spends its budget on geometry that cannot show: a batch whose box lies wholly outside one plane of the guard band
+(near, left, right, top, bottom) is dropped (`batch_unsafe` returns 2), a triangle wholly outside one plane is dropped before its attributes are built (`clip_outside`, host-tested against
+`clip_polygon`), z is computed only for triangles that really need clipping, and the batches are visited by the distance to the nearest point of their box instead of to their centre (a hangar
+floor triangle under the camera is "far" by its centre). (2) Sky bitmaps (path `sky\...`) are converted at their full size (up to 256) with a 256 colour palette (they are dark gradients that 16 colours
+band into blocks), and the dome's nebula bitmap gets a gain of 2.5 (`objtex.SKY_GAIN`, measured against the Xbox intro: a 1x additive layer shows about 2.5 to 3 times brighter there; the Xbox path is not
+decoded). `scripts/paths/a10mission.cfg` sets `sky 0 0 0` (the default fill colour 20 24 40 added a blue haze to every additive sky) and `skyyaw 90` (the palette-0 sky, the windows of the ship's interior,
+is turned a quarter turn more than the exterior dome: the planet fills the bridge window beside Keyes as on the Xbox). (3) An additive `sotr` shader whose stages only multiply its maps with each other
+(`texconv.sotr_product`: the Autumn's engine exhaust = glow x glow x blue band, the bridge's command-display lines) is baked as the product of its maps, scaled to full range (`texconv.product_texture`, objects
+and BSP). Debug keys: `hideobj N`, `skyhide mask` (bit r: region r; bit 8+p: part p; bit 30: log the parts).
+**Why**: the hangar floor lost its far half (a navy hole under the marines) because 160 of 215 batches that need clipping were skipped after the 6 ms budget; the scan costs the same in PCSX2 at
+speed 1 and 8 (the figures are the emulated EE's own cycle counter), so this is a real shortfall, not a measuring artefact. The intro's first 100 s are space shots: a flat blue background with blocky patches
+against the Xbox's smooth magenta nebula and a bright galaxy band.
+**Consequences**: `a10.obj.hp2` and `a10.tex.hp2` must be rebuilt (`scripts/build-world.sh a10`); other maps gain the same sky texture quality and the clip savings; the clip budget still skips
+the farthest batches in the busiest hangar frames (about 100 of 209 at tick 4980) but the skipped ones are the small far ones. Not done (found by the same comparison, unchanged): Cortana's hologram colour, marine armour hue
+and forearm skin (the Xbox adds an environment reflection we do not draw), the random pick of crew jumpsuit colours (the Xbox's random numbers are not reproduced), the bloom of the engine exhaust, the glow of the
+planet at the bridge window, the bridge's cool colour cast.
+
 ## Open decisions
 None.
