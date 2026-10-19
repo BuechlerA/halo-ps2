@@ -188,6 +188,7 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 	const model_section *ms = o->world.models;
 	model_info mi = model_get(ms, (uint32_t)model);
 	unsigned i, r, p, bi, emitted = 0;
+	int unlit = 0;
 	if (nodes->count == 0 || budget == 0) return 0;
 	for (i = 0; i < nodes->count; i++) skel_palette_entry(s_pal[i], &nodes->skin[i], rc->clip, light->sun_dir);
 	s_pal_serial++;                                   /* new palette contents: the VU1 copy is stale */
@@ -205,7 +206,13 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 			if (o->textures && o->textures->binding && o->textures->binding(o->textures->user, part.shader_id, &mb) != 0) mb.tex = -1;
 			blend = (mb.flags & MAT_BLEND) != 0 || (part.flags & 2);
 			atest = (mb.flags & MAT_ALPHA_TEST) != 0 || (part.flags & 1);
-			if ((pass == 0 && blend && !atest) || (pass == 1 && !(blend && !atest))) continue;     /* pass 0: opaque and alpha tested parts, pass 1: blended parts (no Z write, far to near) */
+			if ((pass == 0 && blend && !atest) || (pass == 1 && !(blend && !atest))) continue;
+			if (mb.add != unlit && o->unlit_add) {              /* an additive part (a hologram, a glow) is self lit: the Xbox does not light it, so it gets full white vertex light, the lit parts their light back */
+				scen_light full = *light;
+				if (mb.add) { full.ambient[0] = full.ambient[1] = full.ambient[2] = 128; full.sun[0] = full.sun[1] = full.sun[2] = 0; emit_light(rc->chain, &full); }
+				else emit_light(rc->chain, light);
+				unlit = mb.add;
+			}     /* pass 0: opaque and alpha tested parts, pass 1: blended parts (no Z write, far to near) */
 			if (rc->opt->textures && mb.tex >= 0 && o->textures && o->textures->texture) {
 				tex_image_t img;
 				if (o->textures->texture(o->textures->user, mb.tex, &img) == 0) tex0 = rb_object_tex0((unsigned)mb.tex, &img, 0);
@@ -259,6 +266,7 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 			}
 		}
 	}
+	if (unlit) emit_light(rc->chain, light);
 	o->st_batches += emitted;
 	return emitted;
 }

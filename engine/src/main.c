@@ -377,6 +377,7 @@ int main(int argc, char *argv[])
 			s_objr.sky_model = -1;
 			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
+			s_objr.unlit_add = (int)cfg_int(&s_cfg, "unlitadd", 1);
 			memset(s_objr.cc_perm, 0xFF, sizeof s_objr.cc_perm);
 			{                                                      /* cfg ccperm "508:3 223:5": colour change permutations read off the Xbox video */
 				const char *cp = cfg_str(&s_cfg, "ccperm", "");

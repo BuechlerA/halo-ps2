@@ -698,5 +698,11 @@ the Xbox, and that alone is too faint here (coverage 0.16 .. 0.22 against 0.52 .
 (bright pixels left of the pod) is dominated by the hangar behind it (0.16 even without steam), so the comparison is by eye.
 **Consequence**: the steam multipliers stay measured, but they are now known to stand for two specific unknown units (sprite size unit, framebuffer alpha scale), not for missing tag data.
 
+## ADR-072 Additive object parts are not lit by the object lighting
+**Decision**: a part drawn with the additive blend (`mat_binding_t.add`: holograms, glows, the command display, flames, exhaust) takes full white vertex light (ambient 128 = 1.0, sun 0) instead of the object's cluster lighting
+(`obj_render.c draw_model`, cfg `unlitadd`, default 1); lit parts get their light back.
+**Why**: an additive shader is self lit on the Xbox. Cortana's measured colour at tick 3202 was 12 % / 19 % dim in red / blue (ADR-070), which I had put down to an undecoded framebuffer step; it was our own lighting multiplying her
+(ambient < 1 in that corridor). Unlit: (161, 119, 206) against the video's (168, 109, 216), within 6 %, no constant fitted. The same reasoning applies to the steam alpha scale (not to the sprites, which are not lit): that one stays fitted.
+
 ## Open decisions
 None.

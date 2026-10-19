@@ -32,6 +32,7 @@ typedef struct {
 	float                 sky_planet_gain;                   /* colour gain (1 .. 1.99) of the sky's non-additive parts (the planet): cfg skyplanet */
 	uint8_t               cc_perm[1280];                      /* per object index: the permutation of change colour a (0xFF = pick from the seed): cfg ccperm "obj:perm ..." */
 	const fx_t            *fx;                               /* dynamic lights of attached fixtures (alert lights, flames): objects near them take their colour */
+	int                   unlit_add;                          /* additive parts ignore the object lighting (cfg unlitadd, default 1) */
 	unsigned              sky_hide;                           /* debug (cfg skyhide): bit r hides region r of the sky model */
 	/* statistics of the last pass, copied into render_stats by the caller */
 	float                 st_ms;         /* EE time of the pass */
