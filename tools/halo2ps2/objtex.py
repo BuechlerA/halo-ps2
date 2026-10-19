@@ -282,6 +282,9 @@ def target_size(w: int, h: int, max_dim: int) -> tuple[int, int]:
 BITMAP_OVERRIDE = {"characters\\cortana\\shaders\\cortana_body": "characters\\cortana\\bitmaps\\cortana_body",
                    "characters\\cortana\\shaders\\cortana_hair": "characters\\cortana\\bitmaps\\cortana_hair"}
 TINT = {"characters\\cortana\\shaders\\cortana_body": (2.4, 1.5, 2.0), "characters\\cortana\\shaders\\cortana_hair": (2.2, 1.6, 2.0)}
+# The command display's hologram parts (grid, numbers, radar, trajectory lines): the Xbox shows them cyan-white, their converted maps are green.
+for _n in ("gas giant grid top left", "no 1s", "indicators", "poa peremeter grid", "halo grid", "poa", "trajectory a", "trajectory b", "trajectory c", "trajectory d", "trajectory e"):
+    TINT["levels\\a10\\devices\\command display\\shaders\\" + _n] = (0.55, 1.0, 1.0)
 SKY_GAIN = {"sky\\sky_x10\\bitmaps\\space": 2.5}
 
 

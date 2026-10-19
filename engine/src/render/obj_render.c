@@ -282,7 +282,7 @@ static void light_at(const obj_render_t *o, const float pos[3], scen_light *l)
 			{                                                 /* weight of the light's own (normalised) colour in what lights the object near it: a pulsing alarm lamp averages about 0.4 of its colour, a hologram projector is steady */
 				float red = (dl[i].rgb[0] - 0.5f * (dl[i].rgb[1] + dl[i].rgb[2])) / mx;
 				if (red < 0.0f) red = 0.0f;
-				a *= 0.9f - 0.55f * red;
+				a *= 0.6f - 0.3f * red;
 			}
 			for (k = 0; k < 3; k++) {
 				float c = dl[i].rgb[k] / mx * 255.0f;
@@ -359,7 +359,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 				light_at(o, c, &light);
 				if (!pass) o->st_visible++;
 				cc_pick(o, ob->model, (uint32_t)cand[kk] * 2654435761u + (uint32_t)ob->def * 40503u, &cc, (int)cand[kk]);
-				em = draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, budget > o->st_batches ? budget - o->st_batches : 0, &cc, pass);
+				em = draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, (pass ? budget + budget / 4u : budget) > o->st_batches ? (pass ? budget + budget / 4u : budget) - o->st_batches : 0, &cc, pass);       /* the blended pass has its own quarter on top: glass and holograms are drawn last and must not starve */
 				if (o->dbg_obj == (int)cand[kk]) printf("[dbg] obj %u pass %d lod %u emitted %u budget %u used %u\n", (unsigned)cand[kk], pass, lod, em, budget, o->st_batches);
 				if (em == 0 && !pass && o->st_batches >= budget) { o->st_skipped++; }
 			}

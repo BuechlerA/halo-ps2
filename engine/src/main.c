@@ -74,6 +74,7 @@ static int        s_stream_on;
 static int        s_paused;
 static uint32_t   s_unit_hud;
 static fx_render_t s_fxr;
+static float cine_near_floor = CAMERA_NEAR_DEFAULT;     /* cfg cinenear: the lowest near plane of a cinematic camera */
 
 static void overlay_pass(void *u, struct render_ctx *rc)
 {
@@ -116,6 +117,7 @@ static void apply_options(void)
 	if (cfg_floats(&s_cfg, "onlybatch", f, 2) >= 1) { o.only_batch = (int)f[0]; o.only_batch_hi = cfg_floats(&s_cfg, "onlybatch", f, 2) == 2 ? (int)f[1] : (int)f[0]; }
 	if (cfg_floats(&s_cfg, "clipbudget", f, 1) == 1) o.clip_budget_ms = f[0];
 	o.clip_debug = (int)cfg_int(&s_cfg, "clipdebug", 0);
+	{ float nf; cine_near_floor = cfg_floats(&s_cfg, "cinenear", &nf, 1) == 1 ? nf : CAMERA_NEAR_DEFAULT; }
 	o.cull_sign = (int)cfg_int(&s_cfg, "cullsign", 1);      // single-sided surfaces are not drawn from behind (the camera inside a beam saw its inside)
 	if (cfg_floats(&s_cfg, "fog", f, 6) >= 1 && f[0] != 0.0f) {
 		o.fog = 1;
@@ -664,7 +666,7 @@ int main(int argc, char *argv[])
 						s_cam.yaw = y; s_cam.pitch = pi; s_cam.roll = ro; } }
 					/* The intro asks for near 0.01 (and 0.0625 -> 0.01 in the bridge); the VU1 object program drops every object below about 0.04 (a
 					 * captain 0.27 away vanishes, found against the Xbox intro), so the script's value is raised to the engine's default. */
-					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip > CAMERA_NEAR_DEFAULT ? cs->cam.near_clip : CAMERA_NEAR_DEFAULT;
+					if (cs->cam.near_clip > 0.0f) s_cam.near_z = cs->cam.near_clip > cine_near_floor ? cs->cam.near_clip : cine_near_floor;
 				}
 			}
 		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
