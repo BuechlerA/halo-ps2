@@ -604,5 +604,22 @@ instead of flat white. (5) A scripted animation moves its unit by the animation'
 non-unit objects (not done). Still different in the intro comparison: crew jumpsuit colours (random on the Xbox), the red alert lighting of the bridge (dynamic lights are not modelled), the
 hologram's cyan overlay on Keyes, steam and engine particle systems and light attachments (object attachments are not created), planet glow at the windows.
 
+## ADR-066 Object attachments (FXAT): particle systems and looping effects, planet gain, colour change picks
+**Decision**: (1) `fxconv.py` reads every object tag's attachments block (+0x140, 72 B rows: tag reference, marker name; verified on a10 a30 b30: all 258 references resolve to a tag of
+their group) and writes the particle-system and effect attachments as an `FXAT` section next to `FXD0` / `FXTX` (rows of object tag, attached tag, kind, marker; sorted by object tag;
+`engine/src/sim/fx.c fx_set_attachments`, host test `test_fxat.c`). The effects an attachment names, and the particle systems with their physics and bitmaps, join the closure. (2) The runtime
+(`hs_host_obj.c update_object_fx`, `fx_attach_update`) runs one instance per (object, row) for every visible object whose tag has rows, at the row's marker (the object's origin when the
+name is empty), along its forward axis: a particle system walks its types' states (ON / OFF ...) by their duration bounds and emits `creation_rate` particles a second; a looping effect fires
+every 2.5 s. A particle is a billboard that lives the sum of the transition times of its particle states but the last, grows from the first state's scale to the middle one's (x 80 world units
+per tag unit, measured on the cryo steam), takes the middle state's colours and drifts along the marker with a fixed jet speed. APPROXIMATE: the tags' physics, constants and multipliers are not
+simulated (docs/22 lists them as unverified). (3) `anim_find_name` ignores case (scripts say "ct-driver unarmed idle", the tag "CT-driver unarmed idle": the Chief stood in his cryo tube's
+T-pose-less default instead of sitting), and a looping seat idle ("...driver... idle") custom animation is held until the script changes it. (4) The sky's non-additive parts (the planet) can
+take a colour gain (`skyplanet`, 1.7 in the a10 configs: the planet at the bridge windows is washed out on the Xbox). (5) `ccperm "obj:perm ..."` picks colour change a's permutation per object index;
+the a10 configs set the bridge crew's from the Xbox video (the Xbox draws its own random numbers).
+**Why**: steam at the cryo tubes, exhaust and smoke were missing (the engine created particle systems nowhere), and the Chief in the pod stood upright.
+**Consequences**: rebuild `a10.fx.hp2` (`scripts/build-world.sh a10`; the pack loads without FXAT). The ccperm picks are per object index of a10's placements: they are valid for that map only.
+Still different: the red alert lighting (dynamic lights; the `ligh` attachments are listed but not drawn), Keyes' cyan hologram overlay and Cortana's hologram colour (multi-stage `sotr`
+combiner programs of the cinematic effects are not decoded), exhaust bloom, steam physics (wind, buoyancy).
+
 ## Open decisions
 None.
