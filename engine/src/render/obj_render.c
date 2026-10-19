@@ -2,6 +2,7 @@
 #include "render/gs.h"
 #include "platform/timer.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #define VU_MODEL_BASE 136
@@ -380,6 +381,7 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 	for (r = 0; r < mi.region_count && r < OBJ_MAX_REGIONS; r++) {
 		model_part_range pr;
 		unsigned lod;
+		if (o->sky_hide & (1u << r)) continue;
 		if (perm[r] >= mi.permutation_count) perm[r] = 0;
 		for (lod = 0; lod < MODEL_LODS && !model_parts(ms, &mi, perm[r], lod).part_count; lod++) {}
 		if (lod == MODEL_LODS) continue;
@@ -406,6 +408,8 @@ void obj_render_sky(void *user, render_ctx_t *rc)
 			if (o->textures && o->textures->binding && o->textures->binding(o->textures->user, part.shader_id, &mb) != 0) mb.tex = -1;
 			blend = (mb.flags & MAT_BLEND) != 0 || (part.flags & 2);
 			atest = (mb.flags & MAT_ALPHA_TEST) != 0 || (part.flags & 1);
+			if (o->sky_hide & 0x40000000u) printf("[sky] region %u part %u shader %08x tex %d flags %x add %d blend %d uv %.2f %.2f batches %u\n", r, p, (unsigned)part.shader_id, mb.tex, (unsigned)mb.flags, mb.add, blend, (double)mb.uv_scale[0], (double)mb.uv_scale[1], (unsigned)part.batch_count);
+			if (o->sky_hide & (0x100u << p)) continue;
 			if (rc->opt->textures && mb.tex >= 0 && o->textures && o->textures->texture) {
 				tex_image_t img;
 				if (o->textures->texture(o->textures->user, mb.tex, &img) == 0) tex0 = rb_object_tex0((unsigned)mb.tex, &img, 0);

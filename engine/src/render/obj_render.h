@@ -26,6 +26,7 @@ typedef struct {
 	int                   sky_model2;    /* the scenario's second sky (a cluster with sky index 1 draws it), -1 = none */
 	float                 sky_ms;        /* EE time of the sky pass */
 	float                 sky_rot[3];    /* extra sky rotation yaw, pitch, roll in radians (debug / calibration: config key skyrot) */
+	unsigned              sky_hide;                           /* debug (cfg skyhide): bit r hides region r of the sky model */
 	/* statistics of the last pass, copied into render_stats by the caller */
 	float                 st_ms;         /* EE time of the pass */
 	unsigned              st_visible, st_culled, st_batches, st_triangles, st_skipped;

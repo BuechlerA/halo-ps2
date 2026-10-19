@@ -371,6 +371,7 @@ int main(int argc, char *argv[])
 			s_objr.cchg = &s_world.cchg;
 			{ float sr[3]; if (cfg_floats(&s_cfg, "skyrot", sr, 3) == 3) { s_objr.sky_rot[0] = sr[0] * 0.01745329f; s_objr.sky_rot[1] = sr[1] * 0.01745329f; s_objr.sky_rot[2] = sr[2] * 0.01745329f; } }
 			s_objr.sky_model = -1;
+			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag) s_objr.sky_model = model_find(&s_world.models, s_world.sky.model_tag);
 			s_objr.sky_model2 = -1;
 			if (cfg_int(&s_cfg, "sky3d", 1) && s_world.sky.valid && s_world.sky.model_tag2) s_objr.sky_model2 = model_find(&s_world.models, s_world.sky.model_tag2);
@@ -605,6 +606,8 @@ int main(int argc, char *argv[])
 					       s_game.player.pos[2], s_game.vitals.health, s_game.vitals.shield, (unsigned)s_game.st_shots, (unsigned)s_game.st_projectiles,
 					       (unsigned)s_game.st_hits, (unsigned)s_game.st_kills);
 			}
+			if (s_have_objects && cfg_int(&s_cfg, "hideobj", -1) >= 0 && (unsigned)cfg_int(&s_cfg, "hideobj", -1) < s_objects.count)       /* debug: never draw this object */
+				s_objects.obj[cfg_int(&s_cfg, "hideobj", -1)].flags |= OBJ_F_HIDDEN;
 			sim_done:
 			game_camera(&s_game, &s_cam);
 			s_cam.near_z = CAMERA_NEAR_DEFAULT;

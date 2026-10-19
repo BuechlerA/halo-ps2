@@ -53,8 +53,8 @@ typedef struct {
 	u32 portals_tested, portals_passed, camera_cluster_valid;
 	u32 uploads, upload_bytes, tex_hits, tex_misses, tex_deferred, tex_failed, pages_free;
 	u32 chain_qw, chain_overflow, untextured_batches;
-	u32 clip_batches, clip_tris, clip_polys, clip_dropped, clip_skipped_batches;     /* triangles clipped on the EE, polygons drawn, dropped for lack of room */
-	float vis_ms, build_ms, clip_ms, emit_clip_ms;
+	u32 clip_batches, clip_tris, clip_polys, clip_dropped, clip_skipped_batches, clip_culled_batches;     /* triangles clipped on the EE, polygons drawn, dropped for lack of room */
+	float vis_ms, build_ms, clip_ms, emit_clip_ms, clip_scan_ms, clip_gather_ms;
 } render_stats_t;
 
 typedef struct {

@@ -391,17 +391,21 @@ static int batch_unsafe(u32 index, const camera_t *cam, const float clip[4][4])
 {
 	const float *bx = s_box + 6 * index;
 	float lim = CLIP_GUARD * 0.97f;
+	unsigned any = 0, all = 0x1F;
 	int c;
 	for (c = 0; c < 8; c++) {
 		float x = bx[(c & 1) ? 3 : 0], y = bx[(c & 2) ? 4 : 1], z = bx[(c & 4) ? 5 : 2];
 		float w = clip[0][3] * x + clip[1][3] * y + clip[2][3] * z + clip[3][3];
-		float cx, cy;
-		if (w < cam->near_z * 1.05f) return 1;
-		cx = clip[0][0] * x + clip[1][0] * y + clip[2][0] * z + clip[3][0];
-		cy = clip[0][1] * x + clip[1][1] * y + clip[2][1] * z + clip[3][1];
-		if (cx > lim * w || cx < -lim * w || cy > lim * w || cy < -lim * w) return 1;
+		float cx = clip[0][0] * x + clip[1][0] * y + clip[2][0] * z + clip[3][0];
+		float cy = clip[0][1] * x + clip[1][1] * y + clip[2][1] * z + clip[3][1];
+		unsigned out = (w < cam->near_z ? 1u : 0u) | (cx > CLIP_GUARD * w ? 2u : 0u) | (cx < -CLIP_GUARD * w ? 4u : 0u)
+		             | (cy > CLIP_GUARD * w ? 8u : 0u) | (cy < -CLIP_GUARD * w ? 16u : 0u);
+		any |= out;
+		all &= out;
+		if (w < cam->near_z * 1.05f || cx > lim * w || cx < -lim * w || cy > lim * w || cy < -lim * w) any |= 0x80u;
 	}
-	return 0;
+	if (all & 0x1F) return 2;                       /* the whole box is outside one plane of the band: nothing of it can show */
+	return (any & 0x80u) ? 1 : 0;
 }
 
 #define MAX_UNSAFE 256
@@ -410,20 +414,22 @@ static void gather_clipped(const camera_t *cam, const float clip[4][4])
 	u32 order[MAX_UNSAFE], n_unsafe = 0, oi, t, t_start = timer_cycles(), i;
 	float dist2[MAX_UNSAFE];
 	s_cpoly_count = s_cvert_count = 0;
-	/* near batches first: a frame that runs out of budget loses the farthest clipped geometry */
+	/* near batches first (by the distance to the nearest point of their box): a frame that runs out of budget loses the farthest clipped geometry */
 	for (i = 0; i < s_vis.batch_count; i++) {
 		u32 bi = s_vis.batches[i], j;
 		float d, dx, dy, dz;
 		const float *bx = s_box + 6 * bi;
-		if (!batch_unsafe(bi, cam, clip)) continue;
+		{ int u = batch_unsafe(bi, cam, clip); if (u != 1) { if (u == 2) s_stats.clip_culled_batches++; continue; } }
 		dx = 0.5f * (bx[0] + bx[3]) - cam->pos[0]; dy = 0.5f * (bx[1] + bx[4]) - cam->pos[1]; dz = 0.5f * (bx[2] + bx[5]) - cam->pos[2];
-		d = dx * dx + dy * dy + dz * dz;
+		d = sqrtf(dx * dx + dy * dy + dz * dz) - 0.5f * sqrtf((bx[3] - bx[0]) * (bx[3] - bx[0]) + (bx[4] - bx[1]) * (bx[4] - bx[1]) + (bx[5] - bx[2]) * (bx[5] - bx[2]));
+		if (d < 0.0f) d = 0.0f;                       /* distance to the nearest point of the box: a big floor triangle under the camera comes first */
 		if (n_unsafe >= MAX_UNSAFE) { s_stats.clip_skipped_batches++; continue; }
 		for (j = n_unsafe; j > 0 && dist2[j - 1] > d; j--) { dist2[j] = dist2[j - 1]; order[j] = order[j - 1]; }
 		dist2[j] = d; order[j] = bi;
 		n_unsafe++;
 	}
 	s_stats.clip_batches = n_unsafe;
+	s_stats.clip_scan_ms = timer_ms(t_start, timer_cycles());
 	for (oi = 0; oi < n_unsafe; oi++) {
 		bsp_batch b = bsp_get_batch(s_bsp, order[oi]);
 		bsp_material bm;
@@ -448,10 +454,18 @@ static void gather_clipped(const camera_t *cam, const float clip[4][4])
 				for (k = 0; k < 3; k++) {
 					const int16_t *q = raw.pos + 4 * (3 * t + k);
 					float x = (float)q[0], y = (float)q[1], z = (float)q[2];
-					for (j = 0; j < 4; j++) tri[k].c[j] = tv[j] + sv0[j] * x + sv1[j] * y + sv2[j] * z;
+					tri[k].c[3] = tv[3] + sv0[3] * x + sv1[3] * y + sv2[3] * z;
+					tri[k].c[0] = tv[0] + sv0[0] * x + sv1[0] * y + sv2[0] * z;
+					tri[k].c[1] = tv[1] + sv0[1] * x + sv1[1] * y + sv2[1] * z;
 				}
-				outside = clip_needs(tri, cam->near_z, 0.985f);
+				outside = clip_needs(tri, cam->near_z, 0.985f);      /* x, y and w only: z is needed once the triangle is clipped */
 				if (!outside) continue;
+				s_stats.clip_tris++;
+				if (clip_outside(tri, cam->near_z)) continue;
+				for (k = 0; k < 3; k++) {
+					const int16_t *q = raw.pos + 4 * (3 * t + k);
+					tri[k].c[2] = tv[2] + sv0[2] * (float)q[0] + sv1[2] * (float)q[1] + sv2[2] * (float)q[2];
+				}
 				for (k = 0; k < 3; k++) {
 					const int16_t *uv = raw.uv + 4 * (3 * t + k);
 					const uint8_t *col = raw.col + 4 * (3 * t + k);
@@ -460,7 +474,6 @@ static void gather_clipped(const camera_t *cam, const float clip[4][4])
 					for (j = 0; j < 4; j++) tri[k].a[4 + j] = (float)col[j];
 				}
 				{ u32 cc0 = timer_cycles(); n = (unsigned)clip_polygon(tri, cam->near_z, poly); s_stats.emit_clip_ms += timer_ms(cc0, timer_cycles()); }
-				s_stats.clip_tris++;
 				if (n < 3) continue;
 				if (s_cpoly_count >= CLIP_MAX_POLYS || s_cvert_count + n > CLIP_MAX_CVERTS) { s_stats.clip_dropped++; continue; }
 				s_cpoly[s_cpoly_count].first = s_cvert_count;
@@ -474,6 +487,7 @@ static void gather_clipped(const camera_t *cam, const float clip[4][4])
 		}
 	}
 	s_stats.clip_polys = s_cpoly_count;
+	s_stats.clip_gather_ms = timer_ms(t_start, timer_cycles());
 }
 
 /* Group the clipped polygons by `key` (material or lightmap page). Fills s_cgroup_start/count. */

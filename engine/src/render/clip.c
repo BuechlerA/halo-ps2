@@ -18,6 +18,18 @@ int clip_needs(const cvert v[3], float near_z, float margin)
 	return 0;
 }
 
+int clip_outside(const cvert v[3], float near_z)
+{
+	float g = CLIP_GUARD;
+	float w0 = v[0].c[3], w1 = v[1].c[3], w2 = v[2].c[3];
+	if (w0 < near_z && w1 < near_z && w2 < near_z) return 1;
+	if (v[0].c[0] > g * w0 && v[1].c[0] > g * w1 && v[2].c[0] > g * w2) return 1;
+	if (v[0].c[0] < -g * w0 && v[1].c[0] < -g * w1 && v[2].c[0] < -g * w2) return 1;
+	if (v[0].c[1] > g * w0 && v[1].c[1] > g * w1 && v[2].c[1] > g * w2) return 1;
+	if (v[0].c[1] < -g * w0 && v[1].c[1] < -g * w1 && v[2].c[1] < -g * w2) return 1;
+	return 0;
+}
+
 /* Signed distance to clip plane `p` (>= 0 is inside). */
 static float dist(const cvert *v, int p, float near_z)
 {

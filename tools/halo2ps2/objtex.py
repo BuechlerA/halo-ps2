@@ -198,17 +198,29 @@ def target_size(w: int, h: int, max_dim: int) -> tuple[int, int]:
     return tw, th
 
 
+# Brightness measured against the Xbox intro video: the dome's nebula is a 1x additive layer in its shader, yet it shows about three times as bright
+# there as the bitmap's own colours (the tag data gives no reason: the Xbox path is not decoded). Applied to the converted copy only.
+SKY_GAIN = {"sky\\sky_x10\\bitmaps\\space": 2.5}
+
+
 def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_id: int, klass_cap: int,
                            max_dim: int) -> texconv.Ps2Texture:
-    """texconv.convert_texture with a configurable size cap and without the colour-key stand-in."""
+    """texconv.convert_texture with a configurable size cap and without the colour-key stand-in. A sky bitmap (the whole dome is made of a few of
+    them, and they are dark gradients that 16 colours band) keeps its size up to 256 and always gets a 256 colour palette."""
+    sky = m.by_id[source_id].path.startswith("sky\\")
     tw, th = target_size(img.width, img.height, max_dim)
+    if sky:
+        tw, th = min(texconv.MAX_TEX, max(texconv.MIN_TEX, img.width)), min(texconv.MAX_TEX, max(texconv.MIN_TEX, img.height))
     level = 1 if img.mip_count >= 1 and img.width >> 1 >= tw and img.height >> 1 >= th else 0
     w, h, rgba = bitmaps.decode_level(img, m.pixels(img), level)
     found = texconv.alpha_class(rgba)
     klass = min(klass_cap, found)
     alpha_ref = texconv.alpha_threshold(rgba[3::4]) if klass == texconv.CLASS_PUNCH and found == texconv.CLASS_BLEND else 128
     rgba = texconv.resample_rgba(rgba, w, h, tw, th, klass != texconv.CLASS_OPAQUE)
-    tex = texconv.convert_rgba(source_id, rgba, tw, th, klass, 0, alpha_ref)
+    gain = SKY_GAIN.get(m.by_id[source_id].path)
+    if gain:
+        rgba = bytes(min(255, int(v * gain + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
+    tex = texconv.convert_rgba(source_id, rgba, tw, th, klass, 8 if sky else 0, alpha_ref)
     if img.width < texconv.MIN_TEX or img.height < texconv.MIN_TEX:
         tex.flags |= texconv.TF_UPSCALED
     return tex
