@@ -719,6 +719,10 @@ the EE arena (24 MB, high water 24072 KB: only ~500 KB of headroom), which holds
 cinematic shows large (the command display's hologram layers, Cortana, the uniforms of Keyes, the marines, the pilot and the crew, the Halo close-up) with their own allowance (`HERO_BUDGET` 640 KB) and a full-resolution target (<= 256, the
 display layers at 16 colours = 43 KB each instead of 21 KB at 128 x 128 x 256 colours), so the other textures keep their size. a10: OTEX 2.54 -> 2.92 MiB of pixels. A real LOD stream (hi-res variants in a companion section, loaded into a
 small slot pool when a shot's camera comes close, drawn through the same texture cache) remains a design, not code.
+**The wall monitors** (BSP textures, `levels\a10\shaders\monitors`, a 1024 x 256 strip of three screens, the blue and red displays of every console shot) were 256 x 64 (the whole of "the displays are so low res"): the TEXS format now allows 512 on a side
+(`TEX_MAX_DIM`, `texconv.MAX_TEX_FORMAT`; the converter's own cap stays 256) and `texconv.HERO_BITMAPS` gives that bitmap 512 x 128 (+65 KB): the red text and "NAV 3" labels of the close-up at tick 3020 are legible. The texture cache needed no change
+(8 KB pages, no size assumption). Memory: a10's arena high water went from 24072 to 24514 KB of the (now 25 MB, was 24) arena: `arena_mb` default 25, 1 MB of margin. Other maps' packs were not rebuilt (no MOUT there: their dialogue stays lip-less until
+`scripts/build-world.sh` is run for them).
 
 ## Open decisions
 None.
