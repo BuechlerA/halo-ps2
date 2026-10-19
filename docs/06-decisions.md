@@ -817,5 +817,27 @@ unmeasured (PCSX2 does not model it; ADR-022). `a10.tex.hp2` grows 1.5 -> 1.8 Mi
 (`BUMP_BAKE` lists prefixes). New debug keys: `objtrace "first last step"` (every live object's cull inputs, `[obj]` lines), `objfarpx`.
 Sky banding, measured at identical ticks: flat-neighbour fraction 0.87 -> 0.37 (tick 300), 0.73 -> 0.23 (tick 600); at 4x zoom the dither shows as a faint column pattern, invisible at 1x. Relief light direction (`texconv.BUMP_LIGHT`): all four diagonals rendered at tick 1050 look alike next to each other and the 360p video resolves no directional relief, so the current one stays (the Xbox's dot3 follows the lightmap and is not decoded); GS cost of the dither and the 256 colour hull is unmeasured.
 
+## ADR-078 Model triangles are clipped on the EE near the lens (the captain's face), facial animation is eased; what the captain's walk is not
+**Decision**: (1) `model.vsm` collapses every triangle with a vertex nearer than the camera's near plane or beyond the guard band, as `bsp.vsm` does. People never come that close, but the
+intro's extreme close-up of the captain (ticks ~3210 .. 3290, camera point 50, near clip 0.03) has his face 0.028 .. 0.035 from the lens: the nose and the cheek's silhouette lost whole triangles
+(`cinenear` only sets a floor under the script's near clip, which is why lowering it changed nothing, and widening the guard band changed nothing either). `obj_render.c` now decodes a batch on the EE
+when the object is within 2 units + its radius of the lens and a conservative test says a vertex may be out (`batch_unsafe`: the batch's box sphere under the palette nodes its vertices use),
+clips the triangles the VU1 would drop with the BSP's clipper (`clip_polygon`, `clip_pack_vertex`) and sends them through PATH2 right after the batch (`emit_batch_clipped`: two node skinning,
+ambient + sun x n.l, uv, fog as the VU1 program computes them). The clip position is computed first and colour / uv only for triangles that need clipping; the work is capped at `objclipms` (3)
+ms a frame, nearest objects first; `objclip 0` switches it off. (2) Facial animation is eased: `unit_set_emotion` blends from the previous emotion frame to the new one over 6 ticks
+(`object_face.emo_from / emo_blend`, applied in `apply_face`), and the jaw follows the mouth data through a low pass (attack 0.65, release 0.35 per tick, `object_face.talk_s`).
+(3) `animlog 1` prints every `custom_animation` call and whether its graph and name resolve.
+**Why**: (1) the VU1 probe that replayed the model program's tests on the EE named the cause (all dropped triangles: `near`, vertices at w 0.028 .. 0.035 against a near of 0.030); about 96 triangles
+a frame are clipped in the bridge shots, so the jagged edges were not only on the captain. Cost measured at real speed over the whole intro: the first version (every batch tested against all
+its palette nodes, all vertices decoded) dropped 825 of 3701 frames, this one 24 (0.65 %), 16 with `objclip 0`. (2) a frame-to-frame measurement of the eye region over ticks 3216 .. 3296 showed the face
+frozen (difference 0.0) except one jump of 8.1 at the emotion change; now three steps of about 3.
+**Findings, not fixed** (user reports on the same scene): (a) The captain's hands-behind-back walk is NOT what "stand unarmed move-front" / "stand unarmed idle%1" give: forward kinematics of their
+data and the engine's own node positions (`nearlog` + `nearnodes`) agree, and put the hands at the hips' sides. The graph also has `stand unarmed aim-still` (an overlay of 9 frames driving the arms and
+the body); the unit layer drops overlay animations (`is_overlay` -> -1), so it is never applied. Applying frame 4 of it on top of the base (either composition order) raises the arms over the head, replacing the
+rotations turns the whole body over: its semantics (and the frame for a neutral aim) are not understood, so the experiment was removed. (b) The bridge pilots' seated pose and the bridge screens
+(video: lit blue displays; here dark or missing) were not investigated. (c) 'Exact' camera and transform recovery: the camera points, the ticks and the near clip are taken from the scenario / script as they are;
+the shot puts the lens 3 cm from the nose, which the Xbox clips the same way (not verified against it).
+**Consequences**: no pack changes. New cfg keys: `objclip`, `objclipms`, `animlog`; `objtrace` / `nearlog` / `nearnodes` stay the debug tools.
+
 ## Open decisions
 None.

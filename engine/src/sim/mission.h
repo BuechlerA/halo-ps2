@@ -111,6 +111,7 @@ typedef struct mission {
 	uint32_t     missing_noted[8];
 	unsigned     builtin_calls;
 	int          log;
+	int          log_anim;                    /* cfg animlog: print every custom_animation call and whether its graph and name resolve */
 	/* optional profiling of mission_tick: set clock/clock_ms (platform timer), zone sums and peaks in ms since the last reset */
 	uint32_t   (*clock)(void);
 	float      (*clock_ms)(uint32_t, uint32_t);

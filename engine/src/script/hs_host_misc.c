@@ -990,23 +990,43 @@ NOOP(rasterizer_lights_reset_for_new_map)
 /* ---- per tick service, registration, statistics ------------------------------------------------------------------------------------------ */
 /* Lip sync: the mouth data of a line a unit speaks (sound_impulse_start with the unit as source) is one loudness byte per tick; the face's talk
  * overlay is scaled by it (sim/objects.c apply_face). Every tick the speakers are zeroed first, so a line that ended or was cut closes the mouth. */
+#define EMO_EASE_TICKS 6u          /* a switch between two emotion frames takes this many ticks */
+#define TALK_ATTACK 0.65f          /* jaw: share of the way to a louder target per tick */
+#define TALK_RELEASE 0.35f         /* ... and to a quieter one */
 static void lipsync(mission_t *m)
 {
 	unsigned i;
+	static uint8_t tgt[OBJ_MAX];
 	if (!m->objects) return;
-	for (i = 0; i < MISC_IMPULSES; i++) {
-		const misc_impulse *p = &m->misc.imp[i];
-		if (p->used && p->obj >= 0 && (unsigned)p->obj < m->objects->count) m->objects->obj[p->obj].face.talk = 0;
+	for (i = 0; i < m->objects->count && i < OBJ_MAX; i++) {                 /* emotion switches ease in */
+		object_face *f = &m->objects->obj[i].face;
+		if (f->emo_blend < 255) { unsigned b = (unsigned)f->emo_blend + 255u / EMO_EASE_TICKS + 1u; f->emo_blend = (uint8_t)(b > 255u ? 255u : b); }
 	}
-	if (!m->ow.mouth) return;
 	for (i = 0; i < MISC_IMPULSES; i++) {
 		const misc_impulse *p = &m->misc.imp[i];
-		unsigned len = 0, k;
-		const uint8_t *mouth;
-		if (!p->used || p->obj < 0 || (unsigned)p->obj >= m->objects->count || m->tick < p->start_tick || m->tick >= p->end_tick) continue;
-		mouth = mouth_find(m->ow.mouth, p->tag, p->variant, &len);
-		k = m->tick - p->start_tick;
-		if (mouth && k < len) m->objects->obj[p->obj].face.talk = mouth[k];
+		if (p->used && p->obj >= 0 && (unsigned)p->obj < m->objects->count && p->obj < OBJ_MAX) tgt[p->obj] = 0;
+	}
+	if (m->ow.mouth) {
+		for (i = 0; i < MISC_IMPULSES; i++) {
+			const misc_impulse *p = &m->misc.imp[i];
+			unsigned len = 0, k;
+			const uint8_t *mouth;
+			if (!p->used || p->obj < 0 || (unsigned)p->obj >= m->objects->count || p->obj >= OBJ_MAX || m->tick < p->start_tick || m->tick >= p->end_tick) continue;
+			mouth = mouth_find(m->ow.mouth, p->tag, p->variant, &len);
+			k = m->tick - p->start_tick;
+			if (mouth && k < len && mouth[k] > tgt[p->obj]) tgt[p->obj] = mouth[k];
+		}
+	}
+	for (i = 0; i < MISC_IMPULSES; i++) {                                    /* the jaw follows the mouth data through a low pass: fast to open, slower to close */
+		const misc_impulse *p = &m->misc.imp[i];
+		object_face *f;
+		float cur, goal, a;
+		if (!p->used || p->obj < 0 || (unsigned)p->obj >= m->objects->count || p->obj >= OBJ_MAX) continue;
+		f = &m->objects->obj[p->obj].face;
+		cur = (float)f->talk_s; goal = (float)tgt[p->obj]; a = goal > cur ? TALK_ATTACK : TALK_RELEASE;
+		cur += (goal - cur) * a;
+		f->talk_s = (goal == 0.0f && cur < 1.5f) ? 0u : (uint8_t)(cur + 0.5f);          /* a closing mouth reaches zero (the rounding alone would stick at 1) */
+		f->talk = f->talk_s;
 	}
 }
 

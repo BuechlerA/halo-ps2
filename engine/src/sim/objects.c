@@ -212,7 +212,11 @@ static void apply_face(const object_world_t *w, const model_info *mi, int model,
 	anim_graph g;
 	if (!f || f->graph <= 0 || !w->anims || (unsigned)(f->graph - 1) >= w->anims->graph_count) return;
 	g = anim_get_graph(w->anims, (uint32_t)(f->graph - 1));
-	if (f->emotion && f->emo_anim > 0) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emotion - 1), 1.0f, local, n);
+	if (f->emo_anim > 0) {
+		float b = (float)f->emo_blend * (1.0f / 255.0f);          /* easing between two emotion frames: the previous one fades out as the new one fades in */
+		if (f->emo_from && f->emo_from != f->emotion && b < 1.0f) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emo_from - 1), 1.0f - b, local, n);
+		if (f->emotion) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emotion - 1), (f->emo_from && f->emo_from != f->emotion) || f->emo_blend < 255 ? b : 1.0f, local, n);
+	}
 	if (f->talk && f->talk_anim > 0) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->talk_anim - 1u, 0.0f, (float)f->talk * (1.0f / 255.0f), local, n);
 }
 
@@ -220,7 +224,7 @@ void objects_set_face_graph(object_t *o, const object_world_t *w, int graph)
 {
 	anim_graph g;
 	int emo, talk;
-	o->face.graph = o->face.emo_anim = o->face.talk_anim = 0;
+	o->face.graph = o->face.emo_anim = o->face.talk_anim = 0; o->face.emo_blend = 255; o->face.emo_from = 0;
 	if (graph < 0 || !w->anims || (unsigned)graph >= w->anims->graph_count) return;
 	g = anim_get_graph(w->anims, (uint32_t)graph);
 	emo = anim_find_name(w->anims, &g, "stand emotions");

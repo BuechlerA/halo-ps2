@@ -306,12 +306,17 @@ static void test_sound(void)
 		call("sound_impulse_start", a, 3, HS_VOID);
 		t0 = (uint32_t)call("sound_impulse_time", a, 1, HS_SHORT).v.i;
 		CHECK(t0 > 10);
-		for (k = 1; k < 8; k++) {                                               /* tick k after the start plays byte k */
-			step(1);
-			CHECK(X.objects.obj[o].face.talk == line[k]);
+		{                                                                       /* the jaw follows byte k through the low pass of sim/hs_host_misc.c: 0.65 up, 0.35 down per tick */
+			float cur = 0.0f;
+			for (k = 1; k < 8; k++) {                                           /* tick k after the start plays byte k */
+				float goal = (float)line[k];
+				cur += (goal - cur) * (goal > cur ? 0.65f : 0.35f);
+				step(1);
+				CHECK(X.objects.obj[o].face.talk == (uint8_t)(cur + 0.5f));
+			}
+			for (k = 0; k < 40 && X.objects.obj[o].face.talk; k++) step(1);     /* past the data the mouth closes by itself */
+			CHECK(X.objects.obj[o].face.talk == 0);
 		}
-		step(1);
-		CHECK(X.objects.obj[o].face.talk == 0);                                 /* past the data: closed */
 		call("sound_impulse_stop", a, 1, HS_VOID);
 		X.m.ow.mouth = NULL;
 		step(1);

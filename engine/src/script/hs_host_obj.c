@@ -1,3 +1,4 @@
+#include <stdio.h>
 /* Script host H1: object, unit, player, device and effect built-ins (docs/33-host-objects.md). Pure C11, no heap, no double.
  * Conventions: sim/mission.h (handle encodings: runtime object handles carry MISSION_OBJ_BIT, constants are object-name indices).
  * A built-in never fails: an unresolved handle makes it a no-op, and none of these block (the original blocks in none of them: the
@@ -846,7 +847,11 @@ BI(unit_set_emotion)
 	ENTER(unit_set_emotion);
 	slot = obj_arg(M, A(0), 0);
 	e = argi(A(1));
-	if (slot >= 0 && (unsigned)slot < M->objects->count) M->objects->obj[slot].face.emotion = (uint8_t)(e < 0 ? 0 : e > 254 ? 255 : e + 1);
+	if (slot >= 0 && (unsigned)slot < M->objects->count) {
+		object_face *fc = &M->objects->obj[slot].face;
+		uint8_t ne = (uint8_t)(e < 0 ? 0 : e > 254 ? 255 : e + 1);
+		if (ne != fc->emotion) { fc->emo_from = fc->emotion; fc->emo_blend = 0; fc->emotion = ne; }      /* eased in by misc_tick (EMO_EASE_TICKS) */
+	}
 	return 0;
 }
 BI(unit_solo_player_integrated_night_vision_is_active) { ENTER(unit_solo_player_integrated_night_vision_is_active); ret_bool(r, 0); return 0; }
@@ -1008,10 +1013,11 @@ static int start_custom(mission_t *M, int slot, uint32_t graph_tag, const char *
 	float tps, ticks;
 	if (!o || !M->ow.anims) return 0;
 	gi = anim_find_graph(M->ow.anims, graph_tag);
-	if (gi < 0) { mission_note_missing(M, "custom_animation graph"); return 0; }
+	if (gi < 0) { mission_note_missing(M, "custom_animation graph"); if (M->log_anim) printf("[anim] t%u obj %d graph %08x \"%s\": graph NOT in the pack\n", (unsigned)M->tick, slot, graph_tag, name); return 0; }
 	g = anim_get_graph(M->ow.anims, (uint32_t)gi);
 	idx = anim_find_name(M->ow.anims, &g, name);
-	if (idx < 0) { mission_note_missing(M, "custom_animation name"); return 0; }
+	if (idx < 0) { mission_note_missing(M, "custom_animation name"); if (M->log_anim) printf("[anim] t%u obj %d graph %08x \"%s\": name NOT in the graph (%u animations)\n", (unsigned)M->tick, slot, graph_tag, name, (unsigned)g.anim_count); return 0; }
+	if (M->log_anim) printf("[anim] t%u obj %d graph %08x \"%s\" ok (anim %d of %u, frames %u)\n", (unsigned)M->tick, slot, graph_tag, name, idx, (unsigned)g.anim_count, (unsigned)anim_get(M->ow.anims, &g, (uint32_t)idx).frame_count);
 	info = anim_get(M->ow.anims, &g, (uint32_t)idx);
 	if (frame < 0) frame = 0;
 	if (frame >= (int)info.frame_count) frame = info.frame_count ? (int)info.frame_count - 1 : 0;

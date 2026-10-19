@@ -209,6 +209,120 @@ static u64 hires_tex0(obj_render_t *o, int tex)
 	return o->want_hi == 2 ? 0 : t0;
 }
 
+
+/* ---- EE clipping of the triangles the model program drops (ADR-078) --------------------------------------------
+ * model.vsm collapses every triangle with a vertex nearer than the near plane or beyond the guard band. For people that is invisible, but the intro's
+ * extreme close-up of the captain puts his nose 0.03 from the lens (near 0.03): the Xbox clips those triangles, here they were dropped, leaving holes in the
+ * face. A batch whose posed bounding sphere comes near the near plane or the band is decoded on the EE (positions, two-node skinning, lighting, uv), the triangles
+ * the VU1 would drop are clipped with the BSP's clipper and drawn through PATH2 right after the batch. */
+#define EE_CLIP_ZMAX 16777215.0f
+#define EE_CLIP_MAX_VERTS 1200u
+
+/* Can any vertex of this batch leave the guard band or cross the near plane? Conservative: the batch's box sphere under the palette nodes its vertices actually use
+ * (an integer scan of the two slots of every vertex; testing the sphere under every node of the palette flags nearly every batch of a character). */
+static int batch_unsafe(const model_section *ms, const model_batch *b, float near_z)
+{
+	const uint8_t *d = (const uint8_t *)model_batch_vif(ms, b);
+	unsigned n = 3u * b->triangles, v, s;
+	float ctr[3], scale, rr;
+	uint32_t used = 0;
+	const uint8_t *pos = d + 40, *uv = d + 44 + 8u * n;
+	memcpy(ctr, d + 4, 12); memcpy(&scale, d + 16, 4);
+	rr = scale * 32767.0f * 1.7321f;
+	for (v = 0; v < n; v++) used |= 1u << ((unsigned)((const int16_t *)(pos + 8u * v))[3] & 31u) | 1u << ((unsigned)((const int16_t *)(uv + 8u * v))[2] & 31u);
+	for (s = 0; s < b->palette_count; s++) {
+		unsigned node;
+		const float (*m)[4];
+		float cx, cy, cw, gx, gy, gw, wmin, lim = CLIP_GUARD * 0.97f;
+		if (!(used & (1u << s))) continue;
+		node = b->palette[s] < SKEL_MAX_NODES ? b->palette[s] : 0;
+		m = s_pal[node];
+		cx = ctr[0] * m[0][0] + ctr[1] * m[1][0] + ctr[2] * m[2][0] + m[3][0]; cy = ctr[0] * m[0][1] + ctr[1] * m[1][1] + ctr[2] * m[2][1] + m[3][1];
+		cw = ctr[0] * m[0][3] + ctr[1] * m[1][3] + ctr[2] * m[2][3] + m[3][3];
+		gx = sqrtf(m[0][0] * m[0][0] + m[1][0] * m[1][0] + m[2][0] * m[2][0]); gy = sqrtf(m[0][1] * m[0][1] + m[1][1] * m[1][1] + m[2][1] * m[2][1]);
+		gw = sqrtf(m[0][3] * m[0][3] + m[1][3] * m[1][3] + m[2][3] * m[2][3]);
+		wmin = cw - rr * gw;
+		if (wmin < near_z * 1.02f) return 1;
+		if (fabsf(cx) + rr * gx > lim * wmin || fabsf(cy) + rr * gy > lim * wmin) return 1;
+	}
+	return 0;
+}
+
+static void emit_batch_clipped(obj_render_t *o, chain_t *c, const render_ctx_t *rc, const model_section *ms, const model_batch *b, const scen_light *light, float su, float sv, u64 prim)
+{
+	const uint8_t *d = (const uint8_t *)model_batch_vif(ms, b);
+	unsigned n = 3u * b->triangles, t, v, k, nv = 0, i;
+	float ctr[3], scale;
+	const uint8_t *pos = d + 40, *uv = d + 44 + 8u * n, *nrm = d + 48 + 16u * n;
+	static cvert poly[EE_CLIP_MAX_VERTS];
+	static uint8_t cnt[24 * 10];
+	unsigned npoly = 0;
+	clip_gs g;
+	u32 *w;
+	u64 *q;
+	float fk, fb, near_z = rc->cam->near_z;
+	u32 t_start = timer_cycles();
+	memcpy(ctr, d + 4, 12); memcpy(&scale, d + 16, 4);
+	rb_fog_params(&fk, &fb);
+	g.near_z = near_z; g.zmax = EE_CLIP_ZMAX; g.sx = (float)VIDEO_WIDTH * 0.5f; g.sy = (float)VIDEO_HEIGHT * 0.5f; g.ox = 2048.0f; g.oy = 2048.0f; g.fog_k = fk; g.fog_b = fb;
+	for (t = 0; t < b->triangles && npoly < sizeof cnt; t++) {
+		cvert tri[3], out[CLIP_MAX_VERTS];
+		int m;
+		for (v = 0; v < 3; v++) {                              /* phase 1: the clip position only (two node images blended, one for a rigid vertex) */
+			const int16_t *p = (const int16_t *)(pos + 8u * (3u * t + v)), *qq = (const int16_t *)(uv + 8u * (3u * t + v));
+			float x = ctr[0] + (float)p[0] * scale, y = ctr[1] + (float)p[1] * scale, z = ctr[2] + (float)p[2] * scale, w0 = (float)qq[3] / 32767.0f;
+			unsigned s0 = (unsigned)(uint16_t)p[3], s1 = (unsigned)(uint16_t)qq[2];
+			unsigned n0 = (s0 < b->palette_count && b->palette[s0] < SKEL_MAX_NODES) ? b->palette[s0] : 0, n1 = (s1 < b->palette_count && b->palette[s1] < SKEL_MAX_NODES) ? b->palette[s1] : 0;
+			for (k = 0; k < 4; k++) {
+				float c0 = x * s_pal[n0][0][k] + y * s_pal[n0][1][k] + z * s_pal[n0][2][k] + s_pal[n0][3][k];
+				if (w0 < 0.9999f && n1 != n0) {
+					float c1 = x * s_pal[n1][0][k] + y * s_pal[n1][1][k] + z * s_pal[n1][2][k] + s_pal[n1][3][k];
+					c0 = c1 + (c0 - c1) * w0;
+				}
+				tri[v].c[k] = c0;
+			}
+		}
+		if (!clip_needs(tri, near_z, 0.985f) || clip_outside(tri, near_z)) continue;
+		for (v = 0; v < 3; v++) {                              /* phase 2, only for a triangle that needs clipping: colour and uv */
+			const int16_t *p = (const int16_t *)(pos + 8u * (3u * t + v)), *qq = (const int16_t *)(uv + 8u * (3u * t + v));
+			const int8_t *nn = (const int8_t *)(nrm + 4u * (3u * t + v));
+			unsigned s0 = (unsigned)(uint16_t)p[3];
+			unsigned n0 = (s0 < b->palette_count && b->palette[s0] < SKEL_MAX_NODES) ? b->palette[s0] : 0;
+			float ndl = ((float)nn[0] * s_pal[n0][4][0] + (float)nn[1] * s_pal[n0][4][1] + (float)nn[2] * s_pal[n0][4][2]) / 127.0f, col;
+			if (ndl < 0.0f) ndl = 0.0f;
+			for (k = 0; k < 3; k++) { col = (float)light->ambient[k] + (float)light->sun[k] * ndl; tri[v].a[4 + k] = col > 255.0f ? 255.0f : col; }
+			tri[v].a[7] = 128.0f;
+			tri[v].a[0] = (float)qq[0] * su; tri[v].a[1] = (float)qq[1] * sv; tri[v].a[2] = tri[v].a[3] = 0.0f;
+		}
+		m = clip_polygon(tri, near_z, out);
+		if (m < 3 || nv + 3u * (unsigned)(m - 2) > EE_CLIP_MAX_VERTS) continue;
+		for (i = 0; i < (unsigned)m; i++) poly[nv + i] = out[i];
+		nv += (unsigned)m; cnt[npoly++] = (uint8_t)m;
+	}
+	o->clip_ms += timer_ms(t_start, timer_cycles());
+	if (!npoly) return;
+	{
+		unsigned verts = 0, j, base = 0;
+		for (i = 0; i < npoly; i++) verts += 3u * (cnt[i] - 2u);
+		w = chain_cnt(c, 1 + 1 + 3 * verts, rb_take_pending());
+		if (!w) return;
+		w[0] = VIF_CODE(VIF_NOP, 0, 0); w[1] = VIF_CODE(VIF_NOP, 0, 0);
+		w[2] = VIF_CODE(VIF_NOP, 0, 0); w[3] = VIF_CODE(VIF_DIRECT, 0, 1 + 3 * verts);
+		q = (u64 *)(w + 4);
+		q[0] = GIF_TAG(verts, 1, 1, prim, GIFX_FLG_PACKED, 3); q[1] = 0x412;
+		w = (u32 *)(q + 2);
+		for (i = 0; i < npoly; i++) {
+			const cvert *pv = &poly[base];
+			for (j = 1; j + 1 < cnt[i]; j++) {
+				clip_pack_vertex(&pv[0], 0, &g, (uint32_t *)w); w += 12;
+				clip_pack_vertex(&pv[j], 0, &g, (uint32_t *)w); w += 12;
+				clip_pack_vertex(&pv[j + 1], 0, &g, (uint32_t *)w); w += 12;
+			}
+			base += cnt[i];
+		}
+	}
+}
+
 static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, const uint16_t *perm, unsigned regions,
                            const object_nodes_t *nodes, unsigned lod, const scen_light *light, unsigned budget, const cc_tints *cc, int pass)
 {
@@ -260,6 +374,9 @@ static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, c
 			for (bi = 0; bi < part.batch_count; bi++) {
 				model_batch b = model_get_batch(ms, (uint32_t)part.first_batch + bi);
 				emit_batch(rc->chain, rc, ms, &b);
+				if (o->ee_clip && o->ee_clip_obj && o->clip_ms < o->clip_budget_ms && batch_unsafe(ms, &b, rc->cam->near_z))
+					emit_batch_clipped(o, rc->chain, rc, ms, &b, light, mb.uv_scale[0] / (float)(1u << part.uv_shift), mb.uv_scale[1] / (float)(1u << part.uv_shift),
+					                   GS_PRIM(GSX_PRIM_TRIANGLE, 1, tex0 ? 1 : 0, rc->opt->fog, blend, 0, 0, 0, 0));
 				o->st_triangles += b.triangles;
 			}
 			emitted += part.batch_count;
@@ -357,6 +474,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	if (o->hires) hires_begin_frame(o->hires);
 	o->want_hi = 0;
 	o->frame_no++;
+	o->clip_ms = 0.0f;
 
 	/* Visible objects are drawn nearest first: the batch budget runs out in busy scenes (the bridge sees 80 objects, the hangar's crowd among them) and the
 	 * objects that go missing must be the far ones, not the ones with the highest index (Keyes, index 508, vanished in the hologram shot). */
@@ -417,6 +535,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 				light_at(o, c, &light);
 				if (!pass) o->st_visible++;
 				cc_pick(o, ob->model, (uint32_t)cand[kk] * 2654435761u + (uint32_t)ob->def * 40503u, &cc, (int)cand[kk]);
+				o->ee_clip_obj = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) < (2.0f + ob->radius) * (2.0f + ob->radius);       /* only an object within a couple of units of the lens can have a vertex near the near plane or the band */
 				em = draw_model(o, rc, ob->model, ob->perm, ob->region_count, &s_nodes, lod, &light, (pass ? budget + budget / 4u : budget) > o->st_batches ? (pass ? budget + budget / 4u : budget) - o->st_batches : 0, &cc, pass);       /* the blended pass has its own quarter on top: glass and holograms are drawn last and must not starve */
 				if (o->dbg_obj == (int)cand[kk]) printf("[dbg] obj %u pass %d lod %u emitted %u budget %u used %u\n", (unsigned)cand[kk], pass, lod, em, budget, o->st_batches);
 				if (em == 0 && !pass && o->st_batches >= budget) { o->st_skipped++; }

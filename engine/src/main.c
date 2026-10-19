@@ -421,6 +421,8 @@ int main(int argc, char *argv[])
 			if (!cfg_int(&s_cfg, "objanim", 1)) { unsigned oi; for (oi = 0; oi < s_objects.count; oi++) s_objects.obj[oi].flags &= ~OBJ_F_ANIMATED; }
 			s_objr.max_distance = (float)cfg_int(&s_cfg, "objdist", 200);
 			s_objr.far_px = (float)cfg_int(&s_cfg, "objfarpx", 20);
+			s_objr.ee_clip = (int)cfg_int(&s_cfg, "objclip", 1);
+			s_objr.clip_budget_ms = (float)cfg_int(&s_cfg, "objclipms", 3);
 			s_objr.max_batches = (unsigned)cfg_int(&s_cfg, "objcap", 900);
 			s_objr.draw_objects = (int)cfg_int(&s_cfg, "objects", 1);
 			s_objr.draw_fp = (int)cfg_int(&s_cfg, "fp", 1);
@@ -728,7 +730,7 @@ int main(int argc, char *argv[])
 						if (cfg_int(&s_cfg, "nearnodes", 0) && ob->type == 1) {
 							static object_nodes_t nn;
 							unsigned ni, nc = objects_pose(ob, &s_objr.world, &nn);
-							for (ni = 0; ni < nc && ni < 12; ni++) printf("[near]    node %u world %.2f %.2f %.2f\n", ni, (double)nn.world[ni].m[3][0], (double)nn.world[ni].m[3][1], (double)nn.world[ni].m[3][2]);
+							for (ni = 0; ni < nc && ni < 40; ni++) printf("[near]    node %u world %.2f %.2f %.2f\n", ni, (double)nn.world[ni].m[3][0], (double)nn.world[ni].m[3][1], (double)nn.world[ni].m[3][2]);
 						}
 					}
 				}

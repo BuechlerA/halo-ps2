@@ -20,6 +20,9 @@ typedef struct {
 	fpview_t             *fp;            /* first-person view (NULL: none) */
 	lodctl_t             *lod;           /* dynamic LOD controller (NULL: fixed quality) */
 	float                 max_distance;  /* draw distance in world units at quality level 0 */
+	int                   ee_clip_obj;   /* this object may need EE clipping (set per object by obj_render_pass) */
+	float                 clip_ms, clip_budget_ms;   /* EE time spent / allowed per frame on clipping model triangles (cfg objclipms, default 3)*/
+	int                   ee_clip;       /* clip the triangles the model program drops (near plane, guard band) on the EE: cfg objclip, default 1 (ADR-078) */
 	float                 far_px;        /* objects past the draw distance are still drawn when they are at least this many pixels across (640 px scale; cfg objfarpx) */
 	unsigned              max_batches;   /* per-frame cap */
 	int                   draw_objects, draw_fp;
