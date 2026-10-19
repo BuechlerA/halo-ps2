@@ -107,13 +107,16 @@ def resolve_layer(m: texconv.MapData, pseudo_id: int) -> texconv.ShaderInfo:
     info = texconv.ShaderInfo(pseudo_id, "schi", f"{e.path}#map{index}")
     block = m.tag_off(e)
     count, addr = struct.unpack_from("<II", m.region, block + texconv.TRANSPARENT_MAPS)
-    mo = addr - m.base + index * texconv.SCHI_MAP[0]
-    info.bitmap_id = _bitmap_ref(m, mo + texconv.SCHI_MAP[3])
-    u, v = struct.unpack_from("<2f", m.region, mo + texconv.SCHI_MAP[1])[0], struct.unpack_from("<f", m.region, mo + texconv.SCHI_MAP[2])[0]
+    size, us, vs, ref = texconv.SOTR_MAP if e.group == "sotr" else texconv.SCHI_MAP
+    mo = addr - m.base + index * size
+    info.bitmap_id = _bitmap_ref(m, mo + ref)
+    u, v = struct.unpack_from("<2f", m.region, mo + us)[0], struct.unpack_from("<f", m.region, mo + vs)[0]
     if 0.0 < u <= 4096.0 and 0.0 < v <= 4096.0:
         info.uv_scale = (u, v)
     info.blend = texconv.BLEND_ADD
     info.flags |= texconv.BF_TWO_SIDED
+    if e.group == "sotr":
+        info.tint = STREAM_TINT
     if info.bitmap_id is None:
         info.note, info.flags = "no layer map", info.flags | texconv.BF_UNTEXTURED
     return info
@@ -281,7 +284,11 @@ def target_size(w: int, h: int, max_dim: int) -> tuple[int, int]:
 # because the Xbox's combiner adds the layers (UNVERIFIED gain, chosen so the body reaches the video's purple (0.62, 0.32, 1.0) at its brightest).
 # Cortana's body atlas is circuitry on black (its alpha, 60 on average, is the circuit shape) with the face at the bottom right: the Xbox shows the face and a smooth figure,
 # so the colour map gets a uniform purple base added (the engine's add ignores the alpha).
-HOLOGRAM_FILL = {"characters\\cortana\\bitmaps\\cortana_body": (22, 6, 46)}
+# Cortana's body shader stacks two scrolling `particle_stream` maps (5 x 5 and 4 x 4) over the body: drawn as static additive layers, brightened (the maps are dark purple).
+CORTANA_LAYER_SHADER = "characters\\cortana\\shaders\\cortana_body"
+CORTANA_LAYERS = (2, 3)
+STREAM_TINT = (3.0, 2.0, 3.0)
+HOLOGRAM_FILL = {"characters\\cortana\\bitmaps\\cortana_body": (14, 3, 34)}
 BITMAP_OVERRIDE = {"characters\\cortana\\shaders\\cortana_body": "characters\\cortana\\bitmaps\\cortana_body",
                    "characters\\cortana\\shaders\\cortana_hair": "characters\\cortana\\bitmaps\\cortana_hair"}
 TINT = {"characters\\cortana\\shaders\\cortana_body": (1.63, 1.53, 1.80), "characters\\cortana\\shaders\\cortana_hair": (1.63, 1.53, 1.80)}

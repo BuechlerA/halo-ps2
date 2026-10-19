@@ -673,7 +673,7 @@ quantiser and the `uv_shift` keep; the shader's own map scales (body 1 x 4 noise
 whose ALPHA (mean 60) is the circuit shape, with the face at its lower right; the Xbox's combiner uses that alpha, the engine's additive blend ignores it, so the whole atlas (face and circuit patches) showed as speckled noise. The
 converter now adds a uniform purple base (`objtex.HOLOGRAM_FILL`, (22, 6, 46)) to the body map so she draws as the video's smooth translucent purple figure with the circuit lines on it; the tint gains are re-calibrated against the video
 at the same moment (tick 3202: about (195, 129, 235) against (168, 109, 216) in the video, within 15 %; the figure covers more area than the video's wispy one because the combiner's two particle-stream layers are not drawn).
-Hair (a plain purple strand map) was fine.
+Hair (a plain purple strand map) was fine. Her body shader's two `particle_stream` layers (5 x 5 and 4 x 4 UV scale) are now drawn as static additive layers (`objtex.CORTANA_LAYERS`, `resolve_layer` handles sotr map strides), which adds the streaky texture of the video; they scroll on the Xbox and are static here.
 
 ## Open decisions
 None.

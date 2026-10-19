@@ -876,6 +876,11 @@ def add_sky_layers(m: texconv.MapData, md: ModelData) -> None:
         for sp in list(parts):
             if sp.shader_id == NO_SHADER:
                 continue
+            e = m.by_id.get(sp.shader_id)
+            if e is not None and e.path == objtex.CORTANA_LAYER_SHADER:
+                for index in objtex.CORTANA_LAYERS:
+                    parts.append(SrcPart(objtex.layer_shader_id(sp.shader_id, index), sp.pos, sp.nrm, sp.uv, sp.node0, sp.node1, sp.weight0, sp.tris))
+                continue
             for index in objtex.chicago_layers(m, sp.shader_id):
                 parts.append(SrcPart(objtex.layer_shader_id(sp.shader_id, index), sp.pos, sp.nrm, sp.uv, sp.node0, sp.node1, sp.weight0, sp.tris))
 
@@ -894,7 +899,7 @@ def convert_map(path: Path | texconv.MapData, model_tags: list[int] | None = Non
         skipped = sorted(set(model_tags) - set(entries))
     models = [read_model(m, entries[t], skip_lod0, variants.get(t) if variants is not None else None) for t in wanted]
     for md in models:
-        if md.path.startswith("sky\\"):
+        if md.path.startswith("sky\\") or md.path == "characters\\cortana\\cortana":
             add_sky_layers(m, md)
         if md.path in SUBDIVIDE_MODELS:
             for parts in md.geometries.values():
