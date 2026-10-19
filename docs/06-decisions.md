@@ -689,6 +689,9 @@ colour and ALPHA = lerp(state colour (A R G B), next state colour) x the system 
 the sprite frame is random in the sequence. The a10 steam therefore has alpha = 0 (`steam jet`) -> 0.25 .. 0.35 (`steam cloud`) -> 0 (`death`) x 0.5 (state colour multiplier A) = at most 0.15 and a size of
 0.0065 .. 0.0085 x 1.0: both multiplied by factors this engine fits (alpha x 3.4, size x 120): the unit of the size handed to 0x59a20 / 0x59550 (a distance-faded perspective sprite, `FUN_000b2880`) and the framebuffer / overbright
 of the Xbox are not decoded, and our two-key fade stands in for the three-state alpha ramp. The creation rate is the integer part of rate x dt per tick with the fraction carried (0x10f620), already as ours.
+**Update (0x59550 / 0x59090 decoded)**: the quad's world width is `particle size x the bitmap image width in pixels` (0x59090: `size * (short)image[+4]`), corners from the sprite rectangle: for the steam cloud (256 px, scale 0.0065 .. 0.0085) a half width of
+0.83 .. 1.1 wu, i.e. `STEAM_SIZE = 128` (= 256 / 2) instead of the fitted 120; the life (sum of the transition times, 1.0 x) and the creation rate (1.0 x) are the tag's own too. The ALPHA is the tag's ramp x 0.5 (no floor, no multiplier) in
+the Xbox, and that alone is too faint here (coverage 0.16 .. 0.22 against 0.52 .. 0.59): the one factor still fitted is `STEAM_ALPHA` 4 (the framebuffer / sprite alpha scale of the Xbox, not decoded).
 **Consequence**: the steam multipliers stay measured, but they are now known to stand for two specific unknown units (sprite size unit, framebuffer alpha scale), not for missing tag data.
 
 ## Open decisions

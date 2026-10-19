@@ -5,9 +5,10 @@
 
 #define TICKS 30.0f
 /* steam look: tuned against the cryo steam of the Xbox intro by measuring the share of bright pixels left of the pod (tools: scratch steammeasure) */
-#define STEAM_SIZE 120.0f
-#define STEAM_LIFE 1.8f
-#define STEAM_RATE 2.0f
+#define STEAM_SIZE 128.0f      /* decoded (ADR-071): quad width = scale x the bitmap's width in pixels (256 for the steam cloud), half of it from the centre */
+#define STEAM_LIFE 1.0f
+#define STEAM_RATE 1.0f
+#define STEAM_ALPHA 4.0f      /* the one fitted factor left: the Xbox's framebuffer alpha scale is not decoded (ADR-071) */
 
 static float rnd01(fx_t *f)
 {
@@ -249,8 +250,8 @@ static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type
 		if (p->friction < 0.5f) p->friction = 0.5f;
 		if (f->dbg == 6) printf("[fx] steam particle speed %.4f/tick friction %.4f gravity %.5f air_friction %.3f life %u\n", (double)sqrtf(p->vel[0] * p->vel[0] + p->vel[1] * p->vel[1] + p->vel[2] * p->vel[2]), (double)p->friction, (double)p->gravity, (double)ph.air_friction, (unsigned)p->life);
 	}
-	alpha = range_mid((float[2]){ mid.color1[0], mid.color2[0] }) * st->color_mult[0] * 3.4f;       /* the tag's alpha is a density: steam at 0.15 is a visible puff */
-	if (alpha < 0.3f) alpha = 0.3f;
+	alpha = range_mid((float[2]){ mid.color1[0], mid.color2[0] }) * st->color_mult[0] * STEAM_ALPHA;       /* the tag's alpha is a density: steam at 0.15 is a visible puff */
+	/* no alpha floor: the Xbox draws 0.15 at the middle state (ADR-071) */
 	if (alpha > 1.0f) alpha = 1.0f;
 	p->rgba[0] = (uint8_t)colour_byte(mid.color1[1] * st->color_mult[1] * 0.5f * 2.0f);
 	p->rgba[1] = (uint8_t)colour_byte(mid.color1[2] * st->color_mult[2] * 0.5f * 2.0f);
