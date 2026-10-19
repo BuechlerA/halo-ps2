@@ -315,15 +315,16 @@ def apply_event(c: Ctl, typ: int, payload: bytes) -> None:
 
 
 def play(init: Ctl, stream: bytes, length: int):
-    """Reference playback: yields a copy of the control state at ticks 0 .. length - 1 (the C twin is cine_play)."""
+    """Reference playback: yields a copy of the control state at ticks 0 .. length - 1 (the C twin is cine_play). An event's wait is the delay BEFORE it
+    (XBE 0x119690): it fires when the time since the previous event reaches its wait."""
     events = list(walk_stream(stream))
     c = Ctl(**{k: getattr(init, k) for k in Ctl.__dataclass_fields__})
-    i, t_next = 0, 0
+    i, t_prev = 0, 0
     for tick in range(length):
-        while i < len(events) and t_next <= tick:
+        while i < len(events) and t_prev + events[i][3] <= tick:
             _pos, typ, _kind, wait, payload = events[i]
             apply_event(c, typ, payload)
-            t_next += wait
+            t_prev += wait
             i += 1
         yield Ctl(**{k: getattr(c, k) for k in Ctl.__dataclass_fields__})
 

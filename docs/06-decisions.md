@@ -640,11 +640,13 @@ Keyes. The converted display maps are green: a TINT entry with a fourth value co
 Still different: the overlay's whiteness and diagonal beam brightness, real per-pixel wall lighting by dynamic lights, steam
 wind (the particle system physics constants are not decoded), and the exact purple of Cortana (by eye).
 
-## Open item (ADR-066 follow-up): the marines' legs at the hangar tracking shot (tick 4490 .. 4700)
-The video shows marines marching past the camera (boots and shins at floor level); ours show bare floor. Diagnosis: the camera matches (position and pitch), the marines run the recording `pep_run`
-(`cinconv`: throttle (1, 0) for 9 ticks, then (0, 0), a flag change at tick 30, length 235), starting at the flags `grunt_*_pep_run` (x = -27.4, facing +x), so in our run they take about 0.6 wu of steps
-and stand at x = -26.8, beside and behind the camera (-26.2, y 2.7 .. 5.3), out of its field of view. On the Xbox they keep moving through the shot, so the recording's semantics (the 9 / 21 / 9 / 195 waits, the
-throttle scale or a persistent run flag) are not what `cine_play` assumes. Not resolved: it needs the Xbox's recorded-animation playback (XBE) decoded.
+## ADR-067 Recorded animation events wait BEFORE they fire (XBE 0x119690)
+**Decision**: the stream of a recorded animation (`recording_play`, `cinconv` / `cinedef` events) is (type, wait) pairs where an event fires when `wait` ticks have passed since the previous event (the Xbox loop at
+0x119690: `while (event.wait <= elapsed) { apply; elapsed -= wait }`), not `wait` ticks AFTER it as `cinconv.play` and `cine.c play_advance` assumed. `play_advance`, the Python reference `cinconv.play`, the C test's independent hash
+and the synthetic fixtures (`test_cinconv.py` streams, `test_cinedef.c`) follow it; the totals are unchanged (the type-1 end event still closes the recording at length).
+**Why**: the hangar tracking shot (tick 4490 .. 4700) shows marines marching past the camera at floor level on the Xbox, and ours showed bare floor: `pep_run` (throttle (1, 0), waits 9 / 21 / 9 / 195) ran 9 ticks under the
+old reading and 30 under the new one, enough to carry the marines through the camera's field of view. After the change their boots and shins are where the video has them.
+**Consequences**: every recording's timing shifts by one event (movement of walking actors, Keyes' paths, vehicles driven by recordings); `scripts/cmp-intro.sh` cuts were rechecked.
 
 ## Open decisions
 None.

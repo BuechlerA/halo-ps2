@@ -109,7 +109,7 @@ static int check_playback(const cinedef_section *s)
 	CHECK(!p.done && p.tick == 10);
 	cine_play_tick(&p);
 	CHECK(p.done);
-	/* third: version 0 header; the mode and throttle events (the throttle one waits 2 ticks AFTER applying) are both tick 0 */
+	/* third: version 0 header; the mode and throttle events (a wait is the delay before an event) are both tick 0 */
 	CHECK(cine_play_start(&p, s, 2));
 	CHECK(p.length == 3 && p.ctl.mode == 3 && p.ctl.flags == 0x12 && p.ctl.throttle[0] == 0.5f && p.ctl.throttle[1] == -0.5f &&
 	      (p.changed & CINE_CH_MODE) && (p.changed & CINE_CH_THROTTLE));

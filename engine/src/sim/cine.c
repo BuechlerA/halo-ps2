@@ -34,15 +34,19 @@ static uint32_t change_bit(unsigned type)
 	}
 }
 
-/* applies every event due at or before tick `t` */
+/* applies every event due at or before tick `t`. An event's wait is the delay BEFORE it (XBE 0x119690: an event fires when its wait is <= the time since the previous
+ * event, which is then subtracted): the recording `pep_run` (throttle 1 for 30 ticks, not 9) shows the difference. `next_time` is the time of the previous event. */
 static void play_advance(cine_play *p, uint32_t t)
 {
 	cinedef_event ev;
-	while (p->pos < p->bytes && p->next_time <= t) {
-		if (!cinedef_next_event(p->stream, p->bytes, &p->pos, &ev)) {
+	while (p->pos < p->bytes) {
+		uint32_t pos = p->pos;
+		if (!cinedef_next_event(p->stream, p->bytes, &pos, &ev)) {
 			p->pos = p->bytes;                 /* malformed: a validated section never gets here */
 			break;
 		}
+		if (p->next_time + ev.wait > t) break;
+		p->pos = pos;
 		cinedef_apply_event(&p->ctl, &ev);
 		p->changed |= change_bit(ev.type);
 		p->next_time += ev.wait;
