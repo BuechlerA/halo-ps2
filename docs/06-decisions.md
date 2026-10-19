@@ -598,10 +598,10 @@ match the legendary branch). (2) Objects: visible objects are drawn nearest firs
 not alpha tested) never write Z and are drawn in a second pass far to near (`draw_model` pass 0 / 1): the command display's glass wrote Z in front of Keyes and hid him for 12 seconds. (3) The EE clip path drops
 the back faces of single-sided surfaces (`cull_sign`, orientation of the (x, y, w) rows, valid behind the eye; cfg `cullsign 0` turns it off): a camera inside a beam or wall (the hangar fly-in, the bridge window shot)
 saw its inside as a black screen. The VU1 path still draws back faces of triangles that need no clipping. (4) A transparent shader whose map is a cube map (cryo glass) is drawn as nothing (`texconv.blank_texture`)
-instead of flat white. (5) A scripted animation moves its unit by the animation's root motion (frame info dx, dy, dyaw; vertical motion ignored): `units.c custom_root_motion`.
+instead of flat white. (5) A scripted animation moves its unit by the animation's root motion (frame info dx, dy, dyaw; vertical motion ignored): `units.c custom_root_motion`. (6) A shader_model with an environment reflection (cube map at +0x164, brightness +0x144 / +0x154, tint +0x148 / +0x158) and a multipurpose map gets the reflection baked into its colour map: base + brightness x tint x (mean colour of the cube's six faces) x the multipurpose RED channel (`objtex.soso_reflect`): the marines' armour reflects the sage coloured armour cube (143, 155, 137) at 0.6, which is what makes the Xbox marines olive grey instead of rust brown; no runtime cost.
 **Why**: the cut times drifted 20 .. 90 ticks over the intro against the video; Keyes was missing in the hologram briefing; two shots were black.
 **Consequences**: rebuild `a10.obj.hp2` / `a10.tex.hp2`. UNVERIFIED: the dependence of the camera ratio on the scene (three light and two heavy measurements), the cull sign on maps other than a10, root motion of
-non-unit objects (not done). Still different in the intro comparison: crew jumpsuit colours (random on the Xbox), the red alert lighting of the bridge (dynamic lights are not modelled), marine armour and skin, the
+non-unit objects (not done). Still different in the intro comparison: crew jumpsuit colours (random on the Xbox), the red alert lighting of the bridge (dynamic lights are not modelled), the
 hologram's cyan overlay on Keyes, steam and engine particle systems and light attachments (object attachments are not created), planet glow at the windows.
 
 ## Open decisions
