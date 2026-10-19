@@ -154,6 +154,8 @@ typedef struct {
 	float    fade_alpha;             /* 0 clear .. 1 covered */
 	float    fade_from, fade_to;
 	uint32_t fade_ticks, fade_elapsed;
+	uint8_t  effect;                 /* cinematic_screen_effect_start / _stop: the hologram look of the briefing (hud_render draws a teal wash and scan bars) */
+	uint32_t effect_ticks;
 } cine_screen;
 
 /* ---- 5. titles and messages ------------------------------------------------------------------------------------------ */

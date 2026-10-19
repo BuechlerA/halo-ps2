@@ -297,8 +297,8 @@ BI(fade_in)
 }
 
 /* Screen effects (blur / filter / convolution of the cinematic renderer) have no PS2 counterpart: only the on / off state is kept. */
-BI(cinematic_screen_effect_start) { ENTER(cinematic_screen_effect_start); if (m) m->misc.screen_effect = (uint8_t)argb(a, n, 0, 0); return 0; }
-BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) m->misc.screen_effect = 0; return 0; }
+BI(cinematic_screen_effect_start) { ENTER(cinematic_screen_effect_start); if (m) { m->misc.screen_effect = (uint8_t)argb(a, n, 0, 0); if (m->cine) { if (!m->cine->screen.effect && m->misc.screen_effect) m->cine->screen.effect_ticks = 0; m->cine->screen.effect = m->misc.screen_effect; } } return 0; }
+BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) { m->misc.screen_effect = 0; if (m->cine) m->cine->screen.effect = 0; } return 0; }
 NOOP(cinematic_screen_effect_set_convolution)
 NOOP(cinematic_screen_effect_set_filter)
 NOOP(cinematic_screen_effect_set_filter_desaturation_tint)
