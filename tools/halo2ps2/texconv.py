@@ -97,6 +97,9 @@ BUMP_LIGHT = (1, 1)                   # (x, y) step towards the light in texture
 BUMP_GAIN = 0.9                       # measured: the lit hull came out 10 .. 13 % brighter than the Xbox video's at ticks 1050 / 1060 (same hue)
 BUMP_KEY = 1 << 41
 SENV_BUMP_MAP, SENV_BUMP_SCALE = 0x128, 0x124
+SENV_ILLUM_MAP = 0x254     # self illumination map: the glowing part of a screen, a lamp, a window; drawn as an additive pass after the lightmap (ADR-079)
+GLOW_KEY = 1 << 42
+GLOW_BUDGET = 384 * 1024   # bytes of glow textures (pixels + CLUTs) per map: the resident arena has little room (b30 none), later glows are dropped
 LM_BUDGET_BYTES = 512 * 1024         # per BSP, after conversion (see docs/09-tex-section.md)
 LM_DEFAULT_GAIN = 1.0
 CHROMA_STRENGTH = 0.4                # how much of the lightmap colour reaches the vertices and the object lighting (1.0 = all of it)
@@ -178,6 +181,7 @@ class ShaderInfo:
     change_source: int = 0               # colour change (objtex.py): 1..4 = the object's change colour a..d tints a second pass of the part
     mask_bitmap: int | None = None       # its mask: the blue channel of this bitmap becomes the alpha of the base map in that pass
     texture2: int = 0xFFFF               # the second pass's texture: the base map with the mask as alpha (NO_TEXTURE: none)
+    glow_bitmap_id: int | None = None    # an environment shader's self illumination map
     bump_bitmap_id: int | None = None    # an environment shader's bump map (a p8-bump height field), baked into the colour map for BUMP_BAKE bitmaps
     texture: int = NO_TEXTURE            # filled when the texture table is built
     tint: tuple = ()                     # objtex.TINT: rgb multiplier baked into the colour map
@@ -241,6 +245,7 @@ def resolve_shader(m: MapData, shader_id: int) -> ShaderInfo:
             info.blend = BLEND_ALPHA_TEST if info.alpha_test else BLEND_OPAQUE
             info.bitmap_id = _bitmap_ref(m, block, SENV_BASE_MAP)
             info.bump_bitmap_id = _bitmap_ref(m, block, SENV_BUMP_MAP)
+            info.glow_bitmap_id = _bitmap_ref(m, block, SENV_ILLUM_MAP)
         elif e.group in ("sotr", "schi"):
             flags = _read(m.region, block + TRANSPARENT_FLAGS, "<B")[0]
             blend = _read(m.region, block + TRANSPARENT_BLEND, "<H")[0]
@@ -1186,6 +1191,21 @@ def product_texture(m: MapData, imgs: list, source_id: int, tw: int, th: int, fo
     return convert_rgba(source_id, multiply_normalise(layers), tw, th, CLASS_OPAQUE, force_bits, 128)
 
 
+def glow_texture(m: MapData, base: bitmaps.BitmapImage, glow: bitmaps.BitmapImage, source_id: int) -> Ps2Texture:
+    """The self illumination of an environment shader as the texture of its additive pass: the base map times the glow map per colour channel (the glow map is a
+    mask per channel: red only on the red border of a screen, blue only on its blue picture, red only on a lamp; ADR-079), at the base map's converted size."""
+    tw, th = target_size(base.width, base.height)
+    layers = []
+    for img in (base, glow):
+        w, h, rgba = bitmaps.decode_level(img, m.pixels(img), 0)
+        layers.append(resample_rgba(rgba, w, h, tw, th, False))
+    a, g = layers
+    out = bytearray(len(a))
+    for i in range(0, len(a), 4):
+        out[i] = a[i] * g[i] // 255; out[i + 1] = a[i + 1] * g[i + 1] // 255; out[i + 2] = a[i + 2] * g[i + 2] // 255; out[i + 3] = 255
+    return convert_rgba(source_id, bytes(out), tw, th, CLASS_OPAQUE, 0, 128)
+
+
 def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_GAIN,
                 bsp_filter: list[int] | None = None) -> ConvertResult:
     t0 = time.time()
@@ -1196,6 +1216,7 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
     textures: list[Ps2Texture] = []
     seen: dict[tuple[int, int], int] = {}
     reasons: Counter = Counter()
+    glow_bytes = 0
     for s in shaders:
         if s.bitmap_id is None:
             reasons[s.note or "no base map"] += 1
@@ -1237,6 +1258,23 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
         s.texture = seen[key]
         if textures[s.texture].flags & TF_PUNCH and s.alpha_test:
             s.flags |= BF_ALPHA_TEST
+        if s.group == "senv" and s.glow_bitmap_id is not None and s.blend == BLEND_OPAQUE and not prod:
+            gk = (s.glow_bitmap_id | GLOW_KEY, s.bitmap_id)
+            if gk not in seen:
+                try:
+                    gimgs = m.images(s.glow_bitmap_id)
+                    if gimgs and gimgs[0].decodable:
+                        gt = glow_texture(m, images[0], gimgs[0], s.bitmap_id)
+                        if glow_bytes + gt.total_bytes <= GLOW_BUDGET:
+                            glow_bytes += gt.total_bytes
+                            seen[gk] = len(textures)
+                            textures.append(gt)
+                        else:
+                            reasons["glow map over the glow budget"] += 1
+                except bitmaps.BitmapError:
+                    pass
+            if gk in seen:
+                s.texture2 = seen[gk]              # BSP materials have no colour change: texture2 is the glow pass's texture
     untextured_mats = 0
     for b in infos:
         untextured_mats += sum(c for sid, c in b.shaders.items()

@@ -59,6 +59,7 @@ typedef struct {
 
 typedef struct {
 	int   textures, lightmaps, fog;
+	int   glow;                  /* draw the self illumination maps (screens, lamps, windows) as an additive pass after the lightmap: cfg glow, default 1 (ADR-079) */
 	int   only_batch, only_batch_hi;     /* debug: draw only batches lo..hi (only_batch -1 = all) */
 	int   unused_only;                    /* debug: draw only this batch index (-1 = all) */
 	int   cull_sign;                    /* back face culling: 0 off, +1 / -1 = which orientation is the back */

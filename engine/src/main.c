@@ -123,6 +123,7 @@ static void apply_options(void)
 	bsp_render_options(&o);
 	o.textures = (int)cfg_int(&s_cfg, "textures", 1);
 	o.lightmaps = (int)cfg_int(&s_cfg, "lightmaps", 1);
+	o.glow = (int)cfg_int(&s_cfg, "glow", 1);
 	o.debug = (int)cfg_int(&s_cfg, "debug", 0);
 	if (cfg_floats(&s_cfg, "onlybatch", f, 2) >= 1) { o.only_batch = (int)f[0]; o.only_batch_hi = cfg_floats(&s_cfg, "onlybatch", f, 2) == 2 ? (int)f[1] : (int)f[0]; }
 	if (cfg_floats(&s_cfg, "clipbudget", f, 1) == 1) o.clip_budget_ms = f[0];

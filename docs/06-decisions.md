@@ -839,5 +839,17 @@ rotations turns the whole body over: its semantics (and the frame for a neutral 
 the shot puts the lens 3 cm from the nose, which the Xbox clips the same way (not verified against it).
 **Consequences**: no pack changes. New cfg keys: `objclip`, `objclipms`, `animlog`; `objtrace` / `nearlog` / `nearnodes` stay the debug tools.
 
+## ADR-079 Self illumination of environment shaders: an additive glow pass (the bridge screens were dark)
+**Decision**: a `shader_environment` has a self illumination map (+0x254: `monitors glow`, `light glow`, `poa-a glow` .. `poa-d glow`, `tech rack mount glow`, `vending machines glow`) that the converter ignored (ADR-004/005),
+so every screen, lamp and lit window drew as its dull base map. The glow map is a mask per colour channel (the screens' glow is red only on the red border and blue only on the blue picture, a lamp's is pure red; 337 distinct
+values on `monitors glow`): the emission is the base map times the glow map per channel. `texconv.glow_texture` bakes that product at the base map's converted size and stores it as an extra texture whose index goes in the
+binding's `texture2` (BSP materials have no colour change; the field is the one ADR-065 added for objects). `bsp_render_build` has a pass 3 after the lightmap multiply: every visible material with `tex2 >= 0` is drawn again with
+that texture, additive (`Cs + Cd`), Z tested and read only, so the lightmap does not dim it (cfg `glow 0` switches the pass off). `GLOW_BUDGET` caps the glow textures of a map at 384 KiB.
+**Why**: the Xbox shows the bridge's wall and ceiling displays as bright blue pictures with red labels and the consoles lit; here they were dark. Measured on a10: 9 glow textures, TEXS 1.80 -> 1.85 MiB, level arena
+high water 24731 -> 25063 KB of 25600 (about 540 KB of margin), GS texture window 137 of 271 pages free (was 159); the whole intro at real speed drops 24 of 3701 frames, as before.
+**Not done**: the shader's animation (self illumination colour A / B and its function: flicker of the fluorescent lights, the pulse of alert lights; the fields at +0x230 .. +0x254 are read as 1.0 / 0 and not used), the same
+for object shaders (`soso` self illumination), the other maps' packs (rebuild with `scripts/build-world.sh`; b30 has no arena margin, the budget may drop its glows).
+**Consequences**: `a10.tex.hp2` must be rebuilt; a pack without glow textures draws as before.
+
 ## Open decisions
 None.

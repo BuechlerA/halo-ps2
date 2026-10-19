@@ -788,6 +788,35 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		}
 	}
 
+	/* pass 3: self illumination (ADR-079): a material whose binding carries a glow texture (the senv self illumination map: the bridge's screens, lamps, the Pillar's
+	 * windows) is drawn again, additive (Cs + Cd), Z tested and read only, after the lightmap so the glow is not dimmed by it */
+	if (s_opt.glow && s_opt.textures && s_src.texture) {
+		int regrouped = 0;
+		for (i = 0; i < nused; i++) {
+			unsigned m = s_used[i], n = 0;
+			bsp_material bm = bsp_get_material(s_bsp, m);
+			const mat_binding_t *mb = &s_bind[m];
+			tex_image_t img;
+			u64 tex0;
+			float scale = 1.0f / (float)(1u << bm.uv_shift);
+			if (mb->tex2 < 0 || mb->cc || (mb->flags & MAT_BLEND)) continue;
+			if (s_src.texture(s_src.user, mb->tex2, &img) != 0) continue;
+			tex0 = resident_tex0((unsigned)mb->tex2, &img, 0);
+			if (!tex0) continue;
+			if (!regrouped) { group_clipped(0); regrouped = 1; }       /* the lightmap pass grouped the clipped polygons by page */
+			ad[n].data = tex0;                             ad[n++].addr = GS_A_TEX0_1;
+			ad[n].data = GS_TEX1(1, 0, 1, 1, 0, 0, 0);     ad[n++].addr = GS_A_TEX1_1;
+			ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);       ad[n++].addr = GS_A_CLAMP_1;
+			ad[n].data = GS_ALPHA(0, 2, 2, 1, 0x80);       ad[n++].addr = GS_A_ALPHA_1;
+			ad[n].data = GS_TEST(0, 1, 0, 0, 0, 0, 1, 2);  ad[n++].addr = GS_A_TEST_1;
+			ad[n].data = GS_ZBUF(s_zbuf_page, GS_PSMZ24, 1); ad[n++].addr = GS_A_ZBUF_1;
+			emit_state(c, ad, n, scale * mb->uv_scale[0], scale * mb->uv_scale[1], GS_PRIM(GSX_PRIM_TRIANGLE, 1, 1, 0, 1, 0, 0, 0, 0));
+			if (!(s_opt.debug & 1)) emit_batches(c, s_sorted + s_mat_start[m], s_mat_count[m], entry_lit);
+			emit_clipped(c, m, 0, GS_PRIM(GSX_PRIM_TRIANGLE, 1, 1, 0, 1, 0, 0, 0, 0), &cgs);
+			if ((i & 31) == 31) bsp_render_poll();
+		}
+	}
+
 	if (s_obj_pass) {
 		render_ctx_t rc;
 		rc.chain = c; rc.cam = cam; rc.clip = (const float (*)[4])clip; rc.frustum = &fr; rc.frame = frame; rc.opt = &s_opt; rc.sky_visible = s_vis.sky_visible; rc.sky_index = s_vis.sky_index;

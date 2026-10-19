@@ -101,6 +101,7 @@ ignored unless the config had one).
 | `objanim 0/1`, `fpanim 0/1` | play idle animations on placed objects / on the first-person arms | 1, 1 |
 | `objhidden 1` | also spawn the placements scripts would create later (stress population) | 0 |
 | `objdist <wu>`, `objcap <n>` | object draw distance (units) and per-frame batch cap | 200, 900 |
+| `glow 0|1` | the self illumination pass of environment materials (ADR-079) | 1 |
 | `objclip 0|1`, `objclipms <ms>` | clip model triangles the VU1 would drop (near plane, guard band) on the EE for objects near the lens, and the per-frame time cap (ADR-078) | 1, 3 |
 | `animlog 1` | print every `custom_animation` call and whether it resolved | off |
 | `objfarpx <px>` | objects past `objdist` are still drawn when at least this many px across; none is cut by distance in a cinematic (ADR-077) | 20 |
