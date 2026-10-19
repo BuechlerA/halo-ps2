@@ -667,5 +667,13 @@ the jet streams out as a wispy cloud like the video's. The point physics step (0
 the video contradicts). The pool is 560 particles (was 320).
 **Still approximate**: sprite size (120 x the tag scale), emission rate (2 x the tag's), lifetime (1.8 x the states' transitions) and alpha are tuned against the cryo steam of the video by measuring the bright-pixel share left of the pod (0.24 .. 0.53 against 0.52 .. 0.59 in frames 6900 and 6940, which vary run to run with the random numbers); the particle state / system state transition timing is ours (durations as bounds).
 
+## ADR-070 Cortana's texture: UVs were right, the body map was not (alpha ignored)
+**Answer to the report "Cortana's texture on PS2 is broken"**: the UVs are taken over exactly (checked against the tag: body u .002 .. .978, v 1.004 .. 2.0, hair u 0 .. 1, v 1 .. 2; the model's V runs 1 .. 2, which the 16-bit
+quantiser and the `uv_shift` keep; the shader's own map scales (body 1 x 4 noise, 5 x 5 and 4 x 4 particle streams) belong to the layers we do not draw). The break was the colour map: `cortana_body` is a 512 x 512 atlas of black circuitry
+whose ALPHA (mean 60) is the circuit shape, with the face at its lower right; the Xbox's combiner uses that alpha, the engine's additive blend ignores it, so the whole atlas (face and circuit patches) showed as speckled noise. The
+converter now adds a uniform purple base (`objtex.HOLOGRAM_FILL`, (22, 6, 46)) to the body map so she draws as the video's smooth translucent purple figure with the circuit lines on it; the tint gains are re-calibrated against the video
+at the same moment (tick 3202: about (195, 129, 235) against (168, 109, 216) in the video, within 15 %; the figure covers more area than the video's wispy one because the combiner's two particle-stream layers are not drawn).
+Hair (a plain purple strand map) was fine.
+
 ## Open decisions
 None.

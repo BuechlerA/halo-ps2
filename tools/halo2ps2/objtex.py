@@ -279,6 +279,9 @@ def target_size(w: int, h: int, max_dim: int) -> tuple[int, int]:
 # Cortana's hologram: her body and hair are additive `sotr` shaders whose FIRST map is a grey noise mask (the Xbox combiner multiplies it into the colour map); the converter took the
 # mask, so she came out as an invisible grey. The colour maps are the purple bitmaps of the same shader (body 512 x 512 with an alpha shape, hair 128 x 256): they replace the mask, brightened
 # because the Xbox's combiner adds the layers (UNVERIFIED gain, chosen so the body reaches the video's purple (0.62, 0.32, 1.0) at its brightest).
+# Cortana's body atlas is circuitry on black (its alpha, 60 on average, is the circuit shape) with the face at the bottom right: the Xbox shows the face and a smooth figure,
+# so the colour map gets a uniform purple base added (the engine's add ignores the alpha).
+HOLOGRAM_FILL = {"characters\\cortana\\bitmaps\\cortana_body": (22, 6, 46)}
 BITMAP_OVERRIDE = {"characters\\cortana\\shaders\\cortana_body": "characters\\cortana\\bitmaps\\cortana_body",
                    "characters\\cortana\\shaders\\cortana_hair": "characters\\cortana\\bitmaps\\cortana_hair"}
 TINT = {"characters\\cortana\\shaders\\cortana_body": (1.63, 1.53, 1.80), "characters\\cortana\\shaders\\cortana_hair": (1.63, 1.53, 1.80)}
@@ -312,6 +315,13 @@ def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_
                     rgba[4 * i + c] = min(255, rgba[4 * i + c] + add[c] * a // 255)
         rgba = bytes(rgba)
     rgba = texconv.resample_rgba(rgba, w, h, tw, th, klass != texconv.CLASS_OPAQUE)
+    if m.by_id[source_id].path in HOLOGRAM_FILL:              # the body atlas is mostly black circuitry: lift it to a uniform translucent purple like the video's figure
+        rgba = bytearray(rgba)
+        fill = HOLOGRAM_FILL[m.by_id[source_id].path]
+        for q in range(0, len(rgba), 4):
+            for c in range(3):
+                rgba[q + c] = min(255, rgba[q + c] + fill[c])
+        rgba = bytes(rgba)
     if tint:
         rgba = bytearray(min(255, int(v * tint[i & 3] + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
         if len(tint) > 3:
