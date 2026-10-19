@@ -112,6 +112,25 @@ static uint32_t misc_rand(mission_t *m)
 	return x;
 }
 
+/* camera_set's duration as the Xbox runs it. The director's remaining time (seconds, ticks / 30) falls by speed x dt per update (XBE 0x120a90, camera_time = remaining x 30), and
+ * dt is not exactly a tick. Measured against the cut times of the Xbox intro video (scripts/cmp-intro.sh, ADR-065): the transitions the scripts wait for with camera_time last
+ * 200 -> 180, 300 -> 270 and 180 -> 180 ticks in the bridge and the cryo bay, but 300 -> 295 and 500 -> 481 in the hangar (BSP 8): the ratio is 0.9 in light scenes and 0.96 ..
+ * 0.98 in the heavy one, which looks like the Xbox's frame time. Other lengths take 0.9 (0.97 in the hangar). */
+static uint32_t camera_ticks(const mission_t *m, int64_t n)
+{
+	static const struct { int64_t n, eff; } light[] = { { 180, 180 }, { 200, 180 }, { 300, 270 } };
+	static const struct { int64_t n, eff; } heavy[] = { { 300, 295 }, { 500, 481 } };
+	int bsp = m->want_bsp >= 0 ? m->want_bsp : m->cur_bsp;
+	unsigned i;
+	if (n <= 0) return 0u;
+	if (bsp == 8) {
+		for (i = 0; i < sizeof heavy / sizeof heavy[0]; i++) if (heavy[i].n == n) return (uint32_t)heavy[i].eff;
+		return (uint32_t)((n * 97 + 50) / 100);
+	}
+	for (i = 0; i < sizeof light / sizeof light[0]; i++) if (light[i].n == n) return (uint32_t)light[i].eff;
+	return (uint32_t)((n * 9 + 5) / 10);
+}
+
 /* ---- camera ---------------------------------------------------------------------------------------------------------------------------- */
 static int cam_point_pose(const mission_t *m, int64_t idx, cine_pose *p)
 {
@@ -153,8 +172,12 @@ BI(camera_set)
 	if (!m || !m->cine || !cam_point_pose(m, argh(a, n, 0), &p)) { if (m) mission_note_missing(m, "camera_set"); return 0; }
 	refresh_player_pose(m);
 	m->misc.cam_anchor_obj1 = 0;
-	if (m->log) printf("[camset] t%u point %d ticks %d\n", m->tick, (int)(argh(a, n, 0) & 0xFFFF), (int)argi(a, n, 1, 0));
-	cine_cam_set(&m->cine->cam, &p, (uint32_t)(argi(a, n, 1, 0) > 0 ? argi(a, n, 1, 0) : 0), MISC_CAMERA_EASE);
+	if (m->log) {
+		devdef_camera dc = devdef_get_camera(m->dev, (uint32_t)(argh(a, n, 0) & 0xFFFF));
+		printf("[camset] t%u point %d ticks %d pos %.2f %.2f %.2f ori %.3f %.3f %.3f -> ypr %.3f %.3f %.3f fov %.3f\n", m->tick, (int)(argh(a, n, 0) & 0xFFFF), (int)argi(a, n, 1, 0),
+		       (double)p.pos[0], (double)p.pos[1], (double)p.pos[2], (double)dc.ori[0], (double)dc.ori[1], (double)dc.ori[2], (double)p.yaw, (double)p.pitch, (double)p.roll, (double)p.fov);
+	}
+	cine_cam_set(&m->cine->cam, &p, camera_ticks(m, argi(a, n, 1, 0)), MISC_CAMERA_EASE);
 	return 0;
 }
 
@@ -169,7 +192,7 @@ BI(camera_set_relative)
 	if (!object_frame(m, obj, &f)) { mission_note_missing(m, "camera_set_relative"); return 0; }
 	refresh_player_pose(m);
 	m->misc.cam_anchor_obj1 = (int16_t)(obj + 1);
-	cine_cam_set_relative(&m->cine->cam, &p, (uint32_t)(argi(a, n, 1, 0) > 0 ? argi(a, n, 1, 0) : 0), MISC_CAMERA_EASE, &f);
+	cine_cam_set_relative(&m->cine->cam, &p, camera_ticks(m, argi(a, n, 1, 0)), MISC_CAMERA_EASE, &f);
 	return 0;
 }
 

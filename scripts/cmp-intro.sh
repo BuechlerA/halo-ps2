@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REF="$1"; OUT="$2"; FIRST="${3:-60}"; LAST="${4:-3700}"; STEP="${5:-120}"; OFF="${6:-0}"
 shift $(( $# < 6 ? $# : 6 )) || true
 mkdir -p "$OUT"
-{ sed -e "s/^frames .*/frames $((LAST + 2))/" ${PACK:+-e "s#^pack .*#pack $PACK#"} ${TEX:+-e "s#^tex .*#tex $TEX#"} ${OBJ:+-e "s#^obj .*#obj $OBJ#"} "$ROOT/scripts/paths/a10mission.cfg"
+{ sed -e "s/^frames .*/frames $((LAST + 2))/" ${PACK:+-e "s#^pack .*#pack $PACK#"} ${TEX:+-e "s#^tex .*#tex $TEX#"} ${OBJ:+-e "s#^obj .*#obj $OBJ#"} "${CFG:-$ROOT/scripts/paths/a10intro.cfg}"
   for ((f = FIRST; f <= LAST; f += STEP)); do echo "fbdump $f"; done
   for l in "$@"; do echo "$l"; done; } > "$OUT/halo.cfg"
 SPEED="${SPEED:-8}" "$ROOT/scripts/run-headless.sh" -t 1200 -c "$OUT/halo.cfg" -l "$OUT/emu.log" > "$OUT/out.txt" 2>&1 || true

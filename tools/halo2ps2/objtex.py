@@ -278,6 +278,10 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
         except bitmaps.BitmapError:
             images = []
         if not images or not images[0].decodable:
+            if s.group in ("sotr", "schi") and s.blend in (texconv.BLEND_ADD, texconv.BLEND_ALPHA):
+                s.blank = True                       # a cube map reflection layer: drawn as nothing (see texconv.blank_texture)
+                reasons["cube map reflection layer drawn as nothing"] = reasons.get("cube map reflection layer drawn as nothing", 0) + 1
+                continue
             s.bitmap_id, s.flags, s.note = None, s.flags | texconv.BF_UNTEXTURED, "base map is not a decodable 2D image"
             reasons[s.note] = reasons.get(s.note, 0) + 1
             continue
@@ -302,6 +306,14 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
     seen: dict[tuple[int, int, int], int] = {}
     for sid in ids:
         s = shaders[sid]
+        if s.blank:
+            add = s.blend == texconv.BLEND_ADD
+            bkey = (texconv.PRODUCT_KEY * 2 + int(add), 0, 0)
+            if bkey not in seen:
+                seen[bkey] = len(textures)
+                textures.append(texconv.blank_texture(s.bitmap_id, add))
+            s.texture = seen[bkey]
+            continue
         if s.bitmap_id is None:
             continue
         key = (s.bitmap_id, texconv.klass_cap_for(s), PRODUCT_KEY | s.product[-1] if s.product else 0)

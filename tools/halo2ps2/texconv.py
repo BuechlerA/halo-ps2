@@ -165,6 +165,7 @@ class ShaderInfo:
     mask_bitmap: int | None = None       # its mask: the blue channel of this bitmap becomes the alpha of the base map in that pass
     texture2: int = 0xFFFF               # the second pass's texture: the base map with the mask as alpha (NO_TEXTURE: none)
     texture: int = NO_TEXTURE            # filled when the texture table is built
+    blank: bool = False                  # a transparent shader whose map is not a 2D image (a cube map reflection): drawn as nothing, not as flat grey
     product: tuple = ()                  # objtex.sotr_product: bitmap tag ids whose product is the texture (a multi-map transparent generic shader)
 
 
@@ -1072,6 +1073,12 @@ def sotr_product(m: MapData, shader_id: int) -> tuple[int, ...]:
     return tuple(ids) if all(i is not None for i in ids) else ()
 
 
+def blank_texture(source_id: int, additive: bool) -> Ps2Texture:
+    """8 x 8 texture that draws nothing: black for an additive shader, fully transparent for an alpha blended one."""
+    px = bytes([0, 0, 0, 255 if additive else 0] * 64)
+    return convert_rgba(source_id, px, 8, 8, CLASS_OPAQUE if additive else CLASS_BLEND, 4, 128)
+
+
 def multiply_normalise(layers: list[bytes]) -> bytes:
     """Channel-wise product of equally sized RGBA layers, scaled so the brightest colour channel reaches 255; alpha 255."""
     acc = list(layers[0])
@@ -1107,6 +1114,15 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
             continue
         images = m.images(s.bitmap_id)
         if not images or not images[0].decodable:
+            if s.group in ("sotr", "schi") and s.blend in (BLEND_ADD, BLEND_ALPHA):
+                add = s.blend == BLEND_ADD
+                key = (PRODUCT_KEY * 2 + int(add), 0)
+                if key not in seen:
+                    seen[key] = len(textures)
+                    textures.append(blank_texture(s.bitmap_id, add))
+                s.texture, s.blank = seen[key], True
+                reasons["cube map reflection layer drawn as nothing"] += 1
+                continue
             s.bitmap_id, s.flags, s.note = None, s.flags | BF_UNTEXTURED, "base map is not a decodable 2D image"
             reasons[s.note] += 1
             continue

@@ -103,14 +103,14 @@ static void test_camera(void)
 	fresh();
 	CHECK(X.dev.camera_count > 4 && X.dev.flag_count > 4);
 	c = devdef_get_camera(&X.dev, 3);
-	a[0] = hv(3, 13); a[1] = sv(30);
+	a[0] = hv(3, 13); a[1] = sv(100);                 /* camera_set lasts 0.9 of its ticks unless measured otherwise (hs_host_misc.c camera_ticks) */
 	call("camera_set", a, 2, HS_VOID);
 	CHECK(X.cine.cam.control && X.cine.cam.mode == CINE_CAM_POSE);
-	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 30);
-	step(15);
-	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 15);
-	r = CALL0("camera_time", HS_REAL); CHECK(NEAR(r.v.f, 15.0f, 0.01f));
-	step(15);
+	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 90);
+	step(45);
+	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 45);
+	r = CALL0("camera_time", HS_REAL); CHECK(NEAR(r.v.f, 45.0f, 0.01f));
+	step(45);
 	r = CALL0("camera_time", HS_SHORT); CHECK(r.v.i == 0);
 	{
 		cine_pose p = cine_cam_pose(&X.cine.cam);
