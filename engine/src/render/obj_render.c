@@ -184,20 +184,29 @@ static int model_has_blend(const obj_render_t *o, int model, const uint16_t *per
 }
 
 /* GS TEX0 of the streamed high resolution variant of object texture `tex`, or 0 (none, not yet loaded, over this frame's load budget): the caller falls back to the resident one. */
+/* A variant whose upload failed (the GS texture cache had no room) is not read from the disk again for HIRES_RETRY frames: without this the bay shot at tick ~1200 re-read a 129 KB
+ * variant every frame (ADR-077: the object pass cost 20 ms instead of 4 and the intro dropped 10 % of its frames). */
+#define HIRES_RETRY 90u
+#define HIRES_RETRY_MAX 512u
+static uint32_t s_hires_retry[HIRES_RETRY_MAX];
+
 static u64 hires_tex0(obj_render_t *o, int tex)
 {
 	hires_view v;
 	tex_image_t img;
+	int was_resident;
+	u64 t0;
 	if (!o->hires || tex < 0 || hires_info(o->hires, (unsigned)tex, &v) != 0) return 0;
-	if (!rb_extra_resident(o->hires_key_base, (unsigned)tex)) {
+	was_resident = rb_extra_resident(o->hires_key_base, (unsigned)tex);
+	if (!was_resident) {
+		if ((unsigned)tex < HIRES_RETRY_MAX && o->frame_no < s_hires_retry[tex]) return 0;
 		if (hires_load(o->hires, (unsigned)tex, &v) != 0) return 0;
 		SyncDCache((void *)v.clut, (u8 *)v.pixels + v.pixel_bytes);       /* the DMA reads RAM, not the cache */
 	}
 	img.pixels = v.pixels; img.clut = v.clut; img.pixel_bytes = v.pixel_bytes; img.clut_bytes = v.clut_bytes; img.w = v.w; img.h = v.h; img.psm = v.psm;
-	{
-		u64 t0 = rb_extra_tex0(o->hires_key_base, (unsigned)tex, &img, 0);
-		return o->want_hi == 2 ? 0 : t0;
-	}
+	t0 = rb_extra_tex0(o->hires_key_base, (unsigned)tex, &img, 0);
+	if (!t0 && !was_resident && (unsigned)tex < HIRES_RETRY_MAX) s_hires_retry[tex] = o->frame_no + HIRES_RETRY;
+	return o->want_hi == 2 ? 0 : t0;
 }
 
 static unsigned draw_model(obj_render_t *o, const render_ctx_t *rc, int model, const uint16_t *perm, unsigned regions,
