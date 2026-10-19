@@ -286,16 +286,44 @@ def target_size(w: int, h: int, max_dim: int) -> tuple[int, int]:
 # so the colour map gets a uniform purple base added (the engine's add ignores the alpha).
 # Cortana's body shader stacks two scrolling `particle_stream` maps (5 x 5 and 4 x 4) over the body: drawn as static additive layers, brightened (the maps are dark purple).
 CORTANA_LAYER_SHADER = "characters\\cortana\\shaders\\cortana_body"
-CORTANA_LAYERS = (2, 3)
+CORTANA_LAYERS = ()                                   # superseded by bake_cortana_body (the streams are baked into the body texture)
 STREAM_TINT = (3.0, 2.0, 3.0)
-HOLOGRAM_FILL = {"characters\\cortana\\bitmaps\\cortana_body": (0, 0, 8)}
+HOLOGRAM_FILL = {}
 BITMAP_OVERRIDE = {"characters\\cortana\\shaders\\cortana_body": "characters\\cortana\\bitmaps\\cortana_body",
                    "characters\\cortana\\shaders\\cortana_hair": "characters\\cortana\\bitmaps\\cortana_hair"}
-TINT = {"characters\\cortana\\shaders\\cortana_body": (1.63, 1.53, 1.80), "characters\\cortana\\shaders\\cortana_hair": (1.63, 1.53, 1.80)}
+TINT = {}
 # The command display's hologram parts (grid, numbers, radar, trajectory lines): the Xbox shows them cyan-white, their converted maps are green.
 for _n in ("gas giant grid top left", "no 1s", "indicators", "poa peremeter grid", "halo grid", "poa", "trajectory a", "trajectory b", "trajectory c", "trajectory d", "trajectory e"):
     TINT["levels\\a10\\devices\\command display\\shaders\\" + _n] = (0.55, 1.0, 1.0, 0.9)      # 4th value: blue = max(blue, 0.9 x green) (cyan from green)
 SKY_GAIN = {"sky\\sky_x10\\bitmaps\\space": 2.5}
+
+
+CORTANA_BODY_BITMAP = "characters\\cortana\\bitmaps\\cortana_body"
+
+
+def bake_cortana_body(m: texconv.MapData, w: int, h: int, rgba: bytes) -> bytes:
+    """The `cortana_body` transparent generic shader, decoded from its stage records (112 B each; colour inputs at +0x3C, enum: 5..8 map colour 0..3, 11 scratch colour 0,
+    13 constant colour 0, 16 map alpha 1, 21 scratch alpha 0; output 1 = scratch colour 0): stage 0 scratch0 = map1.alpha x map2.rgb + (1 - map1.alpha) x map3.rgb, stage 1
+    scratch0 += constant0 x map1.rgb (constant0 = white .. 0.87 grey), stage 2 scratch0 x= scratch alpha 0 (0.85 .. x noise alpha); maps: 0 noise, 1 `cortana_body` (colour and
+    the circuit shape in its alpha), 2 and 3 `particle_stream` at uv scales 5 x 5 and 4 x 4. The streams scroll on the Xbox; baked static, tiled in the body's uv space at the body's size."""
+    streams = [e for e in m.index.entries if e.group == "bitm" and e.path.endswith("particle_stream")]
+    if not streams:
+        return rgba
+    img = m.images(streams[0].tag_id)[0]
+    sw, sh, srgba = bitmaps.decode_level(img, m.pixels(img), 0)
+    out = bytearray(len(rgba))
+    for y in range(h):
+        for x in range(w):
+            i = 4 * (y * w + x)
+            a = rgba[i + 3] / 255.0
+            u, v = x / w, y / h
+            p2 = 4 * (int((v * 5.0 % 1.0) * sh) * sw + int((u * 5.0 % 1.0) * sw))
+            p3 = 4 * (int((v * 4.0 % 1.0) * sh) * sw + int((u * 4.0 % 1.0) * sw))
+            for c in range(3):
+                col = a * srgba[p2 + c] + (1.0 - a) * srgba[p3 + c] + rgba[i + c] * 0.935       # constant colour 0 averages 0.935
+                out[i + c] = min(255, int(col * 0.85 + 0.5))
+            out[i + 3] = 255
+    return bytes(out)
 
 
 def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_id: int, klass_cap: int,
@@ -322,6 +350,8 @@ def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_
                     rgba[4 * i + c] = min(255, rgba[4 * i + c] + add[c] * a // 255)
         rgba = bytes(rgba)
     rgba = texconv.resample_rgba(rgba, w, h, tw, th, klass != texconv.CLASS_OPAQUE)
+    if m.by_id[source_id].path == CORTANA_BODY_BITMAP:       # the shader's three stage combiner program, baked (see bake_cortana_body)
+        rgba = bake_cortana_body(m, tw, th, rgba)
     if m.by_id[source_id].path in HOLOGRAM_FILL:              # the body atlas is mostly black circuitry: lift it to a uniform translucent purple like the video's figure
         rgba = bytearray(rgba)
         fill = HOLOGRAM_FILL[m.by_id[source_id].path]

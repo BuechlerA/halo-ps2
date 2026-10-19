@@ -675,5 +675,12 @@ converter now adds a uniform purple base (`objtex.HOLOGRAM_FILL`, (22, 6, 46)) t
 at the same moment (tick 3202: about (195, 129, 235) against (168, 109, 216) in the video, within 15 %; the figure covers more area than the video's wispy one because the combiner's two particle-stream layers are not drawn).
 Hair (a plain purple strand map) was fine. Fill sweep against the video at tick 3202 (purple pixel count left of Keyes, video 5184, colour (168, 109, 216)): fill (22, 6, 46) 19508, (14, 3, 34) 16176, (6, 1, 18) 9926, (0, 0, 8) 7054; the last is kept: 36 % over the video's count, colour (178, 123, 228). Her body shader's two `particle_stream` layers (5 x 5 and 4 x 4 UV scale) are now drawn as static additive layers (`objtex.CORTANA_LAYERS`, `resolve_layer` handles sotr map strides), which adds the streaky texture of the video; they scroll on the Xbox and are static here.
 
+## ADR-070 addendum: Cortana's body shader decoded and baked (no chosen constants left)
+The three stage combiner program of `cortana_body` was read from the tag's stage records (112 B each; colour inputs at +0x3C, enum 5..8 map colour 0..3, 11 scratch colour 0, 13 constant colour 0, 16 map alpha 1, 21 scratch alpha 0): stage 0
+`scratch0 = map1.alpha x map2.rgb + (1 - map1.alpha) x map3.rgb`, stage 1 `scratch0 += constant0 x map1.rgb` (constant0 white .. 0.87 grey), stage 2 `scratch0 x= scratch alpha 0` (0.85). The maps are 0 noise, 1 `cortana_body`
+(colour; its alpha is the circuit shape), 2 and 3 `particle_stream` at uv scales 5 x 5 and 4 x 4. `objtex.bake_cortana_body` bakes exactly that into the body texture (streams static, tiled in the body's uv space); the base fill, the tint
+gains and the extra layers of the sweep above are gone. Measured against the video at tick 3202: purple pixels 3913 (video 5184), average (148, 112, 176) against (168, 109, 216): 12 % dimmer in red, 19 % in blue, no constant fitted.
+The hair shader was not decoded (it keeps its plain strand map, untinted).
+
 ## Open decisions
 None.
