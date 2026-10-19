@@ -205,7 +205,7 @@ static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type
 	fx_particle *p = alloc_particle(f);
 	fxd_pctl_pstate first, mid;
 	fxd_sprite spr;
-	float life_s = 0.0f, bl[3], bu[3], d[3], cone, a, speed, alpha;
+	float life_s = 0.0f, bl[3], bu[3], d[3], alpha;
 	unsigned i, n = ty->pstate_count, k;
 	(void)pc;
 	if (!p || n == 0) return;
@@ -233,9 +233,8 @@ static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type
 		for (i = 0; i < 3; i++) rv[i] = rnd01(f) * 2.0f - 1.0f;
 		rl = sqrtf(rv[0] * rv[0] + rv[1] * rv[1] + rv[2] * rv[2]);
 		if (rl < 1e-3f) { rv[0] = 1.0f; rv[1] = rv[2] = 0.0f; rl = 1.0f; }
-		cone = 0.0f; a = 0.0f; (void)bl; (void)bu;
+		(void)bl; (void)bu;
 		for (i = 0; i < 3; i++) { d[i] = rv[i] / rl * c1 + dir[i] * (1.0f - c1); p->pos[i] = pos[i]; p->vel[i] = d[i] * spd / TICKS; }
-		speed = spd;
 	}
 	alpha = range_mid((float[2]){ mid.color1[0], mid.color2[0] }) * st->color_mult[0] * 3.4f;       /* the tag's alpha is a density: steam at 0.15 is a visible puff */
 	if (alpha < 0.3f) alpha = 0.3f;
