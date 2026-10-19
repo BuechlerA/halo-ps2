@@ -462,6 +462,7 @@ class FxSet:
     objects: list[int]                          # object tags created by parts (not converted, models exported)
     problems: list[str] = field(default_factory=list)
     stats: Counter = field(default_factory=Counter)
+    attach: list[tuple[int, int, int, str]] = field(default_factory=list)   # (object tag, kind ATT_*, attached tag, marker name): FXAT
 
 
 # ---- tag region access ---------------------------------------------------------------------------------------------
@@ -576,6 +577,35 @@ class TagMemory:
         return out
 
 
+# object attachments (FXAT): the object tag's attachments block (+0x140 reflexive, 72 B each: +0x00 tag reference (group, path ptr, len, id), +0x10 char[32]
+# marker name, then the primary / secondary scale functions) [verified on a10 a30 b30: every reference resolves to a tag of its group on the 258 attachments;
+# groups ligh 144, lsnd 77, cont 28, effe 24, pctl 4, mgs2 1]. Kept: particle systems and effects (what the engine can draw).
+ATT_PCTL, ATT_EFFE = 1, 2
+OBJECT_GROUPS = ("scen", "vehi", "bipd", "mach", "ctrl", "lifi", "eqip", "weap", "garb", "proj", "ssce", "plac")
+ATTACH_OFF, ATTACH_SIZE = 0x140, 72
+
+
+def read_attachments(m: texconv.MapData) -> list[tuple[int, int, int, str]]:
+    out = []
+    for e in m.index.entries:
+        if e.group not in OBJECT_GROUPS or not e.data_address:
+            continue
+        b = m.tag_off(e)
+        if b < 0 or b + ATTACH_OFF + 8 > len(m.region):
+            continue
+        n, a = struct.unpack_from("<II", m.region, b + ATTACH_OFF)
+        if not 0 < n < 16 or not 0 <= a - m.base < len(m.region) - n * ATTACH_SIZE:
+            continue
+        for k in range(n):
+            raw = m.region[a - m.base + k * ATTACH_SIZE:a - m.base + (k + 1) * ATTACH_SIZE]
+            grp, tid = raw[:4][::-1].decode("latin1"), struct.unpack_from("<I", raw, 12)[0]
+            t = m.by_id.get(tid)
+            if t is None or t.group != grp or grp not in ("pctl", "effe"):
+                continue
+            out.append((e.tag_id, ATT_PCTL if grp == "pctl" else ATT_EFFE, tid, raw[0x10:0x30].split(b"\0")[0].decode("latin1")))
+    return sorted(out)
+
+
 def effect_closure(m: texconv.MapData, all_effects: bool = False) -> tuple[list[int], list[int]]:
     """(effect tag ids, object tag ids created by their parts), both sorted. See the module docstring."""
     mem = TagMemory(m)
@@ -596,6 +626,9 @@ def effect_closure(m: texconv.MapData, all_effects: bool = False) -> tuple[list[
         for e in m.index.entries:
             if e.group == "effe":
                 add(e.tag_id)
+    for _o, kind, tid, _mk in read_attachments(m):
+        if kind == ATT_EFFE:
+            add(tid)
     objects: set[int] = set()
     seen_tags: set[int] = set()
     while queue:
@@ -945,6 +978,16 @@ def collect(m: texconv.MapData, all_effects: bool = False) -> FxSet:
                     particles[c.particle_tag] = pd
                     want_bitmap(pd.bitmap_tag)
                     want_physics(pd.physics_tag)
+    attach = read_attachments(m)
+    for _o, kind, tid, _mk in attach:
+        if kind == ATT_PCTL and tid not in pctls:
+            pc = parse_pctl(r, m.by_id[tid], problems, stats)
+            pctls[tid] = pc
+            want_physics(pc.physics_tag)
+            for t in pc.types:
+                for ps in t.pstates:
+                    want_bitmap(ps.bitmap_tag)
+                    want_physics(ps.physics_tag)
     # the effect references of particles must resolve inside the output (or be dropped)
     out_effects = {e.tag_id for e in effects}
     for pd in particles.values():
@@ -957,7 +1000,7 @@ def collect(m: texconv.MapData, all_effects: bool = False) -> FxSet:
     return FxSet(effects, sorted(particles.values(), key=lambda x: x.tag_id), sorted(phys.values(), key=lambda x: x.tag_id),
                  sorted(decals.values(), key=lambda x: x.tag_id), sorted(lights.values(), key=lambda x: x.tag_id),
                  sorted(pctls.values(), key=lambda x: x.tag_id), sorted(bmps.values(), key=lambda x: x.tag_id),
-                 object_ids, problems, stats)
+                 object_ids, problems, stats, attach)
 
 
 def object_models(m: texconv.MapData, objects: list[int]) -> set[int]:
@@ -1390,13 +1433,28 @@ def describe(m: texconv.MapData, fx: FxSet, tx: FxTextures | None = None) -> str
     return "\n".join(L)
 
 
+FXAT_MAGIC, FXAT_REC = b"FXAT", 32
+
+
+def build_attachments(fx: FxSet) -> bytes:
+    """FXAT: 'FXAT', u32 version 1, u32 count, then count x { u32 object tag, u32 attached tag, u8 kind, 3 pad, char[20] marker }, sorted by object tag.
+    Only attachments whose tag is in the FXD0 (an effect or particle system that was converted) are kept."""
+    have_e = {e.tag_id for e in fx.effects}
+    have_p = {p.tag_id for p in fx.pctl}
+    rows = [a for a in fx.attach if (a[1] == ATT_PCTL and a[2] in have_p) or (a[1] == ATT_EFFE and a[2] in have_e)]
+    out = bytearray(FXAT_MAGIC + struct.pack("<II", 1, len(rows)))
+    for obj, kind, tid, marker in rows:
+        out += struct.pack("<IIB3x20s", obj, tid, kind, marker.encode("latin1")[:19])
+    return bytes(out)
+
+
 def convert_map(path: Path, all_effects: bool = False, budget: int = FX_DEFAULT_BUDGET
                 ) -> tuple[bytes, FxSet, FxTextures, texconv.MapData]:
     m = texconv.MapData.open(path)
     fx = collect(m, all_effects)
     tx = build_textures(m, fx, budget)
     fxd = build(fx, tx.tex_index)
-    pack = hp2.build(path.stem, [("FXD0", fxd), ("FXTX", tx.blob)])
+    pack = hp2.build(path.stem, [("FXD0", fxd), ("FXTX", tx.blob), ("FXAT", build_attachments(fx))])
     return pack, fx, tx, m
 
 

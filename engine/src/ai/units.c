@@ -1136,6 +1136,7 @@ unsigned units_custom_animation(units_t *s, game_t *g, int unit, int graph, int 
 	ticks = (unsigned)((float)ai.frame_count / (frame_scale * (ai.fps > 0.0f ? ai.fps / TICKS : 1.0f)) + 0.5f);
 	if (!ticks) ticks = 1;
 	if (ticks > 65000u) ticks = 65000u;
+	if ((ai.flags & ANIM_LOOPS) && strstr(ai.name, "driver") && strstr(ai.name, "idle")) hold = 1;       /* a seat idle ("CT-driver unarmed idle": the Chief in his cryo tube) goes on until the script changes it */
 	o->graph = (int16_t)gi;
 	o->anim = (uint16_t)anim; o->frame = 0.0f; o->flags |= OBJ_F_ANIMATED;
 	u->custom_graph = (int16_t)(gi == u->base_graph ? -1 : gi);

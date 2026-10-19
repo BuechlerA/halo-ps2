@@ -1,5 +1,6 @@
 #include "sim/fx.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #define TICKS 30.0f
@@ -156,6 +157,155 @@ unsigned fx_spawn(fx_t *f, uint32_t effect_tag, const float pos[3], const float 
 	return made;
 }
 
+/* ---- object attachments: particle systems and looping effects ------------------------------------------------------------------------------------------ */
+static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+
+int fx_set_attachments(fx_t *f, const uint8_t *data, size_t size)
+{
+	uint32_t n;
+	f->attach = NULL; f->attach_count = 0;
+	if (!data || size < 12 || memcmp(data, "FXAT", 4) != 0 || rd32(data + 4) != 1u) return 0;
+	n = rd32(data + 8);
+	if ((size - 12) / 32u < n) return 0;
+	f->attach = data + 12; f->attach_count = n;
+	return 1;
+}
+
+fx_attach_row fx_attachment(const fx_t *f, uint32_t row)
+{
+	fx_attach_row r;
+	memset(&r, 0, sizeof r);
+	if (row >= f->attach_count) return r;
+	r.object_tag = rd32(f->attach + row * 32u);
+	r.tag = rd32(f->attach + row * 32u + 4);
+	r.kind = f->attach[row * 32u + 8];
+	memcpy(r.marker, f->attach + row * 32u + 12, 19);
+	return r;
+}
+
+unsigned fx_attachments_of(const fx_t *f, uint32_t object_tag, uint32_t *first)
+{
+	uint32_t lo = 0, hi = f->attach_count, n = 0;
+	while (lo < hi) {                                  /* first row with object tag >= the wanted one */
+		uint32_t mid = (lo + hi) / 2;
+		if (rd32(f->attach + mid * 32u) < object_tag) lo = mid + 1; else hi = mid;
+	}
+	*first = lo;
+	while (lo + n < f->attach_count && rd32(f->attach + (lo + n) * 32u) == object_tag) n++;
+	return n;
+}
+
+static float range_mid(const float b[2]) { return 0.5f * (b[0] + b[1]); }
+
+/* One particle of a particle system type. The tag's durations, multipliers and physics are not decoded (ADR-066): the particle lives the sum of the transition times
+ * of its particle states but the last (the death state), grows from the first state's scale to the middle one's (x 80 world units per tag unit, measured against the
+ * steam puff of the Xbox cryo bay), takes the middle state's colours and drifts along the marker with the system's jet speed, rising slowly. */
+static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type *ty, const fxd_pctl_state *st, const float pos[3], const float dir[3])
+{
+	fx_particle *p = alloc_particle(f);
+	fxd_pctl_pstate first, mid;
+	fxd_sprite spr;
+	float life_s = 0.0f, bl[3], bu[3], d[3], cone, a, speed, alpha;
+	unsigned i, n = ty->pstate_count, k;
+	(void)pc;
+	if (!p || n == 0) return;
+	first = fxdef_get_pctl_pstate(f->def, ty, 0);
+	mid = fxdef_get_pctl_pstate(f->def, ty, n > 2 ? n - 2 : 0);
+	for (k = 0; k + 1 < n || k == 0; k++) {
+		fxd_pctl_pstate ps = fxdef_get_pctl_pstate(f->def, ty, k);
+		life_s += lerp(ps.transition[0], ps.transition[1], rnd01(f));
+		if (k + 1 >= n) break;
+	}
+	if (life_s < 0.4f) life_s = 0.4f;
+	memset(p, 0, sizeof *p);
+	p->active = 1;
+	p->life = (uint16_t)(life_s * TICKS + 1.0f);
+	p->fade_in = 3; p->fade_out = (uint16_t)(p->life / 2u);
+	p->size0 = 80.0f * range_mid(first.scale); p->size1 = 80.0f * range_mid(mid.scale);
+	if (p->size0 < 0.01f) p->size0 = 0.01f;
+	if (p->size1 < p->size0) p->size1 = p->size0;
+	p->bitmap = mid.bitmap; p->seq = mid.sequence; p->blend = mid.blend; p->fade_mode = mid.fade_mode;
+	basis(dir, bl, bu);
+	cone = 0.25f * sqrtf(rnd01(f)); a = rnd01(f) * 6.2831853f;
+	for (i = 0; i < 3; i++) d[i] = dir[i] * cosf(cone) + (bl[i] * cosf(a) + bu[i] * sinf(a)) * sinf(cone);
+	speed = 0.028f * (0.7f + 0.6f * rnd01(f));
+	for (i = 0; i < 3; i++) { p->pos[i] = pos[i]; p->vel[i] = d[i] * speed; }
+	p->gravity = -0.0003f; p->friction = 0.985f;
+	alpha = range_mid((float[2]){ mid.color1[0], mid.color2[0] }) * st->color_mult[0] * 4.0f;       /* the tag's alpha is a density: steam at 0.15 is a visible puff */
+	if (alpha < 0.3f) alpha = 0.3f;
+	if (alpha > 1.0f) alpha = 1.0f;
+	p->rgba[0] = (uint8_t)colour_byte(mid.color1[1] * st->color_mult[1] * 0.5f * 2.0f);
+	p->rgba[1] = (uint8_t)colour_byte(mid.color1[2] * st->color_mult[2] * 0.5f * 2.0f);
+	p->rgba[2] = (uint8_t)colour_byte(mid.color1[3] * st->color_mult[3] * 0.5f * 2.0f);
+	p->rgba[3] = (uint8_t)colour_byte(alpha);
+	for (i = 0; i < 4; i++) p->rgba_end[i] = p->rgba[i];
+	p->anim_rate = 0.0f;
+	if (!fxdef_sprite(f->def, p->bitmap, p->seq, 0, &spr)) { p->active = 0; return; }
+	f->st_particles++;
+}
+
+static fx_system *find_system(fx_t *f, int key)
+{
+	unsigned i;
+	fx_system *free_s = NULL;
+	for (i = 0; i < FX_MAX_SYSTEMS; i++) {
+		if (f->sys[i].active && f->sys[i].key == (int16_t)key) return &f->sys[i];
+		if (!f->sys[i].active && !free_s) free_s = &f->sys[i];
+	}
+	if (free_s) { memset(free_s, 0, sizeof *free_s); free_s->key = (int16_t)key; }
+	return free_s;
+}
+
+void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const float dir[3])
+{
+	fx_attach_row r;
+	fx_system *s;
+	if (!f->def || row >= f->attach_count) return;
+	r = fx_attachment(f, row);
+	s = find_system(f, key);
+	if (!s) return;
+	if (!s->active) {
+		s->active = 1; s->kind = r.kind; s->tag = r.tag;
+		if (r.kind == FX_ATT_PCTL) {
+			int pi = fxdef_find_pctl(f->def, r.tag);
+			if (pi < 0) { s->active = 0; return; }
+			s->pctl = (uint16_t)pi;
+		}
+	}
+	s->seen = 1;
+	if (s->kind == FX_ATT_EFFE) {
+		if (s->cool > 0) s->cool--;
+		else { fx_spawn(f, s->tag, pos, dir, 0); s->cool = 75; }
+		return;
+	}
+	{
+		fxd_pctl pc = fxdef_get_pctl(f->def, s->pctl);
+		unsigned t;
+		for (t = 0; t < pc.type_count && t < FX_SYS_TYPES; t++) {
+			fxd_pctl_type ty = fxdef_get_pctl_type(f->def, &pc, t);
+			fxd_pctl_state st;
+			if (ty.state_count == 0) continue;
+			if (!s->init) {
+				unsigned k;
+				st = fxdef_get_pctl_state(f->def, &ty, 0);
+				s->state[t] = 0; s->timer[t] = lerp(st.duration[0], st.duration[1], rnd01(f)); s->acc[t] = 0.0f;
+				for (k = 0; k < ty.initial_count && k < 16; k++) spawn_pctl_particle(f, &pc, &ty, &st, pos, dir);
+			}
+			st = fxdef_get_pctl_state(f->def, &ty, s->state[t]);
+			s->timer[t] -= 1.0f / TICKS;
+			if (s->timer[t] <= 0.0f) {                     /* the next state (ON -> OFF -> ON ...) */
+				s->state[t] = (uint8_t)((s->state[t] + 1u) % ty.state_count);
+				st = fxdef_get_pctl_state(f->def, &ty, s->state[t]);
+				s->timer[t] = lerp(st.duration[0], st.duration[1], rnd01(f));
+				if (s->timer[t] <= 0.0f) s->timer[t] = 1.0f;
+			}
+			s->acc[t] += st.creation_rate / TICKS;
+			while (s->acc[t] >= 1.0f) { s->acc[t] -= 1.0f; spawn_pctl_particle(f, &pc, &ty, &st, pos, dir); }
+		}
+		s->init = 1;
+	}
+}
+
 unsigned fx_particle_alpha(const fx_particle *p)
 {
 	float a = (float)p->rgba[3];
@@ -168,6 +318,10 @@ unsigned fx_particle_alpha(const fx_particle *p)
 void fx_tick(fx_t *f)
 {
 	unsigned i;
+	for (i = 0; i < FX_MAX_SYSTEMS; i++) {                 /* an attachment that was not updated this tick is gone */
+		if (!f->sys[i].active) continue;
+		if (!f->sys[i].seen) f->sys[i].active = 0; else f->sys[i].seen = 0;
+	}
 	for (i = 0; i < FX_MAX_PARTICLES; i++) {
 		fx_particle *p = &f->p[i];
 		if (!p->active) continue;

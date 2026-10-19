@@ -516,6 +516,33 @@ static void update_held_weapons(mission_t *M)
 	}
 }
 
+/* Particle systems and looping effects attached to objects (scenery steam jets, smoke and fire emitters): the FXAT rows of the object's tag, at the row's marker
+ * (the object's origin when the marker name is empty or unknown), along the marker's forward axis. */
+static void update_object_fx(mission_t *M)
+{
+	unsigned i;
+	if (!M->fx || !M->fx->attach_count || !M->ow.scen) return;
+	for (i = 0; i < M->objects->count && i < 1280u; i++) {
+		object_t *o = &M->objects->obj[i];
+		uint32_t first, k, n;
+		scen_def d;
+		if (o->model < 0 || (o->flags & (OBJ_F_FREE | OBJ_F_INACTIVE | OBJ_F_HIDDEN))) continue;
+		d = scen_get_def(M->ow.scen, (uint32_t)o->def);
+		n = fx_attachments_of(M->fx, d.tag_id, &first);
+		for (k = 0; k < n && k < 8; k++) {
+			fx_attach_row r = fx_attachment(M->fx, first + k);
+			float pos[3] = { o->pos[0], o->pos[1], o->pos[2] }, dir[3] = { o->root.m[0][0], o->root.m[0][1], o->root.m[0][2] };
+			int mk = r.marker[0] ? marker_index(M, o, r.marker) : -1;
+			mat4 w;
+			if (mk >= 0 && marker_world(M, o, mk, &w)) {
+				pos[0] = w.m[3][0]; pos[1] = w.m[3][1]; pos[2] = w.m[3][2];
+				dir[0] = w.m[0][0]; dir[1] = w.m[0][1]; dir[2] = w.m[0][2];
+			}
+			fx_attach_update(M->fx, (int)(i * 8u + k), first + k, pos, dir);
+		}
+	}
+}
+
 static void update_attachments(mission_t *M)
 {
 	mission_hostobj *h = &M->hobj;
@@ -1432,6 +1459,7 @@ void hs_host_obj_post(mission_t *M)
 	uint32_t i;
 	int slot;
 	update_attachments(M);
+	update_object_fx(M);
 	for (i = 0; i < h->suspend_count; i++) {
 		object_t *o = obj_of(M, h->suspend[i].obj);
 		int ui = unit_of(M, h->suspend[i].obj);

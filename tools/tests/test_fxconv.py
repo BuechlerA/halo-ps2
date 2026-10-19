@@ -515,8 +515,8 @@ def check_real_maps() -> None:
     v = texconv.parse_texs(pk.read("FXTX"))
     t = sec.tables
     assert [len(t[n]) for n in ("effects", "events", "parts", "emitters", "particles", "decals", "lights", "pctl", "physics",
-                                "bitmaps", "sprites")] == [219, 389, 323, 1330, 90, 32, 7, 5, 23, 75, 712]
-    assert len(v.textures) == 112 and tx.bytes <= fx.FX_DEFAULT_BUDGET and len(v.bindings) == 75
+                                "bitmaps", "sprites")] == [225, 406, 350, 1338, 92, 33, 8, 9, 26, 76, 776]
+    assert len(v.textures) == 114 and tx.bytes <= fx.FX_DEFAULT_BUDGET and len(v.bindings) == 76
     assert all("location 1 but the effect has 1 locations" in p for p in s.problems)          # the one retail oddity
     assert s.stats["swapped bounds"] > 0 and not s.objects
     ids = {e.tag_id for e in s.effects}
@@ -525,6 +525,14 @@ def check_real_maps() -> None:
     for p in s.particles:
         for k, tid in ((p.collision_kind, p.collision_effect), (p.death_kind, p.death_effect)):
             assert k != fx.K_EFFECT or tid in ids
+    # object attachments (FXAT): the steam jets scenery keeps its particle system, every row points at a converted tag
+    rows = fx.build_attachments(s)
+    assert rows[:4] == b"FXAT" and struct.unpack_from("<II", rows, 4)[0] == 1
+    n = struct.unpack_from("<I", rows, 8)[0]
+    assert n == 13 and len(rows) == 12 + 32 * n
+    have = {p.tag_id for p in s.pctl} | ids
+    assert all(struct.unpack_from("<I", rows, 12 + 32 * i + 4)[0] in have for i in range(n))
+    assert any(r[1] == fx.ATT_PCTL and r[3] == "smoker" for r in s.attach)
     # every converted image of every sprite has a texture, every bitmap has a binding
     assert all(sp[0] != fx.NONE16 for sp in t["sprites"])
     assert {b["shader_id"] for b in v.bindings} == {b.tag_id for b in s.bitmaps}

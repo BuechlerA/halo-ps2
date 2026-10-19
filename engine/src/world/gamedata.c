@@ -95,6 +95,7 @@ int gamedata_load(gamedata_t *g, arena_t *a, const char *prefix, int bsp_index)
 		if (fxdef_open(&g->fx, p, n) == FXD_OK) {
 			g->has_fx = 1; loaded++;
 			if ((p = load(a, prefix, "fx", "FXTX", &n, 1)) != NULL && tex_open(&g->fx_tex.tex, p, n) == TEX_OK) g->fx_tex.has = 1;
+			g->fxat = load(a, prefix, "fx", "FXAT", &n, 1); g->fxat_size = g->fxat ? n : 0;
 			world_texset_source(&g->fx_source, &g->fx_tex);
 			printf("[game] effects: textures %u\n", g->fx_tex.has ? (unsigned)g->fx_tex.tex.texture_count : 0u);
 		} else printf("[err] bad FXD0\n");

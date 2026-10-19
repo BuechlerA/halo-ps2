@@ -118,7 +118,7 @@ static int check_tables(const anim_section *s)
 	CHECK(anim_find_name(s, &b, "stand idle") == 0 && anim_find_name(s, &b, "idle") == 7);
 	CHECK(anim_find_name(s, &b, "idle%1") == 5 && anim_find_name(s, &b, "stand idle%1") == 5);
 	CHECK(anim_find_name(s, &b, "move") == 1 && anim_find_name(s, &b, "aim") == 2 && anim_find_name(s, &b, "stand") == 0);
-	CHECK(anim_find_name(s, &b, "Stand") == -1 && anim_find_name(s, &b, "zzz") == -1 && anim_find_name(s, &b, "") == 0);
+	CHECK(anim_find_name(s, &b, "Stand") == 0 && anim_find_name(s, &b, "STAND IDLE%1") == 5 && anim_find_name(s, &b, "zzz") == -1 && anim_find_name(s, &b, "") == 0);
 	CHECK(anim_find_name(s, &d, "position") == 0 && anim_find_name(s, &d, "idle") == -1 && anim_find_name(s, &none, "x") == -1);
 	CHECK(anim_find_name(s, &b, NULL) == -1);
 	return 0;

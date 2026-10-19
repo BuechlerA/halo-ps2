@@ -38,6 +38,7 @@ typedef struct {
 	cinedef_section cin;    int has_cin;
 	path_bsp        path;   int has_path;   /* the current BSP's pathfinding */
 	fxdef_section   fx;     int has_fx;
+	const uint8_t  *fxat;   size_t fxat_size;     /* FXAT: object attachments (particle systems, effects), NULL if the pack has none */
 	texset_t        fx_tex;
 	tex_source_t    fx_source;
 } gamedata_t;

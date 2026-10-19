@@ -1,6 +1,6 @@
 /* Effects runtime: particles and decals created from FXD0 effects (docs/22-fx-section.md). Pure C11, no heap, host-tested; render/fx_render.c
  * draws the pools as sprites. Approximations (documented in docs/14 and ADR-032): effect events fire at creation with their delay folded
- * into the particle's start; particle systems, lights and object parts are not created; billboards only; no particle collision. */
+ * into the particle's start; particle systems exist only as object attachments (fx_attach_update; an approximation, ADR-066), lights and object parts are not created; billboards only; no particle collision. */
 #ifndef SIM_FX_H
 #define SIM_FX_H
 #include <stdint.h>
@@ -8,6 +8,8 @@
 
 #define FX_MAX_PARTICLES 320
 #define FX_MAX_DECALS 48
+#define FX_MAX_SYSTEMS 24
+#define FX_SYS_TYPES 4
 
 typedef struct {
 	uint8_t  active, blend, fade_mode;
@@ -32,10 +34,25 @@ typedef struct {
 	uint8_t  rgba[4];
 } fx_decal;
 
+/* An object's attached particle system or looping effect (FXAT rows: object tag, attached tag, kind, marker). One instance per (object, row). */
+enum { FX_ATT_PCTL = 1, FX_ATT_EFFE = 2 };
+typedef struct { uint32_t object_tag, tag; uint8_t kind; char marker[20]; } fx_attach_row;
+typedef struct {
+	uint8_t  active, seen, kind, init;
+	int16_t  key;                    /* object slot * 8 + row within the object */
+	uint16_t pctl;                   /* fxdef pctl index */
+	uint32_t tag;                    /* effect tag (FX_ATT_EFFE) */
+	uint8_t  state[FX_SYS_TYPES];
+	float    timer[FX_SYS_TYPES], acc[FX_SYS_TYPES];
+	int16_t  cool;
+} fx_system;
+
 typedef struct {
 	const fxdef_section *def;
 	fx_particle p[FX_MAX_PARTICLES];
 	fx_decal    d[FX_MAX_DECALS];
+	fx_system   sys[FX_MAX_SYSTEMS];
+	const uint8_t *attach; uint32_t attach_count;      /* FXAT rows (32 bytes each) */
 	uint32_t    rng, next_decal;
 	unsigned    st_effects, st_particles, st_decals, st_dropped;
 	float       gravity;             /* world gravity, units/s^2 */
@@ -45,6 +62,14 @@ void fx_init(fx_t *f, const fxdef_section *def, float gravity_per_s2, uint32_t s
 /* Creates effect `tag` at `pos`; `dir` is the effect's forward axis (the surface normal for impacts, the firing direction for muzzle effects),
  * `surface` = 1 allows decals. Unknown tags are ignored. Returns the number of particles + decals created. */
 unsigned fx_spawn(fx_t *f, uint32_t effect_tag, const float pos[3], const float dir[3], int surface);
+/* FXAT section: 'FXAT', u32 version, u32 count, rows sorted by object tag. Returns 0 when it is malformed (no attachments then). */
+int fx_set_attachments(fx_t *f, const uint8_t *data, size_t size);
+/* Attachments of an object tag: returns how many and the index of the first row. */
+unsigned fx_attachments_of(const fx_t *f, uint32_t object_tag, uint32_t *first);
+fx_attach_row fx_attachment(const fx_t *f, uint32_t row);
+/* One tick of the attachment `row` of the object slot `key`: creates the instance on first call, emits (a particle system's particles, an effect now and then)
+ * at `pos` along `dir`. An instance that is not updated for a tick ends. */
+void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const float dir[3]);
 /* One 30 Hz tick. */
 void fx_tick(fx_t *f);
 /* Current tint alpha (0..0x80) of a particle: fade in / out applied. */
