@@ -165,6 +165,7 @@ class ShaderInfo:
     mask_bitmap: int | None = None       # its mask: the blue channel of this bitmap becomes the alpha of the base map in that pass
     texture2: int = 0xFFFF               # the second pass's texture: the base map with the mask as alpha (NO_TEXTURE: none)
     texture: int = NO_TEXTURE            # filled when the texture table is built
+    reflect: tuple = ()                  # objtex.soso_reflect: (mask bitmap tag id, (r, g, b) added where the mask is 1): the environment reflection baked into the base map
     blank: bool = False                  # a transparent shader whose map is not a 2D image (a cube map reflection): drawn as nothing, not as flat grey
     product: tuple = ()                  # objtex.sotr_product: bitmap tag ids whose product is the texture (a multi-map transparent generic shader)
 
