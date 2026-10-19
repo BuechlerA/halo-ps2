@@ -815,7 +815,7 @@ at 660 24.5 -> 16.7 ms (with the escorts and far objects drawn again: objects 5.
 unmeasured (PCSX2 does not model it; ADR-022). `a10.tex.hp2` grows 1.5 -> 1.8 MiB (hull textures PSMT8, registry 512 wide).
 **Consequences**: TEX and OBJ packs must be rebuilt (`scripts/build-world.sh a10`; sky textures are 256 colours with dithering, `a10.tex` has the baked hull). Other bump maps are not baked
 (`BUMP_BAKE` lists prefixes). New debug keys: `objtrace "first last step"` (every live object's cull inputs, `[obj]` lines), `objfarpx`.
-Sky banding, measured at identical ticks: flat-neighbour fraction 0.87 -> 0.37 (tick 300), 0.73 -> 0.23 (tick 600); at 4x zoom the dither shows as a faint column pattern, invisible at 1x. Still open: the relief light direction is one fixed guess (the Xbox's dot3 follows the lightmap); GS cost of the dither and the 256 colour hull is unmeasured.
+Sky banding, measured at identical ticks: flat-neighbour fraction 0.87 -> 0.37 (tick 300), 0.73 -> 0.23 (tick 600); at 4x zoom the dither shows as a faint column pattern, invisible at 1x. Relief light direction (`texconv.BUMP_LIGHT`): all four diagonals rendered at tick 1050 look alike next to each other and the 360p video resolves no directional relief, so the current one stays (the Xbox's dot3 follows the lightmap and is not decoded); GS cost of the dither and the 256 colour hull is unmeasured.
 
 ## Open decisions
 None.

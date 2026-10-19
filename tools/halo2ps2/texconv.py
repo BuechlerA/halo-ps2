@@ -93,6 +93,7 @@ HERO_BITMAPS = {"levels\\a10\\bitmaps\\monitors": 512,
 # looks like noise. BUMP_LIGHT = the direction the relief is lit from (texture space, towards the light), BUMP_STRENGTH how many source levels of height change one 1.0 of shade.
 BUMP_BAKE = ("scenery\\vehicles\\poa\\bitmaps\\",)
 BUMP_STRENGTH = 1.1
+BUMP_LIGHT = (1, 1)                   # (x, y) step towards the light in texture space: an edge whose height rises away from it brightens; all four diagonals render alike at the intro's magnification (ADR-077)
 BUMP_GAIN = 0.9                       # measured: the lit hull came out 10 .. 13 % brighter than the Xbox video's at ticks 1050 / 1060 (same hue)
 BUMP_KEY = 1 << 41
 SENV_BUMP_MAP, SENV_BUMP_SCALE = 0x128, 0x124
@@ -753,14 +754,15 @@ def bump_img(m: MapData, s: "ShaderInfo") -> bitmaps.BitmapImage | None:
     return imgs[0] if imgs and imgs[0].decodable else None
 
 
-def bake_relief(rgba: bytes, w: int, h: int, height: bytes, strength: float = BUMP_STRENGTH) -> bytes:
+def bake_relief(rgba: bytes, w: int, h: int, height: bytes, strength: float = BUMP_STRENGTH, light: tuple = None) -> bytes:
     """Colour map x relief shade of a height field (one byte per texel, same size): the shade is 1 + strength x (height up-left - height down-right) / 255, so a plate edge
     facing the light (up-left) brightens and the opposite edge darkens; clamped to 0.5 .. 1.7. Edges of the image clamp."""
     out = bytearray(rgba)
+    lx, ly = light or BUMP_LIGHT
     for y in range(h):
-        ya, yb = max(0, y - 1) * w, min(h - 1, y + 1) * w
+        ya, yb = min(h - 1, max(0, y - ly)) * w, min(h - 1, max(0, y + ly)) * w
         for x in range(w):
-            xa, xb = max(0, x - 1), min(w - 1, x + 1)
+            xa, xb = min(w - 1, max(0, x - lx)), min(w - 1, max(0, x + lx))
             sh = 1.0 + strength * (height[ya + xa] - height[yb + xb]) / 255.0
             sh = (0.5 if sh < 0.5 else 1.7 if sh > 1.7 else sh) * BUMP_GAIN
             o = 4 * (y * w + x)
