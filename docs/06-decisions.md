@@ -662,7 +662,10 @@ re-patches when its hash changes (about 0.2 ms for a few batches on the host bui
 (2 degrees of spread), not the 0.84 wu/s cone of 24 degrees of ADR-066. `fx.c spawn_pctl_particle` uses it and the particle states' point physics (air friction, gravity scale of the pphy tag) like the effect emitters;
 the per-tick motion of the Xbox is that point physics step (0x110320 -> 0x80720) with the creation rate accumulating per second (the integer part of rate x dt spawns, the fraction carries). Wind: the point physics flags (simple / damped wind)
 are not read by our pphy conversion, so steam does not drift with a wind (the a10 hangar has none).
-**Still approximate**: sprite size (80 x the tag scale), alpha and lifetime (the death state's fade) are tuned against the cryo steam of the video; the particle state / system state transition timing is ours (durations as bounds).
+**Fix to the above**: the point physics block (gravity, friction) was missing from `spawn_pctl_particle` after the jet rewrite, so every steam particle had friction 0 and stopped at once (the steam was a few puffs on the pod). With it restored
+the jet streams out as a wispy cloud like the video's. The pphy air friction of the steam is 10.0, above our 5.0 sanity guard, so friction stays 1.0 (UNVERIFIED unit of the tag's friction: a decay of 10 / s would stop the jet in 0.1 s, which
+the video contradicts). The pool is 560 particles (was 320).
+**Still approximate**: sprite size (120 x the tag scale), emission rate (2 x the tag's), lifetime (1.8 x the states' transitions) and alpha are tuned against the cryo steam of the video by measuring the bright-pixel share left of the pod (0.24 .. 0.53 against 0.52 .. 0.59 in frames 6900 and 6940, which vary run to run with the random numbers); the particle state / system state transition timing is ours (durations as bounds).
 
 ## Open decisions
 None.

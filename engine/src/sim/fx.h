@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include "world/fxdef.h"
 
-#define FX_MAX_PARTICLES 320
+#define FX_MAX_PARTICLES 560
 #define FX_MAX_DECALS 48
 #define FX_MAX_SYSTEMS 128
 #define FX_SYS_TYPES 4

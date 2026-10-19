@@ -4,6 +4,10 @@
 #include <string.h>
 
 #define TICKS 30.0f
+/* steam look: tuned against the cryo steam of the Xbox intro by measuring the share of bright pixels left of the pod (tools: scratch steammeasure) */
+#define STEAM_SIZE 120.0f
+#define STEAM_LIFE 1.8f
+#define STEAM_RATE 2.0f
 
 static float rnd01(fx_t *f)
 {
@@ -217,12 +221,12 @@ static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type
 		if (k + 1 >= n) break;
 	}
 	if (life_s < 0.4f) life_s = 0.4f;
-	life_s *= 1.6f;                                            /* particle lifetime = the states' transition times: the death state's fade-out adds to what is seen */
+	life_s *= STEAM_LIFE;                                            /* particle lifetime = the states' transition times: the death state's fade-out adds to what is seen */
 	memset(p, 0, sizeof *p);
 	p->active = 1;
 	p->life = (uint16_t)(life_s * TICKS + 1.0f);
 	p->fade_in = 3; p->fade_out = (uint16_t)(p->life / 2u);
-	p->size0 = 80.0f * range_mid(first.scale); p->size1 = 80.0f * range_mid(mid.scale);
+	p->size0 = STEAM_SIZE * range_mid(first.scale); p->size1 = STEAM_SIZE * range_mid(mid.scale);
 	if (p->size0 < 0.01f) p->size0 = 0.01f;
 	if (p->size1 < p->size0 * 3.5f) p->size1 = p->size0 * 3.5f;                 /* a puff expands as it cools */
 	p->bitmap = mid.bitmap; p->seq = mid.sequence; p->blend = mid.blend; p->fade_mode = mid.fade_mode;
@@ -235,6 +239,15 @@ static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type
 		if (rl < 1e-3f) { rv[0] = 1.0f; rv[1] = rv[2] = 0.0f; rl = 1.0f; }
 		(void)bl; (void)bu;
 		for (i = 0; i < 3; i++) { d[i] = rv[i] / rl * c1 + dir[i] * (1.0f - c1); p->pos[i] = pos[i]; p->vel[i] = d[i] * spd / TICKS; }
+	}
+	{                                                          /* the particle states' point physics (air gravity and friction, like the effect emitters) */
+		fxd_physics ph;
+		memset(&ph, 0, sizeof ph);
+		if (mid.physics != 0xFFFFu) ph = fxdef_get_physics(f->def, mid.physics);
+		p->gravity = -ph.air_gravity_scale * f->gravity / (TICKS * TICKS);
+		p->friction = ph.air_friction > 0.0f && ph.air_friction < 5.0f ? 1.0f - ph.air_friction / TICKS : 1.0f;
+		if (p->friction < 0.5f) p->friction = 0.5f;
+		if (f->dbg == 6) printf("[fx] steam particle speed %.4f/tick friction %.4f gravity %.5f air_friction %.3f life %u\n", (double)sqrtf(p->vel[0] * p->vel[0] + p->vel[1] * p->vel[1] + p->vel[2] * p->vel[2]), (double)p->friction, (double)p->gravity, (double)ph.air_friction, (unsigned)p->life);
 	}
 	alpha = range_mid((float[2]){ mid.color1[0], mid.color2[0] }) * st->color_mult[0] * 3.4f;       /* the tag's alpha is a density: steam at 0.15 is a visible puff */
 	if (alpha < 0.3f) alpha = 0.3f;
@@ -349,7 +362,7 @@ void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const 
 				s->timer[t] = lerp(st.duration[0], st.duration[1], rnd01(f));
 				if (s->timer[t] <= 0.0f) s->timer[t] = 1.0f;
 			}
-			s->acc[t] += st.creation_rate / TICKS;
+			s->acc[t] += st.creation_rate * STEAM_RATE / TICKS;
 			while (s->acc[t] >= 1.0f) { s->acc[t] -= 1.0f; spawn_pctl_particle(f, &pc, &ty, &st, pos, dir); }
 		}
 		s->init = 1;
