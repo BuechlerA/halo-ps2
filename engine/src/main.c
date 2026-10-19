@@ -479,6 +479,7 @@ int main(int argc, char *argv[])
 			if (s_gd.has_fx && s_gd.fx_tex.has) {
 				fx_init(&s_fx, &s_gd.fx, s_game.globals.gravity > 0.0f ? s_game.globals.gravity * 900.0f : 3.2f, (uint32_t)cfg_int(&s_cfg, "seed", 1) + 99u);
 				fx_set_attachments(&s_fx, s_gd.fxat, s_gd.fxat_size);
+				s_objr.fx = &s_fx;
 				s_fx.dbg = (int)cfg_int(&s_cfg, "fxdbg", 0);
 				s_fxr.fx = &s_fx; s_fxr.tex = &s_gd.fx_source;
 				s_fxr.key_base = bsp_render_reserve_keys(s_gd.fx_tex.tex.texture_count);

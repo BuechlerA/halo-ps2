@@ -268,6 +268,21 @@ static void light_at(const obj_render_t *o, const float pos[3], scen_light *l)
 	int cl = o->bsp ? bsp_find_cluster(o->bsp, pos) : -1;
 	if (cl >= 0 && o->world.scen) scen_cluster_light(o->world.scen, (uint32_t)o->bsp_index, (uint32_t)cl, l);
 	else scen_cluster_light(o->world.scen, (uint32_t)o->bsp_index, 0xFFFFu, l);   /* neutral default */
+	if (o->fx) {                                              /* dynamic point lights of attached fixtures: the red alert of the bridge colours the people in it */
+		const fx_dynlight *dl;
+		unsigned n = fx_dynamic_lights(o->fx, &dl), i, k;
+		for (i = 0; i < n; i++) {
+			float dx = pos[0] - dl[i].pos[0], dy = pos[1] - dl[i].pos[1], dz = pos[2] - dl[i].pos[2], d = sqrtf(dx * dx + dy * dy + dz * dz), a;
+			if (d >= dl[i].radius) continue;
+			a = 1.0f - d / dl[i].radius;
+			a *= a;
+			for (k = 0; k < 3; k++) {
+				unsigned add = (unsigned)(dl[i].rgb[k] * 255.0f * a * 0.3f), amb = (unsigned)l->ambient[k] + add, sun = (unsigned)l->sun[k] + add / 2u;
+				l->ambient[k] = (uint8_t)(amb > 255u ? 255u : amb);
+				l->sun[k] = (uint8_t)(sun > 255u ? 255u : sun);
+			}
+		}
+	}
 }
 
 void obj_render_pass(void *user, render_ctx_t *rc)

@@ -215,7 +215,7 @@ def build_synthetic():
         r.poke(b + 0xFC, "<f", 16.0)
     b = r.block("ligh", "weapons\\ar\\muzzle")
     r.poke(b, "<If2f2f", 0x21, 2.0, 1.0, 1.0, math.pi, math.pi)
-    r.poke(b + 0x30, "<I8f", 3, 0.0, 0.0, 0.0, 0.0, 1.0, 0.96, 0.91, 0.69)
+    r.poke(b + 0x30, "<I9f", 3, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.96, 0.91, 0.69)
     r.poke(b + 0xF4, "<f", 30.0)
     r.poke(b + 0xFA, "<H", 3)
     # a particle system: 1 type, 2 states, 2 particle states, constants

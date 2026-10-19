@@ -283,7 +283,14 @@ void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const 
 		int gb = f->glow_tag != 0xFFFFFFFFu ? fxdef_find_bitmap(f->def, f->glow_tag) : -1;
 		float c[3], size;
 		unsigned i;
-		if (gb < 0 || !(p = alloc_particle(f))) return;
+		if ((L.flags & 1u) && f->dyn_next_n < FX_MAX_DYNLIGHTS) {      /* dynamic: it lights the objects near it (obj_render light_at); the tag's radius is in the engine's coarse units */
+			fx_dynlight *dl = &f->dyn_next[f->dyn_next_n++];
+			unsigned q;
+			for (q = 0; q < 3; q++) { dl->pos[q] = pos[q]; dl->rgb[q] = L.color_hi[1 + q]; }
+			dl->radius = (L.radius > 0.0f ? L.radius : 1.0f) * 4.0f;
+			if (f->dbg == 3) printf("[fx] dyn light tag %08x key %d at %.1f %.1f %.1f rgb %.2f %.2f %.2f r %.1f\n", (unsigned)r.tag, key, (double)pos[0], (double)pos[1], (double)pos[2], (double)dl->rgb[0], (double)dl->rgb[1], (double)dl->rgb[2], (double)dl->radius);
+		}
+		if ((L.flags & 1u) || gb < 0 || !(p = alloc_particle(f))) return;     /* dynamic lights light the objects around them (above); only the others bloom */
 		for (i = 0; i < 3; i++) c[i] = 0.55f * L.color_hi[1 + i] + 0.45f;           /* a bright light blooms towards white */
 		size = L.radius > 0.0f ? L.radius : 1.0f;
 		size = 0.12f * (size > 8.0f ? 8.0f : size) + 0.05f;       /* world units of half size: the light's radius is the reach of its light, the bloom is a small part of it */
@@ -349,9 +356,12 @@ unsigned fx_particle_alpha(const fx_particle *p)
 	return (unsigned)a;
 }
 
+unsigned fx_dynamic_lights(const fx_t *f, const fx_dynlight **out) { *out = f->dyn; return f->dyn_n; }
+
 void fx_tick(fx_t *f)
 {
 	unsigned i;
+	memcpy(f->dyn, f->dyn_next, f->dyn_next_n * sizeof f->dyn[0]); f->dyn_n = f->dyn_next_n; f->dyn_next_n = 0;
 	for (i = 0; i < FX_MAX_SYSTEMS; i++) {                 /* an attachment that was not updated this tick is gone */
 		if (!f->sys[i].active) continue;
 		if (!f->sys[i].seen) f->sys[i].active = 0; else f->sys[i].seen = 0;

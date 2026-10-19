@@ -47,12 +47,17 @@ typedef struct {
 	int16_t  cool;
 } fx_system;
 
+#define FX_MAX_DYNLIGHTS 16
+typedef struct { float pos[3], rgb[3], radius; } fx_dynlight;     /* a dynamic point light (flag bit 0 of the light tag) of an attached fixture */
+
 typedef struct {
 	const fxdef_section *def;
 	fx_particle p[FX_MAX_PARTICLES];
 	fx_decal    d[FX_MAX_DECALS];
 	fx_system   sys[FX_MAX_SYSTEMS];
 	const uint8_t *attach; uint32_t attach_count;      /* FXAT rows (32 bytes each) */
+	fx_dynlight dyn[FX_MAX_DYNLIGHTS], dyn_next[FX_MAX_DYNLIGHTS];
+	unsigned    dyn_n, dyn_next_n;   /* the lights registered by the attachments last tick / this tick */
 	int         dbg;                 /* debug (cfg fxdbg 1): log light glows */
 	float       cam[3];              /* camera position of the last frame: light glows keep a minimum apparent size */
 	uint32_t    glow_tag;            /* tag id of the soft disc bitmap light attachments are drawn with (0xFFFFFFFF none) */
@@ -73,6 +78,8 @@ fx_attach_row fx_attachment(const fx_t *f, uint32_t row);
 /* One tick of the attachment `row` of the object slot `key`: creates the instance on first call, emits (a particle system's particles, an effect now and then)
  * at `pos` along `dir`. An instance that is not updated for a tick ends. */
 void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const float dir[3]);
+/* The dynamic lights of the attachments (objects near them are lit by them): the set of the last tick. */
+unsigned fx_dynamic_lights(const fx_t *f, const fx_dynlight **out);
 /* One 30 Hz tick. */
 void fx_tick(fx_t *f);
 /* Current tint alpha (0..0x80) of a particle: fade in / out applied. */

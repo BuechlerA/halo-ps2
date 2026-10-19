@@ -97,8 +97,10 @@ decal (``deca``, 268 B)
     layers 0..2, map reference in the first position of every one]
 light (``ligh``, 352 B)
     +0x00 u32 flags (bit 0 dynamic, ...), +0x04 f32 radius, +0x08 f32 radius modifier bounds, +0x10 f32 falloff angle,
-    +0x14 f32 cutoff angle (3.1416 = omnidirectional), +0x30 u32 colour interpolation flags, +0x34 f32[4] colour lower
-    bound (A, R, G, B), +0x44 colour upper bound, +0xF4 f32 duration, +0xFA u16 falloff function.
+    +0x14 f32 cutoff angle (3.1416 = omnidirectional), +0x30 u32 colour interpolation flags, +0x38 f32[4] colour lower
+    bound (A, R, G, B), +0x48 colour upper bound (CORRECTED 2026-10-19: the earlier +0x34 / +0x44 read a pad word too early and turned every light's colour
+    by one channel: muzzle flashes cyan, the alert lights green; at +0x48 the assault rifle's flash is (0, 0.96, 0.91, 0.69), the frag explosion (1, 1, 0.81, 0.36),
+    the burning flame (1, 1, 0.98, 0.32)), +0xF4 f32 duration, +0xFA u16 falloff function.
     [verified on 507 light tags: struct size 352; radius 0.5..15 wu (muzzle flash 2, explosion 10), colours 0..1, falloff
     function 0..4, cut-off angle pi on the light effects (spot cones 0.35..1.57 rad on flashlights and headlights, which
     effects do not create); duration 0 on lights without one and 3..180 on explosion lights, unit unverified (seconds)]
@@ -831,7 +833,7 @@ def parse_light(r: Region, e: tagindex.TagEntry, problems: list[str], stats: Cou
     flags = r.u("<I", b)[0]
     return LightDef(e.tag_id, e.path, flags, _f(r, b + 4, what, problems), _bounds(r, b + 8, what, problems, stats),
                     _f(r, b + 0x10, what, problems), _f(r, b + 0x14, what, problems), r.u("<I", b + 0x30)[0],
-                    _fvec(r, b + 0x34, 4, what, problems), _fvec(r, b + 0x44, 4, what, problems),  # type: ignore[arg-type]
+                    _fvec(r, b + 0x38, 4, what, problems), _fvec(r, b + 0x48, 4, what, problems),  # type: ignore[arg-type]
                     _f(r, b + 0xF4, what, problems), _angle_ok(r.u("<H", b + 0xFA)[0], 0, 15, what + " falloff function"))
 
 
