@@ -6,6 +6,7 @@
 #include "script/hs_host_misc.h"
 #include "audio/stream.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 /* The default easing of camera_set (UNVERIFIED: the original's curve is not documented). */
@@ -152,6 +153,7 @@ BI(camera_set)
 	if (!m || !m->cine || !cam_point_pose(m, argh(a, n, 0), &p)) { if (m) mission_note_missing(m, "camera_set"); return 0; }
 	refresh_player_pose(m);
 	m->misc.cam_anchor_obj1 = 0;
+	if (m->log) printf("[camset] t%u point %d ticks %d\n", m->tick, (int)(argh(a, n, 0) & 0xFFFF), (int)argi(a, n, 1, 0));
 	cine_cam_set(&m->cine->cam, &p, (uint32_t)(argi(a, n, 1, 0) > 0 ? argi(a, n, 1, 0) : 0), MISC_CAMERA_EASE);
 	return 0;
 }
@@ -380,7 +382,7 @@ BI(sound_impulse_start)
 		strm_stream st = strm_get_stream(ss, ssn.stream_first + variant);
 		float gain, pan, cg = class_gain(m, kind_group(ssn.kind));
 		slot = kind_slot(ssn.kind);
-		dur = frames_to_ticks(st.frames, st.rate);
+		dur = ssn.max_play_ms ? (uint32_t)((uint64_t)ssn.max_play_ms * 30u / 1000u) : frames_to_ticks(st.frames, st.rate);   /* the Xbox: tag +0x84 ms * 30 / 1000 (0x2b9d0) */
 		spatial(m, obj, ssn.min_dist, ssn.max_dist, scale * cg, &gain, &pan);
 		for (i = 0; i < MISC_IMPULSES; i++)                         /* the slot's previous sound is replaced: its time is over */
 			if (m->misc.imp[i].used && m->misc.imp[i].slot == slot && m->misc.imp[i].tag != tag) { m->misc.imp[i].slot = -1; m->misc.imp[i].end_tick = m->tick; }
@@ -392,7 +394,7 @@ BI(sound_impulse_start)
 				uint32_t t = frames_to_ticks(pm.frames, pm.rate);
 				if (t > dur) dur = t;
 			}
-			if (!dur && snd.max_play_ms) dur = (snd.max_play_ms * 30u + 999u) / 1000u;
+			if (snd.max_play_ms) dur = (uint32_t)((uint64_t)snd.max_play_ms * 30u / 1000u);     /* the declared length wins, as on the Xbox (decoded frames are 8/9 of it) */
 		}
 		if (m->misc_env.play) {
 			float gain, pan;
@@ -400,6 +402,7 @@ BI(sound_impulse_start)
 			if (gain > 0.001f) m->misc_env.play(m->misc_env.user, tag, obj >= 0 ? pos : NULL, gain);
 		}
 	}
+	if (m->log) printf("[camset] t%u impulse %08x dur %u slot %d resident %d\n", m->tick, (unsigned)tag, (unsigned)dur, slot, resident);
 	im = imp_alloc(m, tag);
 	im->used = 1; im->tag = tag; im->obj = (int16_t)obj; im->slot = (int8_t)slot; im->end_tick = m->tick + dur;
 	m->misc.impulses_started++;

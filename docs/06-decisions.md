@@ -558,5 +558,18 @@ of doubling it.
 models are not duplicated (the second pass reuses the part's batches), the cost is one more draw of the tinted parts (crew, marines' faces, props with a change colour) and ~0.4 MiB of `OTEX` on a10.
 Marine armour, rifles, Cortana's hologram colour and the screen filters are still open (ADR-061).
 
+## ADR-063 Halo's euler convention, widescreen camera, observer interpolation, declared sound lengths, held weapons
+**Decision**: (1) Scenario placements and camera points use Halo's `euler_angles3d_to_matrix` (XBE 0xb67f0: yaw about z, then pitch and roll about the *world* y and x), implemented as
+`mat4_from_euler_halo` and `cine_halo_euler_to_ypr` (forward = row 0, up = row 2); objects' roots and `camera_set` points go through them. (2) The 512x448 buffer is shown 16:9 (cfg `widescreen`,
+default 1): the vertical field of view is kept and the horizontal one widened. (3) `camera_set` is Halo's observer, not a lerp: every channel (position, an orientation rotation vector from the
+target, field of view) is the quintic `c3 s^3 + c4 s^4 + c5 s^5` of the remaining fraction `s`, with coefficients chosen so that offset, velocity and acceleration at the retarget equal what the camera
+had (XBE 0x11cda0 evaluate, 0x11c500 setup); velocity and acceleration are finite differences over the last three ticks (`cine_camera.hist`). The `ease` argument is ignored; a relative camera runs the
+polynomial in the anchor's frame. (4) `sound_impulse_time` is the sound tag's declared maximum play time (tag +0x84 ms x 30 / 1000), not the decoded length (8/9 of it). (5) Weapons held by units are
+spawned as objects attached to the hand marker (`OBJ_F_HELD`, never picked up).
+**Why**: the first shots of the intro were rotated wrongly (halo ring edge-on, Cortana's room sideways), the camera moves started and stopped with a cubic ease while the Xbox's speed is continuous through retargets
+(phase correlation of the PS2 and reference motion: both bell-shaped, the PS2 one with a kink at the retarget), the bridge scene ended about 4 s early, and marines held nothing.
+**Consequences**: packs need no rebuild for this; `cine_cam_set*` callers get the new motion for free. Remaining differences from the intro comparison are listed in ADR-061/062 (hangar holes from the EE clip budget,
+sky/galaxy brightness, planet crescent, exhaust glow, screen filters, marine armour colour, first-person hands, close-up clipping). UNVERIFIED: the field-of-view script command still uses a linear ramp.
+
 ## Open decisions
 None.

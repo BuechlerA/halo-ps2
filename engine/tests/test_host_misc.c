@@ -232,6 +232,7 @@ static int find_dialogue(unsigned skip, uint32_t *tag, uint32_t *tmin, uint32_t 
 			if (t < lo) lo = t;
 			if (t > hi) hi = t;
 		}
+		if (s.max_play_ms) lo = hi = (uint32_t)((uint64_t)s.max_play_ms * 30u / 1000u);      /* the declared length (tag +0x84) is what the Xbox waits for */
 		*tag = s.tag_id; *tmin = lo; *tmax = hi;
 		return 1;
 	}
@@ -302,6 +303,7 @@ static void test_sound(void)
 					uint32_t tt = (uint32_t)(((uint64_t)p.frames * 30u + p.rate - 1u) / p.rate);
 					if (tt > rtime) rtime = tt;
 				}
+				if (s.max_play_ms) rtime = (uint32_t)((uint64_t)s.max_play_ms * 30u / 1000u);
 				rt = s.tag_id; maxd = s.max_dist;
 			}
 		}

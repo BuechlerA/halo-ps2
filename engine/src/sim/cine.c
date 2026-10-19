@@ -19,7 +19,6 @@ static float wrap_pi(float a)
 	return a;
 }
 
-static float ang_lerp(float a, float b, float u) { return a + wrap_pi(b - a) * u; }
 
 /* ---- 1. recorded animation playback ------------------------------------------------------------------------------ */
 static uint32_t change_bit(unsigned type)
@@ -249,22 +248,6 @@ int cine_track_sample_pitch(const cinedef_section *s, uint32_t track, float pitc
 }
 
 /* ---- 3. cinematic camera --------------------------------------------------------------------------------------------------- */
-static float ease_u(float u, int kind)
-{
-	u = clampf(u, 0.0f, 1.0f);
-	return kind == CINE_EASE_SMOOTH ? u * u * (3.0f - 2.0f * u) : u;
-}
-
-static void pose_lerp(const cine_pose *a, const cine_pose *b, float u, cine_pose *o)
-{
-	int i;
-	for (i = 0; i < 3; i++) o->pos[i] = lerpf(a->pos[i], b->pos[i], u);
-	o->yaw = ang_lerp(a->yaw, b->yaw, u);
-	o->pitch = lerpf(a->pitch, b->pitch, u);
-	o->roll = ang_lerp(a->roll, b->roll, u);
-	o->fov = lerpf(a->fov, b->fov, u);
-}
-
 void cine_pose_compose(const cine_pose *rel, const cine_frame *anchor, cine_pose *world)
 {
 	float cy = cosf(anchor->yaw), sy = sinf(anchor->yaw), x = rel->pos[0], y = rel->pos[1], z = rel->pos[2];
@@ -288,14 +271,105 @@ void cine_pose_relative(const cine_pose *world, const cine_frame *anchor, cine_p
 	*rel = o;
 }
 
+/* Halo's observer: every channel (position, orientation as a rotation vector from the target, field of view) follows
+ * x(s) = c3 s^3 + c4 s^4 + c5 s^5 with s = remaining / total ticks, the offset from the target. The coefficients make the offset,
+ * velocity and acceleration at the retarget equal to what the camera had (a quintic: no jump in speed or acceleration when a
+ * script retargets in mid-flight). */
+enum { CAM_CH = 7 };
+
+static void quat_conj(const float q[4], float o[4])
+{
+	o[0] = -q[0]; o[1] = -q[1]; o[2] = -q[2]; o[3] = q[3];
+}
+
+static void quat_log(const float q[4], float rv[3])
+{
+	float s = q[3] < 0.0f ? -1.0f : 1.0f, x = q[0] * s, y = q[1] * s, z = q[2] * s, w = q[3] * s;
+	float n = sqrtf(x * x + y * y + z * z), k;
+	k = n > 1e-6f ? 2.0f * atan2f(n, w) / n : 2.0f;
+	rv[0] = x * k; rv[1] = y * k; rv[2] = z * k;
+}
+
+static void quat_exp(const float rv[3], float q[4])
+{
+	float a = sqrtf(rv[0] * rv[0] + rv[1] * rv[1] + rv[2] * rv[2]), k = a > 1e-6f ? sinf(a * 0.5f) / a : 0.5f;
+	q[0] = rv[0] * k; q[1] = rv[1] * k; q[2] = rv[2] * k; q[3] = cosf(a * 0.5f);
+}
+
+static void pose_offset(const cine_pose *p, const cine_pose *tgt, const float qt[4], float ch[CAM_CH])
+{
+	float q[4], qc[4], r[4];
+	int i;
+	cine_ypr_to_quat(p->yaw, p->pitch, p->roll, q);
+	quat_conj(qt, qc);
+	quat_mul(q, qc, r);
+	for (i = 0; i < 3; i++) ch[i] = p->pos[i] - tgt->pos[i];
+	quat_log(r, ch + 3);
+	ch[6] = p->fov - tgt->fov;
+}
+
+static void cam_retarget(cine_camera *c, uint32_t ticks, const cine_pose *to, int relative, const cine_frame *anchor)
+{
+	cine_pose h[3];
+	float ch[3][CAM_CH], T = (float)ticks;
+	int i, k, n;
+	h[0] = c->from;                                         /* the pose now (set by the caller, in the new space) */
+	for (i = 1; i < 3; i++) {
+		h[i] = c->hist[i];
+		if (c->hist_n > (uint8_t)i && relative != c->hist_rel) {                                       /* history from the other space */
+			cine_pose o;
+			if (relative) cine_pose_relative(&h[i], anchor, &o);
+			else cine_pose_compose(&h[i], anchor, &o);
+			h[i] = o;
+		}
+	}
+	n = c->hist_n;
+	c->to = *to;
+	cine_ypr_to_quat(to->yaw, to->pitch, to->roll, c->qt);
+	c->hist_rel = (uint8_t)relative;
+	c->hist[0] = h[0];
+	c->hist[1] = n > 1 ? h[1] : h[0];
+	c->hist[2] = n > 2 ? h[2] : c->hist[1];
+	c->hist_n = 3;
+	memset(c->coef, 0, sizeof c->coef);
+	if (!ticks) return;
+	for (i = 0; i < 3; i++) pose_offset(&c->hist[i], to, c->qt, ch[i]);
+	for (k = 0; k < CAM_CH; k++) {
+		float D = ch[0][k], v = ch[0][k] - ch[1][k], a = ch[0][k] - 2.0f * ch[1][k] + ch[2][k];
+		float V = -v * T, A = a * T * T;                    /* d/ds and d2/ds2 at s = 1 */
+		c->coef[k][0] = 10.0f * D - 4.0f * V + 0.5f * A;
+		c->coef[k][1] = 7.0f * V - 15.0f * D - A;
+		c->coef[k][2] = 6.0f * D - 3.0f * V + 0.5f * A;
+	}
+}
+
 static void cam_eval(cine_camera *c)
 {
-	cine_pose t;
-	float u = c->ticks ? (float)c->elapsed / (float)c->ticks : 1.0f;
-	pose_lerp(&c->from, &c->to, ease_u(u, c->ease), &t);
+	cine_pose t = c->to;
+	float s = c->ticks && c->elapsed < c->ticks ? (float)(c->ticks - c->elapsed) / (float)c->ticks : 0.0f, ch[CAM_CH], q[4], r[4];
+	int k;
+	for (k = 0; k < CAM_CH; k++) ch[k] = ((c->coef[k][2] * s + c->coef[k][1]) * s + c->coef[k][0]) * s * s * s;
+	for (k = 0; k < 3; k++) t.pos[k] = c->to.pos[k] + ch[k];
+	t.fov = c->to.fov + ch[6];
+	quat_exp(ch + 3, r);
+	quat_mul(r, c->qt, q);
+	cine_quat_to_ypr(q, &t.yaw, &t.pitch, &t.roll);
+	if (s == 0.0f) {                                        /* arrived: exactly the target, no Euler round trip */
+		t.yaw = c->to.yaw; t.pitch = c->to.pitch; t.roll = c->to.roll;
+	}
 	if (c->relative) cine_pose_compose(&t, &c->anchor, &c->cur);
 	else c->cur = t;
 	if (c->fov_active) c->cur.fov = lerpf(c->fov_from, c->fov_to, c->fov_ticks ? clampf((float)c->fov_elapsed / (float)c->fov_ticks, 0.0f, 1.0f) : 1.0f);
+	c->rel_cur = t;
+}
+
+static void cam_reset_history(cine_camera *c)
+{
+	cine_ypr_to_quat(c->to.yaw, c->to.pitch, c->to.roll, c->qt);
+	c->hist[0] = c->hist[1] = c->hist[2] = c->rel_cur;
+	c->hist_n = 1;
+	c->hist_rel = c->relative;
+	memset(c->coef, 0, sizeof c->coef);
 }
 
 void cine_cam_init(cine_camera *c)
@@ -315,7 +389,8 @@ void cine_cam_control(cine_camera *c, int on)
 			c->mode = CINE_CAM_POSE;
 			c->relative = 0;
 			c->ticks = c->elapsed = 0;
-			c->from = c->to = c->cur = c->player;
+			c->from = c->to = c->cur = c->rel_cur = c->player;
+			cam_reset_history(c);
 		}
 	} else {
 		c->control = 0;
@@ -336,10 +411,11 @@ void cine_cam_set(cine_camera *c, const cine_pose *to, uint32_t ticks, int ease)
 	c->fov_active = 0;
 	c->ease = (uint8_t)ease;
 	c->from = start;
-	c->to = *to;
 	c->ticks = ticks;
 	c->elapsed = 0;
+	cam_retarget(c, ticks, to, 0, &c->anchor);
 	cam_eval(c);
+	if (!ticks) { c->hist_n = 1; cam_reset_history(c); }
 }
 
 void cine_cam_set_relative(cine_camera *c, const cine_pose *rel, uint32_t ticks, int ease, const cine_frame *anchor)
@@ -352,10 +428,11 @@ void cine_cam_set_relative(cine_camera *c, const cine_pose *rel, uint32_t ticks,
 	c->anchor = *anchor;
 	cine_pose_relative(&start, anchor, &c->from);
 	c->relative = 1;
-	c->to = *rel;
 	c->ticks = ticks;
 	c->elapsed = 0;
+	cam_retarget(c, ticks, rel, 1, anchor);
 	cam_eval(c);
+	if (!ticks) cam_reset_history(c);
 }
 
 void cine_cam_set_anchor(cine_camera *c, const cine_frame *anchor)
@@ -396,6 +473,10 @@ void cine_cam_tick(cine_camera *c)
 	if (c->elapsed < c->ticks) c->elapsed++;
 	if (c->fov_active && c->fov_elapsed < c->fov_ticks) c->fov_elapsed++;
 	cam_eval(c);
+	c->hist[2] = c->hist[1];
+	c->hist[1] = c->hist[0];
+	c->hist[0] = c->rel_cur;
+	if (c->hist_n < 3) c->hist_n++;
 }
 
 uint32_t cine_cam_time(const cine_camera *c)
