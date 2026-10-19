@@ -287,13 +287,13 @@ void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const 
 			fx_dynlight *dl = &f->dyn_next[f->dyn_next_n++];
 			unsigned q;
 			for (q = 0; q < 3; q++) { dl->pos[q] = pos[q]; dl->rgb[q] = L.color_hi[1 + q]; }
-			dl->radius = (L.radius > 0.0f ? L.radius : 1.0f) * 4.0f;
+			dl->radius = (L.radius > 0.0f ? L.radius : 1.0f) * 2.5f;
 			if (f->dbg == 3) printf("[fx] dyn light tag %08x key %d at %.1f %.1f %.1f rgb %.2f %.2f %.2f r %.1f\n", (unsigned)r.tag, key, (double)pos[0], (double)pos[1], (double)pos[2], (double)dl->rgb[0], (double)dl->rgb[1], (double)dl->rgb[2], (double)dl->radius);
 		}
 		if ((L.flags & 1u) || gb < 0 || !(p = alloc_particle(f))) return;     /* dynamic lights light the objects around them (above); only the others bloom */
 		for (i = 0; i < 3; i++) c[i] = 0.55f * L.color_hi[1 + i] + 0.45f;           /* a bright light blooms towards white */
 		size = L.radius > 0.0f ? L.radius : 1.0f;
-		size = 0.12f * (size > 8.0f ? 8.0f : size) + 0.05f;       /* world units of half size: the light's radius is the reach of its light, the bloom is a small part of it */
+		size = 0.05f * (size > 8.0f ? 8.0f : size) + 0.03f;       /* world units of half size: the light's radius is the reach of its light, the bloom is a small part of it */
 		{                                                          /* a bloom is a screen space effect: at a distance it keeps an apparent size (about 3 % of the distance, times the light's reach) */
 			float dx = pos[0] - f->cam[0], dy = pos[1] - f->cam[1], dz = pos[2] - f->cam[2], dist = sqrtf(dx * dx + dy * dy + dz * dz);
 			float apparent = 0.09f * dist * (0.6f + 0.4f * (L.radius > 4.0f ? 4.0f : L.radius));

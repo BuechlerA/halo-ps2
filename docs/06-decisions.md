@@ -622,9 +622,14 @@ the a10 configs set the bridge crew's from the Xbox video (the Xbox draws its ow
 marker (the soft disc of `plasma burn outer glow`, tag id in the FXAT v2 header): half size = max(0.12 x radius, 9 % of the distance to the camera, up to 90 wu), colour 55 % tag colour + 45 % white, pulled
 towards the camera by their size so the fixture does not hide half of them; this is the exhaust bloom of the Autumn's engines and the small lamps. Off-screen sprites are culled (their far coordinates wrapped
 in the GS and drew a band across the frame).
-Still different, and not fixable from the tag data alone: the red alert wash on objects and walls (the Xbox lights them with dynamic lights; the light tags' colour fields do not parse into a plausible
-red: `alert_light` reads green, `light red` reads green or blue, so the layout at +0x34 is not understood), Keyes' cyan hologram overlay and Cortana's hologram colour (multi-stage `sotr` combiner programs of the
-cinematic effects are not decoded), steam physics (wind, buoyancy).
+(7) CORRECTION to (6) and to the earlier `parse_light`: the light tag's colours are at +0x38 (lower) and +0x48 (upper), not +0x34 / +0x44 (every light was turned by one channel: the alert lights read green,
+the assault rifle's flash cyan). Lights with flag bit 0 (dynamic) register as point lights (`fx_dynlight`, reach = tag radius x 2.5, up to 16) and light the objects near them in `obj_render light_at` (ambient
++ half of it on the sun colour, falloff (1 - d / reach)^2, strength 0.55): this is the red alert wash on the crew and Keyes in the bridge and corridor, and the teal glow of the command display; walls are lit
+by the baked lightmaps and stay unlit by them (the Xbox lights them too). Dynamic lights do not bloom (the alert lamps have none on the Xbox).
+(8) Cortana's body and hair (additive `sotr` shaders, three stage combiner programs) are tinted purple (0.62, 0.32, 1.0, measured on the video) in their converted noise map (`objtex.TINT`): the programs are
+not decoded. UNVERIFIED: no frame of her was rendered (the bridge scene she is in does not run in the bot's timeline).
+Still different: the walls' red alert wash, Keyes' cyan hologram overlay (translucent teal Keyes and the beams across him: the display's volume effects are drawn as faint streaks only), steam physics (wind,
+buoyancy), the large engine bells' brightness.
 
 ## Open decisions
 None.

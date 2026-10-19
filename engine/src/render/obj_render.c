@@ -277,7 +277,7 @@ static void light_at(const obj_render_t *o, const float pos[3], scen_light *l)
 			a = 1.0f - d / dl[i].radius;
 			a *= a;
 			for (k = 0; k < 3; k++) {
-				unsigned add = (unsigned)(dl[i].rgb[k] * 255.0f * a * 0.3f), amb = (unsigned)l->ambient[k] + add, sun = (unsigned)l->sun[k] + add / 2u;
+				unsigned add = (unsigned)(dl[i].rgb[k] * 255.0f * a * 0.55f), amb = (unsigned)l->ambient[k] + add, sun = (unsigned)l->sun[k] + add / 2u;
 				l->ambient[k] = (uint8_t)(amb > 255u ? 255u : amb);
 				l->sun[k] = (uint8_t)(sun > 255u ? 255u : sun);
 			}

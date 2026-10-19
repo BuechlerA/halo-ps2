@@ -140,6 +140,7 @@ def soso_change(m: texconv.MapData, shader_id: int) -> tuple[int, int] | None:
 
 SOSO_CUBE_MAP, SOSO_REFL_PERP_BRIGHT, SOSO_REFL_PERP_COLOUR, SOSO_REFL_PAR_BRIGHT, SOSO_REFL_PAR_COLOUR = 0x164, 0x144, 0x148, 0x154, 0x158
 REFLECT_KEY = 1 << 41
+TINT_KEY = 1 << 42
 _CUBE_AVG: dict[int, tuple[float, float, float] | None] = {}
 
 
@@ -222,6 +223,7 @@ def resolve_object_shader(m: texconv.MapData, shader_id: int) -> texconv.ShaderI
     info = _resolve_object_shader(m, shader_id)
     info.product = texconv.sotr_product(m, shader_id)
     info.reflect = soso_reflect(m, shader_id) or ()
+    info.tint = TINT.get(info.path, ())
     got = soso_change(m, shader_id)
     if got is not None and info.bitmap_id is not None:
         info.change_source, info.mask_bitmap = got
@@ -268,11 +270,14 @@ def target_size(w: int, h: int, max_dim: int) -> tuple[int, int]:
 
 # Brightness measured against the Xbox intro video: the dome's nebula is a 1x additive layer in its shader, yet it shows about three times as bright
 # there as the bitmap's own colours (the tag data gives no reason: the Xbox path is not decoded). Applied to the converted copy only.
+# Cortana's hologram: her body and hair are additive `sotr` shaders with a grey noise mask; the Xbox runs a three stage combiner program whose constants give the
+# purple she shows (measured on the intro video: about (0.62, 0.32, 1.0) at full strength); the program is not decoded, so the converted map is tinted instead.
+TINT = {"characters\\cortana\\shaders\\cortana_body": (0.62, 0.32, 1.0), "characters\\cortana\\shaders\\cortana_hair": (0.62, 0.32, 1.0)}
 SKY_GAIN = {"sky\\sky_x10\\bitmaps\\space": 2.5}
 
 
 def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_id: int, klass_cap: int,
-                           max_dim: int, reflect: tuple | None = None) -> texconv.Ps2Texture:
+                           max_dim: int, reflect: tuple | None = None, tint: tuple | None = None) -> texconv.Ps2Texture:
     """texconv.convert_texture with a configurable size cap and without the colour-key stand-in. A sky bitmap (the whole dome is made of a few of
     them, and they are dark gradients that 16 colours band) keeps its size up to 256 and always gets a 256 colour palette."""
     sky = m.by_id[source_id].path.startswith("sky\\")
@@ -295,6 +300,8 @@ def convert_object_texture(m: texconv.MapData, img: bitmaps.BitmapImage, source_
                     rgba[4 * i + c] = min(255, rgba[4 * i + c] + add[c] * a // 255)
         rgba = bytes(rgba)
     rgba = texconv.resample_rgba(rgba, w, h, tw, th, klass != texconv.CLASS_OPAQUE)
+    if tint:
+        rgba = bytes(min(255, int(v * tint[i & 3] + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
     gain = SKY_GAIN.get(m.by_id[source_id].path)
     if gain:
         rgba = bytes(min(255, int(v * gain + 0.5)) if i & 3 != 3 else v for i, v in enumerate(rgba))
@@ -386,6 +393,9 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
                 used_plain = False
             else:
                 s.reflect = ()
+        if s.tint and not s.product and not s.reflect:
+            plan.setdefault((s.bitmap_id, cap, TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100)), (images[0], cap))
+            used_plain = False
         if used_plain:
             plan.setdefault((s.bitmap_id, cap, 0), (images[0], cap))
         if s.mask_bitmap:
@@ -408,14 +418,14 @@ def build_otex(m: texconv.MapData, shader_ids: list[int], budget: int = DEFAULT_
             continue
         if s.bitmap_id is None:
             continue
-        key = (s.bitmap_id, texconv.klass_cap_for(s), PRODUCT_KEY | s.product[-1] if s.product else REFLECT_KEY | s.reflect[0] if s.reflect else 0)
+        key = (s.bitmap_id, texconv.klass_cap_for(s), PRODUCT_KEY | s.product[-1] if s.product else REFLECT_KEY | s.reflect[0] if s.reflect else TINT_KEY | int(s.tint[0] * 100) << 16 | int(s.tint[1] * 100) << 8 | int(s.tint[2] * 100) if s.tint else 0)
         if key not in seen:
             img, cap = plan[key]
             try:
                 if s.product:
                     tex = convert_product_texture(m, img, s.bitmap_id, dim)
                 else:
-                    tex = convert_object_texture(m, img, s.bitmap_id, cap, dim, (refl_imgs[s.reflect[0]], s.reflect[1]) if s.reflect else None)
+                    tex = convert_object_texture(m, img, s.bitmap_id, cap, dim, (refl_imgs[s.reflect[0]], s.reflect[1]) if s.reflect else None, s.tint or None)
             except bitmaps.BitmapError as exc:
                 s.bitmap_id, s.flags, s.note = None, s.flags | texconv.BF_UNTEXTURED, f"base map failed to decode: {exc}"
                 reasons["base map failed to decode"] = reasons.get("base map failed to decode", 0) + 1
