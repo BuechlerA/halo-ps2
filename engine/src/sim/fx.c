@@ -290,18 +290,7 @@ void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const 
 			dl->radius = (L.radius > 0.0f ? L.radius : 1.0f) * 2.5f;
 			if (f->dbg == 3) printf("[fx] dyn light tag %08x key %d at %.1f %.1f %.1f rgb %.2f %.2f %.2f r %.1f\n", (unsigned)r.tag, key, (double)pos[0], (double)pos[1], (double)pos[2], (double)dl->rgb[0], (double)dl->rgb[1], (double)dl->rgb[2], (double)dl->radius);
 		}
-		if ((L.flags & 1u) && L.radius >= 0.75f) {           /* the walls are lit by baked lightmaps and cannot take a dynamic light: a wide faint disc of its colour in front of the lamp stands in for the wash */
-			if (gb >= 0 && (p = alloc_particle(f))) {
-				float wc[3], mx = 0.01f;
-				unsigned q;
-				for (q = 0; q < 3; q++) { wc[q] = L.color_hi[1 + q]; if (wc[q] > mx) mx = wc[q]; }
-				memset(p, 0, sizeof *p);
-				p->active = 1; p->life = 2; p->age = 0;
-				for (q = 0; q < 3; q++) { p->pos[q] = pos[q]; p->rgba[q] = (uint8_t)colour_byte(wc[q] / mx * 0.9f); p->rgba_end[q] = p->rgba[q]; }
-				p->rgba[3] = p->rgba_end[3] = 0x05;
-				p->size0 = p->size1 = (L.radius > 0.0f ? L.radius : 1.0f) * 3.0f;
-				p->bitmap = (uint16_t)gb; p->seq = 0; p->blend = 3;
-			}
+		if ((L.flags & 1u) && L.radius >= 0.75f) {           /* dynamic: no bloom; objects take it in obj_render, the walls' vertex colours in bsp_render (dl_apply) */
 			return;
 		}
 		if (gb < 0 || !(p = alloc_particle(f))) return;     /* the others bloom */

@@ -648,5 +648,13 @@ and the synthetic fixtures (`test_cinconv.py` streams, `test_cinedef.c`) follow 
 old reading and 30 under the new one, enough to carry the marines through the camera's field of view. After the change their boots and shins are where the video has them.
 **Consequences**: every recording's timing shifts by one event (movement of walking actors, Keyes' paths, vehicles driven by recordings); `scripts/cmp-intro.sh` cuts were rechecked.
 
+## ADR-068 Dynamic lights on the BSP: in-place vertex colour patches
+**Decision**: the dynamic point lights of attached fixtures (`fx_dynamic_lights`, ADR-066) are handed to the BSP renderer (`bsp_render_set_dynamic_lights`). `dl_apply` finds the batches whose box a light reaches (up to 96) and rewrites
+their vertex colour stream (`bsp_batch_streams.col`, 4 bytes per vertex, 0x80 = 1.0) in place, blending each vertex toward the light's normalised colour by (1 - d / reach)^2 x 0.33 with d the distance to the decoded vertex position;
+the original bytes are kept and restored when the set of lights changes (a hash of the rows), and the touched ranges are `SyncDCache`d because the DMA reads RAM. The packets are static, so a patch costs nothing per frame; a moving light
+re-patches when its hash changes (about 0.2 ms for a few batches on the host build). The stand-in wash disc of ADR-066 is removed.
+**Why**: the bridge and corridors are washed red on the Xbox by the alert lamps; with only the objects lit the walls stayed neutral grey.
+**Consequences**: vertex colour is shared by the base and the lightmap pass, so a patched surface takes the tint in both (strength tuned by eye against the video); no normals, so the light reaches the backs of walls it is not facing. UNVERIFIED on hardware (cache sync).
+
 ## Open decisions
 None.

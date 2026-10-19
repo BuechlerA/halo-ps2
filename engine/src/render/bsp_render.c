@@ -61,6 +61,7 @@ typedef struct { u32 first; u16 material, page; u8 n; } clip_poly_t;
 static clip_poly_t *s_cpoly;
 static cvert       *s_cvert;
 static u32          s_cpoly_count, s_cvert_count;
+static u32         s_dl_hash, s_dl_patched_n;       /* dynamic light patches (see dl_apply) */
 static float       *s_box;                          /* per batch: min xyz, max xyz (6 floats) */
 static u16         *s_cpoly_sorted;                 /* poly indices grouped by material, then by page */
 static u32         *s_cgroup_count, *s_cgroup_start;
@@ -180,6 +181,7 @@ int bsp_render_set_world(arena_t *a, const bsp_section *s, const tex_source_t *s
 {
 	unsigned i, pages = s_window_pages - CACHE_FIRST_PAGE;
 	s_bsp = s;
+	s_dl_patched_n = 0; s_dl_hash = 0;           /* a new world: nothing patched (the old packets are gone) */
 	s_src = *src;
 	if (vis_init(&s_vis, a, s)) { printf("[err] vis buffers do not fit\n"); return -1; }
 	s_bind = arena_alloc(a, sizeof *s_bind * (s->material_count + 1), 16);
@@ -372,6 +374,88 @@ static void emit_batches(chain_t *c, const u32 *list, u32 count, u32 entry)
 	}
 }
 
+
+/* ---- dynamic point lights: in-place vertex colour patches ------------------------------------------------------------------------------------------- */
+#define DL_MAX 8
+#define DL_MAX_BATCH 96
+static float    s_dl[DL_MAX][7];
+static unsigned s_dl_n;
+static struct { u32 batch; uint8_t orig[72 * 4]; } s_dl_patched[DL_MAX_BATCH];
+
+void bsp_render_set_dynamic_lights(const float (*rows)[7], unsigned n)
+{
+	unsigned i, k;
+	s_dl_n = n > DL_MAX ? DL_MAX : n;
+	for (i = 0; i < s_dl_n; i++) for (k = 0; k < 7; k++) s_dl[i][k] = rows[i][k];
+}
+
+static uint8_t *dl_colours(u32 batch, u32 *verts, float *centre, float *scale, const int16_t **pos)
+{
+	bsp_batch b = bsp_get_batch(s_bsp, batch);
+	bsp_batch_raw raw = bsp_batch_streams(s_bsp, &b);
+	*verts = raw.vertices; centre[0] = raw.centre[0]; centre[1] = raw.centre[1]; centre[2] = raw.centre[2]; *scale = raw.scale; *pos = raw.pos;
+	return (uint8_t *)(uintptr_t)raw.col;
+}
+
+static void dl_apply(void)
+{
+	u32 hash = 2166136261u, i, b, k;
+	for (i = 0; i < s_dl_n; i++) for (k = 0; k < 7; k++) { hash ^= (u32)(int)(s_dl[i][k] * 64.0f); hash *= 16777619u; }
+	if (s_dl_n == 0) hash = 0;
+	if (hash == s_dl_hash) return;
+	for (i = 0; i < s_dl_patched_n; i++) {                           /* the light set changed: put the original colours back */
+		u32 verts, ve;
+		float cc[3], sc;
+		const int16_t *ps;
+		uint8_t *col = dl_colours(s_dl_patched[i].batch, &verts, cc, &sc, &ps);
+		for (ve = 0; ve < verts * 4u && ve < sizeof s_dl_patched[i].orig; ve++) col[ve] = s_dl_patched[i].orig[ve];
+		SyncDCache(col, col + verts * 4u);                          /* the DMA reads RAM, not the cache */
+	}
+	s_dl_patched_n = 0;
+	s_dl_hash = hash;
+	if (s_dl_n == 0) return;
+	for (b = 0; b < s_bsp->batch_count && s_dl_patched_n < DL_MAX_BATCH; b++) {
+		const float *bx = s_box + 6 * b;
+		unsigned l;
+		int hit = 0;
+		for (l = 0; l < s_dl_n && !hit; l++) {
+			float dx = s_dl[l][0] < bx[0] ? bx[0] - s_dl[l][0] : s_dl[l][0] > bx[3] ? s_dl[l][0] - bx[3] : 0.0f;
+			float dy = s_dl[l][1] < bx[1] ? bx[1] - s_dl[l][1] : s_dl[l][1] > bx[4] ? s_dl[l][1] - bx[4] : 0.0f;
+			float dz = s_dl[l][2] < bx[2] ? bx[2] - s_dl[l][2] : s_dl[l][2] > bx[5] ? s_dl[l][2] - bx[5] : 0.0f;
+			hit = dx * dx + dy * dy + dz * dz < s_dl[l][6] * s_dl[l][6];
+		}
+		if (hit) {
+			u32 verts, ve;
+			float cc[3], sc;
+			const int16_t *ps;
+			uint8_t *col = dl_colours(b, &verts, cc, &sc, &ps);
+			if (verts > 72) continue;
+			memcpy(s_dl_patched[s_dl_patched_n].orig, col, verts * 4u);
+			s_dl_patched[s_dl_patched_n].batch = b;
+			s_dl_patched_n++;
+			for (ve = 0; ve < verts; ve++) {
+				float wp[3];
+				unsigned c2;
+				for (c2 = 0; c2 < 3; c2++) wp[c2] = cc[c2] + (float)ps[4 * ve + c2] * sc;
+				for (l = 0; l < s_dl_n; l++) {
+					float dx = wp[0] - s_dl[l][0], dy = wp[1] - s_dl[l][1], dz = wp[2] - s_dl[l][2], d = sqrtf(dx * dx + dy * dy + dz * dz), a, mx;
+					if (d >= s_dl[l][6]) continue;
+					a = 1.0f - d / s_dl[l][6];
+					a = a * a * 0.33f;
+					mx = s_dl[l][3] > s_dl[l][4] ? s_dl[l][3] : s_dl[l][4];
+					if (s_dl[l][5] > mx) mx = s_dl[l][5];
+					if (mx < 0.05f) continue;
+					for (c2 = 0; c2 < 3; c2++) {
+						float v = (float)col[4 * ve + c2];
+						v = v * (1.0f - a) + (s_dl[l][3 + c2] / mx) * 160.0f * a;
+						col[4 * ve + c2] = (uint8_t)(v < 0.0f ? 0.0f : v > 255.0f ? 255.0f : v);
+					}
+				}
+			}
+			SyncDCache(col, col + verts * 4u);
+		}
+	}
+}
 
 /* ---- EE clipping of the triangles the VU1 drops ------------------------------------------------ */
 static void clip_gs_params(clip_gs *g, const camera_t *cam)
@@ -586,6 +670,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 	}
 	s_vis.force_all = (s_opt.debug & 64) != 0;
 	vis_run(&s_vis, s_bsp, cam, &fr, clip);
+	dl_apply();
 	if (s_opt.only_batch >= 0) {
 		u32 k, keep = 0, n = s_vis.batch_count;
 		for (k = 0; k < n; k++) if ((int)s_vis.batches[k] >= s_opt.only_batch && (int)s_vis.batches[k] <= s_opt.only_batch_hi) s_vis.batches[keep++] = s_vis.batches[k];

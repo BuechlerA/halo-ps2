@@ -555,6 +555,13 @@ int main(int argc, char *argv[])
 						default: break;
 						}
 					}
+					{                                              /* dynamic lights of attached fixtures: objects take them in obj_render, the BSP's vertex colours in bsp_render */
+						static float rows[16][7];
+						const fx_dynlight *dl;
+						unsigned dn = fx_dynamic_lights(&s_fx, &dl), di, dq;
+						for (di = 0; di < dn && di < 16; di++) { for (dq = 0; dq < 3; dq++) { rows[di][dq] = dl[di].pos[dq]; rows[di][3 + dq] = dl[di].rgb[dq]; } rows[di][6] = dl[di].radius; }
+						bsp_render_set_dynamic_lights((const float (*)[7])rows, dn < 8 ? dn : 8);
+					}
 					s_fx.cam[0] = s_cam.pos[0]; s_fx.cam[1] = s_cam.pos[1]; s_fx.cam[2] = s_cam.pos[2];
 					fx_tick(&s_fx);
 				}

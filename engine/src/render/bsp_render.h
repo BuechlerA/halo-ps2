@@ -71,6 +71,11 @@ typedef struct {
 	u8    horizon_rgb[3];                /* sky colour at the horizon (and below it) */
 } render_options_t;
 
+/* Dynamic point lights (the red alert lamps, the command display): `n` rows of x y z r g b reach, r g b 0..1. The vertex colours of the batches they reach are rewritten
+ * in place (the packets are static, so a patched batch stays patched until the light set changes) to blend toward the light's colour with a (1 - d / reach)^2 falloff:
+ * walls are lit by baked lightmaps, this is their only dynamic term. n = 0 restores every batch. */
+void bsp_render_set_dynamic_lights(const float (*rows)[7], unsigned n);
+
 /* One-time: VU1 microprogram, double buffer, chain memory (the single boot-time malloc). */
 int  bsp_render_init(const video_t *v);
 /* Per BSP (level arena): visibility buffers, material bindings, texture cache. */
