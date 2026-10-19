@@ -799,7 +799,7 @@ for the missing HDR range; a faithful version would sample the lightmap under ea
 buffer is CT16S, so `video_add_setup_env` turns the GS dithering on (`DTHE`, 4x4 matrix); sky bitmaps (`objtex.convert_object_texture`) are quantised at full colour precision
 (`MASK_RGB8`, no 5-6-5 reduction before the median cut) and mapped with Floyd-Steinberg error diffusion (`Quantiser.dithered`, `texconv.convert_rgba(smooth=True)`). (3) The Pillar of
 Autumn's hull is BSP geometry of the `poa-*` environment shaders (512 x 512 sources, base map only; the Xbox lights them through their bump map, a p8-bump height field): for
-bitmaps under `texconv.BUMP_BAKE` the height field is baked into the colour map as fixed-light relief shading (`bake_relief`, light from the upper left, strength 1.1) at source
+bitmaps under `texconv.BUMP_BAKE` the height field is baked into the colour map as fixed-light relief shading (`bake_relief`, light from the upper left, strength 1.1, gain 0.9: the lit hull measured 10 .. 13 % brighter than the video at ticks 1050 / 1060, 0.99 .. 1.02 after) at source
 resolution before the shrink, and the result is a 256 colour dithered texture; `poa-registry` (the ship's name, 1024 x 128) is a hero bitmap at 512 x 64. (4) `objects_pose_world` poses
 the node world matrices only; marker lookups (`marker_world`: held weapons, attachments, fx) and the collision poses (`game.c`) use it, and the skinning matrices of `objects_pose` use a
 per model cache of inverse bind matrices (`bind_inverse`, 24 entries, keyed by `model_section.generation`) instead of rebuilding the bind chain for every posed object. (5) `update_held_weapons`
@@ -814,7 +814,7 @@ at 660 24.5 -> 16.7 ms (with the escorts and far objects drawn again: objects 5.
 unmeasured (PCSX2 does not model it; ADR-022). `a10.tex.hp2` grows 1.5 -> 1.8 MiB (hull textures PSMT8, registry 512 wide).
 **Consequences**: TEX and OBJ packs must be rebuilt (`scripts/build-world.sh a10`; sky textures are 256 colours with dithering, `a10.tex` has the baked hull). Other bump maps are not baked
 (`BUMP_BAKE` lists prefixes). New debug keys: `objtrace "first last step"` (every live object's cull inputs, `[obj]` lines), `objfarpx`.
-Still open: the hull is lit brighter and greener than the video's; the relief light direction is a guess (one fixed direction), the Xbox's dot3 follows the lightmap.
+Sky banding, measured at identical ticks: flat-neighbour fraction 0.87 -> 0.37 (tick 300), 0.73 -> 0.23 (tick 600); at 4x zoom the dither shows as a faint column pattern, invisible at 1x. Still open: the relief light direction is one fixed guess (the Xbox's dot3 follows the lightmap); GS cost of the dither and the 256 colour hull is unmeasured.
 
 ## Open decisions
 None.

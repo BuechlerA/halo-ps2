@@ -93,6 +93,7 @@ HERO_BITMAPS = {"levels\\a10\\bitmaps\\monitors": 512,
 # looks like noise. BUMP_LIGHT = the direction the relief is lit from (texture space, towards the light), BUMP_STRENGTH how many source levels of height change one 1.0 of shade.
 BUMP_BAKE = ("scenery\\vehicles\\poa\\bitmaps\\",)
 BUMP_STRENGTH = 1.1
+BUMP_GAIN = 0.9                       # measured: the lit hull came out 10 .. 13 % brighter than the Xbox video's at ticks 1050 / 1060 (same hue)
 BUMP_KEY = 1 << 41
 SENV_BUMP_MAP, SENV_BUMP_SCALE = 0x128, 0x124
 LM_BUDGET_BYTES = 512 * 1024         # per BSP, after conversion (see docs/09-tex-section.md)
@@ -761,7 +762,7 @@ def bake_relief(rgba: bytes, w: int, h: int, height: bytes, strength: float = BU
         for x in range(w):
             xa, xb = max(0, x - 1), min(w - 1, x + 1)
             sh = 1.0 + strength * (height[ya + xa] - height[yb + xb]) / 255.0
-            sh = 0.5 if sh < 0.5 else 1.7 if sh > 1.7 else sh
+            sh = (0.5 if sh < 0.5 else 1.7 if sh > 1.7 else sh) * BUMP_GAIN
             o = 4 * (y * w + x)
             for c in range(3):
                 v = int(out[o + c] * sh + 0.5)

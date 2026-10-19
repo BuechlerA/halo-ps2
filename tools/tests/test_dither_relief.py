@@ -48,18 +48,19 @@ def test_relief_shading():
     w = h = 8
     rgba = bytes((100, 100, 100, 255) * (w * h))
     flat = bytes([128] * (w * h))
-    assert texconv.bake_relief(rgba, w, h, flat) == rgba                 # a flat height field changes nothing
+    assert texconv.bake_relief(rgba, w, h, flat)[0] == round(100 * texconv.BUMP_GAIN)    # a flat height field only applies the gain
+    rgba_g = texconv.bake_relief(rgba, w, h, flat)
     height = bytearray([128] * (w * h))
     for y in range(h):
         for x in range(4, w):
             height[y * w + x] = 200                                      # a step: raised on the right
     out = texconv.bake_relief(rgba, w, h, bytes(height))
     px = lambda x, y: out[4 * (y * w + x)]
-    assert px(3, 4) < 100 and px(4, 4) < 100                              # a rise away from the up-left light darkens the texels either side of the edge
+    assert px(3, 4) < rgba_g[0] and px(4, 4) < rgba_g[0]                              # a rise away from the up-left light darkens the texels either side of the edge
     rev = bytes(height[y * w + (w - 1 - x)] for y in range(h) for x in range(w))
     back = texconv.bake_relief(rgba, w, h, rev)
-    assert back[4 * (4 * w + 3)] > 100 and back[4 * (4 * w + 4)] > 100    # and a drop towards it brightens them
-    assert px(1, 4) == 100 and px(6, 4) == 100                           # away from the edge nothing changes
+    assert back[4 * (4 * w + 3)] > rgba_g[0] and back[4 * (4 * w + 4)] > rgba_g[0]    # and a drop towards it brightens them
+    assert px(1, 4) == rgba_g[0] and px(6, 4) == rgba_g[0]               # away from the edge only the gain applies
     assert out[3::4] == rgba[3::4]                                       # alpha untouched
 
 
