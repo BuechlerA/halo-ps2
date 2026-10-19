@@ -313,7 +313,7 @@ void fx_attach_update(fx_t *f, int32_t key, uint32_t row, const float pos[3], co
 			return;
 		}
 		if (gb < 0 || !(p = alloc_particle(f))) return;     /* the others bloom */
-		for (i = 0; i < 3; i++) c[i] = 0.55f * L.color_hi[1 + i] + 0.45f;           /* a bright light blooms towards white */
+		for (i = 0; i < 3; i++) c[i] = 0.85f * L.color_hi[1 + i] + 0.15f;           /* a bright light blooms towards white */
 		size = L.radius > 0.0f ? L.radius : 1.0f;
 		size = 0.05f * (size > 8.0f ? 8.0f : size) + 0.03f;       /* world units of half size: the light's radius is the reach of its light, the bloom is a small part of it */
 		{                                                          /* a bloom is a screen space effect: at a distance it keeps an apparent size (about 3 % of the distance, times the light's reach) */
