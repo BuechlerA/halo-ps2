@@ -149,6 +149,7 @@ int mapp_init(const mapp_env *env)
 	s_use_bot = (int)cfg_int(env->cfg, "bot", 0);
 	s_m.log = (int)cfg_int(env->cfg, "missionlog", 0);
 	s_m.log_anim = (int)cfg_int(env->cfg, "animlog", 0);
+	g_hs_trace = (int)cfg_int(env->cfg, "scripttrace", 0); g_hs_trace_all = g_hs_trace > 1;
 	s_units.lod_distance = (float)cfg_int(env->cfg, "unitlod", 0);    /* ADR-063 option, off by default (it changes the simulation): bodies farther than this (wu) from the player integrate every other tick */
 	s_units.lod_cine = (uint8_t)cfg_int(env->cfg, "cinelod", 0);    /* ADR-063 option, off by default: bodies integrate every other tick during a cinematic */
 	if (s_m.log) { s_m.clock = clock_now; s_m.clock_ms = clock_ms; }

@@ -831,7 +831,7 @@ ms a frame, nearest objects first; `objclip 0` switches it off. (2) Facial anima
 a frame are clipped in the bridge shots, so the jagged edges were not only on the captain. Cost measured at real speed over the whole intro: the first version (every batch tested against all
 its palette nodes, all vertices decoded) dropped 825 of 3701 frames, this one 24 (0.65 %), 16 with `objclip 0`. (2) a frame-to-frame measurement of the eye region over ticks 3216 .. 3296 showed the face
 frozen (difference 0.0) except one jump of 8.1 at the emotion change; now three steps of about 3.
-**Findings, not fixed** (user reports on the same scene): (a) The captain's hands-behind-back walk is NOT what "stand unarmed move-front" / "stand unarmed idle%1" give: forward kinematics of their
+**Findings** (user reports on the same scene; (a) is resolved by ADR-080): (a) The captain's hands-behind-back walk is NOT what "stand unarmed move-front" / "stand unarmed idle%1" give: forward kinematics of their
 data and the engine's own node positions (`nearlog` + `nearnodes`) agree, and put the hands at the hips' sides. The graph also has `stand unarmed aim-still` (an overlay of 9 frames driving the arms and
 the body); the unit layer drops overlay animations (`is_overlay` -> -1), so it is never applied. Applying frame 4 of it on top of the base (either composition order) raises the arms over the head, replacing the
 rotations turns the whole body over: its semantics (and the frame for a neutral aim) are not understood, so the experiment was removed. (b) The bridge pilots' seated pose and the bridge screens
@@ -850,6 +850,17 @@ high water 24731 -> 25063 KB of 25600 (about 540 KB of margin), GS texture windo
 **Not done**: the shader's animation (self illumination colour A / B and its function: flicker of the fluorescent lights, the pulse of alert lights; the fields at +0x230 .. +0x254 are read as 1.0 / 0 and not used), the same
 for object shaders (`soso` self illumination), the other maps' packs (rebuild with `scripts/build-world.sh`; b30 has no arena margin, the budget may drop its glows).
 **Consequences**: `a10.tex.hp2` must be rebuilt; a pack without glow textures draws as before.
+
+## ADR-080 Unarmed non-player units stand in the `alert` animation block: the captain's and the crew's hands behind their backs
+**Decision**: a unit's animation graph has one block per posture / state (`stand`, `crouch`, `alert`, `flee`, ... in `characters\marine\marine`; the captain's has `stand` and `alert`). The unit layer only ever used `stand` and `crouch`.
+`units.c` now gives an unarmed unit that is not the player and not crouched a third posture, 2 = `alert` (`unit_t.posture`, `find_action` looks the action up in the `alert` block, falling back to `stand`), when the graph has an
+`alert` block (`unit_t.alert_state` caches the lookup). `alert unarmed idle%1` / `alert unarmed move-front` are the poses with the forearms tucked behind the back and the elbows out that the Xbox shows for Keyes walking across the bridge (video
+60 .. 68 s) and for the crew standing at their consoles.
+**Why**: `stand unarmed move-front` / `idle%1` hang the arms at the sides (confirmed on the engine's own node positions, `nearlog` + `nearnodes`, and by posing each candidate: `forceanim`); rendering the captain with every candidate animation at tick 1860
+(stand walk, alert walk, alert idle, think_1, think_2, stand idle) showed only the `alert` ones with the hands behind the back. The aim-still overlay, the first suspect (ADR-078), is the identity at its neutral frame (frame 4 of 9: every node's
+rotation is the identity, angle 0), so it cannot hold the pose; the experiment that applied it was removed. Checked at ticks 1800, 1860, 1920, 1980, 2040, 2100 against the video: the walk and the console pose match; the intro still drops 23 of 3701 frames at real speed.
+**Open**: which state the Xbox really uses (an AI actor's alert state, a placement flag, the cinematic) is not known: this is a rule that reproduces the video for unarmed non-player units, so unarmed units in gameplay (a10 crew in the corridors) also take it;
+armed units keep `stand`. Debug: `forceanim "obj anim frame"`, `scripttrace 1|2` (every built-in call with its first arguments), `animlog`.
 
 ## Open decisions
 None.

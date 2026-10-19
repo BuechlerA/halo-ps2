@@ -134,7 +134,7 @@ static int block_slot(const ansm_section *a, const ansm_graph *gr, const char *u
 /* posture block first, then the standing block */
 static int find_action(const ansm_section *a, const ansm_graph *gr, unsigned posture, const char *wlabel, unsigned action, int *class_out)
 {
-	int k = block_slot(a, gr, posture ? "crouch" : "stand", wlabel, action, class_out);
+	int k = block_slot(a, gr, posture == 2 ? "alert" : posture ? "crouch" : "stand", wlabel, action, class_out);
 	if (k < 0 && posture) k = block_slot(a, gr, "stand", wlabel, action, class_out);
 	return k;
 }
@@ -838,8 +838,8 @@ static void anim_update(unit_t *u, object_t *o, const game_t *g, float speed, fl
 			kind = K_MOVE; sub = dir; act = UA_MOVE;
 			{
 				float ref = dir == 0u ? u->pp.run_speed : dir == 1u ? u->pp.back_speed : u->pp.strafe_speed;
-				if (u->posture && dir == 0u) ref = u->pp.crouch_speed;
-				else if (u->posture) ref *= u->pp.run_speed > 0.0f ? u->pp.crouch_speed / u->pp.run_speed : 1.0f;
+				if (u->posture == 1 && dir == 0u) ref = u->pp.crouch_speed;
+				else if (u->posture == 1) ref *= u->pp.run_speed > 0.0f ? u->pp.crouch_speed / u->pp.run_speed : 1.0f;
 				rate = ref > 0.05f ? clampf(speed / ref, 0.35f, 1.8f) : 1.0f;
 			}
 		} else if (u->action == UA_RELOAD) {
@@ -1043,6 +1043,10 @@ static void tick_unit(units_t *s, unit_t *u, game_t *g, object_t *o)
 	else if (u->action == UA_LAND) throttle_scale = u->move_dir ? 0.2f : 0.6f;
 	else if (u->action == UA_FLINCH) throttle_scale = 0.3f;
 	u->posture = u->body.crouch > 0.5f ? 1u : 0u;
+	if (!u->posture && u->weapon < 0 && !(u->flags & UF_PLAYER)) {                 /* an unarmed non-player unit stands in the graph's `alert` block when it has one */
+		if (!u->alert_state) { ansm_graph agr; u->alert_state = (get_graph(g, u, &agr) && ansm_find_unit(g->ansm, &agr, "alert") >= 0) ? 1u : 2u; }
+		if (u->alert_state == 1) u->posture = 2;
+	}
 	step_body(u, g, u->action != UA_CUSTOM, throttle_scale, phys_divider(s, u, g), &turn_left);
 	if (u->body.landed_speed > 0.0f) { landed(s, u, g); u->body.landed_speed = 0.0f; }
 	spd = speed2d(u);

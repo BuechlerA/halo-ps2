@@ -205,6 +205,7 @@ struct hs_machine {
 /* ---- API ---- */
 hs_status hs_open(hs_section *s, const uint8_t *data, size_t size);
 
+extern int g_hs_trace, g_hs_trace_all;
 void      hs_setup(hs_machine *m);                                   /* clear + register the library built-ins */
 void      hs_register(hs_machine *m, const char *name, hs_builtin fn);   /* may be called before or after hs_init */
 hs_status hs_init(hs_machine *m, const hs_section *s, void *host);

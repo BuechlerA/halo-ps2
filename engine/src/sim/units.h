@@ -80,7 +80,8 @@ typedef struct {
 	int16_t   base_graph;                   /* the unit's own ANIM graph index */
 	int16_t   anim_cur;                     /* animation index of the base animation being played, -1 none */
 	uint8_t   grenade_type;                 /* current grenade type, 0 frag 1 plasma */
-	uint8_t   posture;                      /* 0 stand 1 crouch (animation block) */
+	uint8_t   posture;                      /* the animation block: 0 stand, 1 crouch, 2 alert (an unarmed non-player unit: the Xbox shows the captain and the crew walking and standing with their hands behind their backs, the `alert unarmed` animations, ADR-080) */
+	uint8_t   alert_state;                  /* 0 not looked up, 1 the graph has an `alert` block, 2 it has none */
 	uint8_t   move_dir;                     /* 0 front 1 back 2 left 3 right (sticky) */
 	uint8_t   settle;                       /* ticks since the physics last ran on a settled unit */
 	uint8_t   air;                          /* ticks without ground under the feet */

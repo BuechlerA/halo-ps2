@@ -740,6 +740,13 @@ int main(int argc, char *argv[])
 					       s_game.player.pos[2], s_game.vitals.health, s_game.vitals.shield, (unsigned)s_game.st_shots, (unsigned)s_game.st_projectiles,
 					       (unsigned)s_game.st_hits, (unsigned)s_game.st_kills);
 			}
+			{                                                  /* debug (cfg forceanim "object anim frame"): pose one object with this animation of its own graph every frame, to compare a candidate with the Xbox video */
+				float fa[3];
+				if (s_have_objects && cfg_floats(&s_cfg, "forceanim", fa, 3) == 3 && fa[0] >= 0.0f && (unsigned)fa[0] < s_objects.count) {
+					object_t *fo = &s_objects.obj[(unsigned)fa[0]];
+					fo->anim = (uint16_t)fa[1]; fo->frame = fa[2]; fo->flags |= OBJ_F_ANIMATED;
+				}
+			}
 			if (s_have_objects && cfg_int(&s_cfg, "hideobj", -1) >= 0 && (unsigned)cfg_int(&s_cfg, "hideobj", -1) < s_objects.count)       /* debug: never draw this object */
 				s_objects.obj[cfg_int(&s_cfg, "hideobj", -1)].flags |= OBJ_F_HIDDEN;
 			sim_done:

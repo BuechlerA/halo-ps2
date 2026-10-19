@@ -103,6 +103,8 @@ ignored unless the config had one).
 | `objdist <wu>`, `objcap <n>` | object draw distance (units) and per-frame batch cap | 200, 900 |
 | `glow 0|1` | the self illumination pass of environment materials (ADR-079) | 1 |
 | `objclip 0|1`, `objclipms <ms>` | clip model triangles the VU1 would drop (near plane, guard band) on the EE for objects near the lens, and the per-frame time cap (ADR-078) | 1, 3 |
+| `forceanim "obj anim frame"` | debug: pose one object with this animation of its own graph every frame | off |
+| `scripttrace 1|2` | debug: print every script built-in call with its first arguments (1: unit / object / animation / camera calls, 2: all) | off |
 | `animlog 1` | print every `custom_animation` call and whether it resolved | off |
 | `objfarpx <px>` | objects past `objdist` are still drawn when at least this many px across; none is cut by distance in a cinematic (ADR-077) | 20 |
 | `objtrace <first> <last> <step>` | debug: log every live object's cull inputs (`[obj] f ...`) for frames [first, last) every step frames | off |
