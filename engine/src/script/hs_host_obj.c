@@ -538,7 +538,7 @@ static void update_object_fx(mission_t *M)
 				pos[0] = w.m[3][0]; pos[1] = w.m[3][1]; pos[2] = w.m[3][2];
 				dir[0] = w.m[0][0]; dir[1] = w.m[0][1]; dir[2] = w.m[0][2];
 			}
-			fx_attach_update(M->fx, (int)(i * 8u + k), first + k, pos, dir);
+			fx_attach_update(M->fx, (int32_t)((i * 8u + k) | (uint32_t)o->serial << 16), first + k, pos, dir);
 		}
 	}
 }

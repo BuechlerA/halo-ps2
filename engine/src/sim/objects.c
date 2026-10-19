@@ -28,6 +28,8 @@ static int make_object(object_table_t *t, const object_world_t *w, int slot, uns
 	if (model < 0) return -1;
 	o = &t->obj[slot];
 	memset(o, 0, sizeof *o);
+	if (++t->next_serial == 0) t->next_serial = 1;
+	o->serial = t->next_serial;
 	o->def = (int16_t)def;
 	o->placement = (int16_t)placement;
 	o->bsp_mask = bsp_mask;

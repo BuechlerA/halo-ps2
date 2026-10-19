@@ -34,6 +34,7 @@ typedef struct {
 	float    pos[3], radius;
 	mat4     root;                        /* placement transform */
 	uint16_t perm[OBJ_MAX_REGIONS];       /* flat permutation index per region */
+	uint16_t serial;                      /* creation counter (never 0): a destroyed and recreated object in the same slot is a new object (attached effects restart) */
 } object_t;
 
 typedef struct {
@@ -41,6 +42,7 @@ typedef struct {
 	unsigned count;                       /* slots in use (high-water mark) */
 	int16_t  by_placement[OBJ_MAX_PLACEMENTS];   /* placement index -> object slot, -1 not spawned */
 	unsigned skipped_no_model, skipped_hidden, skipped_cap, skipped_other_bsp;
+	uint16_t next_serial;
 } object_table_t;
 
 typedef struct {

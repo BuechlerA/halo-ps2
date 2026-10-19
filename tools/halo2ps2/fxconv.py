@@ -1086,6 +1086,7 @@ def build_textures(m: texconv.MapData, fx: FxSet, budget: int = FX_DEFAULT_BUDGE
             for ps in t.pstates:
                 if ps.bitmap_tag != NULL_ID:
                     blend_of.setdefault(ps.bitmap_tag, ps.blend)
+    pctl_alpha_maps = {ps.bitmap_tag for pc in fx.pctl for t in pc.types for ps in t.pstates if ps.bitmap_tag != NULL_ID and ps.blend == 0}
     for bd in fx.bitmaps:
         images = bitmaps.parse_images(m.region, m.base, m.by_id[bd.tag_id].data_address)
         for seq in bd.sequences:
@@ -1116,6 +1117,8 @@ def build_textures(m: texconv.MapData, fx: FxSet, budget: int = FX_DEFAULT_BUDGE
             skipped[f"image failed to decode: {exc}"] += 1
             continue
         found = texconv.alpha_class(rgba)
+        if key[0] in pctl_alpha_maps:                       # a particle system map drawn with alpha blend: its RGB is dark intensity (the steam cloud averages 55 of 255, its alpha 76) and the Xbox shows white steam, so only its alpha is kept
+            rgba = bytes(255 if i & 3 != 3 else v for i, v in enumerate(rgba))
         rgba = texconv.resample_rgba(rgba, w, h, tw, th, found != texconv.CLASS_OPAQUE)
         tex = texconv.convert_rgba(key[0], rgba, tw, th, found)
         if sheet:

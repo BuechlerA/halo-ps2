@@ -8,7 +8,7 @@
 #define STEAM_SIZE 128.0f      /* decoded (ADR-071): quad width = scale x the bitmap's width in pixels (256 for the steam cloud), half of it from the centre */
 #define STEAM_LIFE 1.0f
 #define STEAM_RATE 1.0f
-#define STEAM_ALPHA 4.0f      /* the one fitted factor left: the Xbox's framebuffer alpha scale is not decoded (ADR-071) */
+#define STEAM_ALPHA 3.0f      /* the one fitted factor left: the Xbox's framebuffer alpha scale is not decoded (ADR-071) */
 
 static float rnd01(fx_t *f)
 {
@@ -263,19 +263,19 @@ static void spawn_pctl_particle(fx_t *f, const fxd_pctl *pc, const fxd_pctl_type
 	f->st_particles++;
 }
 
-static fx_system *find_system(fx_t *f, int key)
+static fx_system *find_system(fx_t *f, int32_t key)
 {
 	unsigned i;
 	fx_system *free_s = NULL;
 	for (i = 0; i < FX_MAX_SYSTEMS; i++) {
-		if (f->sys[i].active && f->sys[i].key == (int16_t)key) return &f->sys[i];
+		if (f->sys[i].active && f->sys[i].key == key) return &f->sys[i];
 		if (!f->sys[i].active && !free_s) free_s = &f->sys[i];
 	}
-	if (free_s) { memset(free_s, 0, sizeof *free_s); free_s->key = (int16_t)key; }
+	if (free_s) { memset(free_s, 0, sizeof *free_s); free_s->key = key; }
 	return free_s;
 }
 
-void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const float dir[3])
+void fx_attach_update(fx_t *f, int32_t key, uint32_t row, const float pos[3], const float dir[3])
 {
 	fx_attach_row r;
 	fx_system *s;

@@ -39,7 +39,7 @@ enum { FX_ATT_PCTL = 1, FX_ATT_EFFE = 2, FX_ATT_LIGH = 3 };
 typedef struct { uint32_t object_tag, tag; uint8_t kind; char marker[20]; } fx_attach_row;
 typedef struct {
 	uint8_t  active, seen, kind, init;
-	int16_t  key;                    /* object slot * 8 + row within the object */
+	int32_t  key;                    /* (object slot * 8 + row within the object) | serial << 16 */
 	uint16_t pctl;                   /* fxdef pctl index (a light's table index for FX_ATT_LIGH) */
 	uint32_t tag;                    /* effect tag (FX_ATT_EFFE) */
 	uint8_t  state[FX_SYS_TYPES];
@@ -77,7 +77,7 @@ unsigned fx_attachments_of(const fx_t *f, uint32_t object_tag, uint32_t *first);
 fx_attach_row fx_attachment(const fx_t *f, uint32_t row);
 /* One tick of the attachment `row` of the object slot `key`: creates the instance on first call, emits (a particle system's particles, an effect now and then)
  * at `pos` along `dir`. An instance that is not updated for a tick ends. */
-void fx_attach_update(fx_t *f, int key, uint32_t row, const float pos[3], const float dir[3]);
+void fx_attach_update(fx_t *f, int32_t key, uint32_t row, const float pos[3], const float dir[3]);
 /* The dynamic lights of the attachments (objects near them are lit by them): the set of the last tick. */
 unsigned fx_dynamic_lights(const fx_t *f, const fx_dynlight **out);
 /* One 30 Hz tick. */
