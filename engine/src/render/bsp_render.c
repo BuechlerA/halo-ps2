@@ -142,6 +142,7 @@ void bsp_render_options(render_options_t *o)
 	o->lightmaps = 1;
 	o->fog = 0;
 	o->clip_budget_ms = 6.0f;
+	o->cull_sign = 1;
 	o->only_batch = -1;
 	o->only_batch_hi = 0x7FFFFFFF;
 	o->fog_near = 40.0f;
@@ -462,6 +463,11 @@ static void gather_clipped(const camera_t *cam, const float clip[4][4])
 				if (!outside) continue;
 				s_stats.clip_tris++;
 				if (clip_outside(tri, cam->near_z)) continue;
+				if (s_opt.cull_sign) {                                   /* back face (single-sided material): the orientation of the (x, y, w) rows, valid behind the eye too */
+					float det = tri[0].c[0] * (tri[1].c[1] * tri[2].c[3] - tri[2].c[1] * tri[1].c[3]) - tri[0].c[1] * (tri[1].c[0] * tri[2].c[3] - tri[2].c[0] * tri[1].c[3])
+					          + tri[0].c[3] * (tri[1].c[0] * tri[2].c[1] - tri[2].c[0] * tri[1].c[1]);
+					if (!(s_bind[b.material].flags & MAT_TWO_SIDED) && det * (float)s_opt.cull_sign < 0.0f) { s_stats.clip_culled_back++; continue; }
+				}
 				for (k = 0; k < 3; k++) {
 					const int16_t *q = raw.pos + 4 * (3 * t + k);
 					tri[k].c[2] = tv[2] + sv0[2] * (float)q[0] + sv1[2] * (float)q[1] + sv2[2] * (float)q[2];
@@ -475,6 +481,14 @@ static void gather_clipped(const camera_t *cam, const float clip[4][4])
 				}
 				{ u32 cc0 = timer_cycles(); n = (unsigned)clip_polygon(tri, cam->near_z, poly); s_stats.emit_clip_ms += timer_ms(cc0, timer_cycles()); }
 				if (n < 3) continue;
+				if (s_opt.clip_debug) {                       /* debug (cfg clipdebug 1): a clipped polygon that covers the whole screen */
+					float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+					unsigned q;
+					for (q = 0; q < n; q++) { float sx = poly[q].c[0] / poly[q].c[3], sy = poly[q].c[1] / poly[q].c[3]; if (sx < x0) x0 = sx; if (sx > x1) x1 = sx; if (sy < y0) y0 = sy; if (sy > y1) y1 = sy; }
+					if (x0 < -0.9f && x1 > 0.9f && y0 < -0.9f && y1 > 0.9f)
+						printf("[dbg] big poly mat %u page %u n %u in w %.3f %.3f %.3f x %.2f %.2f %.2f y %.2f %.2f %.2f\n", (unsigned)b.material, (unsigned)bm.lightmap_page, n, (double)tri[0].c[3], (double)tri[1].c[3], (double)tri[2].c[3],
+						       (double)tri[0].c[0], (double)tri[1].c[0], (double)tri[2].c[0], (double)tri[0].c[1], (double)tri[1].c[1], (double)tri[2].c[1]);
+				}
 				if (s_cpoly_count >= CLIP_MAX_POLYS || s_cvert_count + n > CLIP_MAX_CVERTS) { s_stats.clip_dropped++; continue; }
 				s_cpoly[s_cpoly_count].first = s_cvert_count;
 				s_cpoly[s_cpoly_count].n = (u8)n;

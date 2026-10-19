@@ -53,7 +53,7 @@ typedef struct {
 	u32 portals_tested, portals_passed, camera_cluster_valid;
 	u32 uploads, upload_bytes, tex_hits, tex_misses, tex_deferred, tex_failed, pages_free;
 	u32 chain_qw, chain_overflow, untextured_batches;
-	u32 clip_batches, clip_tris, clip_polys, clip_dropped, clip_skipped_batches, clip_culled_batches;     /* triangles clipped on the EE, polygons drawn, dropped for lack of room */
+	u32 clip_batches, clip_tris, clip_polys, clip_dropped, clip_skipped_batches, clip_culled_batches, clip_culled_back;     /* triangles clipped on the EE, polygons drawn, dropped for lack of room */
 	float vis_ms, build_ms, clip_ms, emit_clip_ms, clip_scan_ms, clip_gather_ms;
 } render_stats_t;
 
@@ -61,6 +61,8 @@ typedef struct {
 	int   textures, lightmaps, fog;
 	int   only_batch, only_batch_hi;     /* debug: draw only batches lo..hi (only_batch -1 = all) */
 	int   unused_only;                    /* debug: draw only this batch index (-1 = all) */
+	int   cull_sign;                    /* back face culling: 0 off, +1 / -1 = which orientation is the back */
+	int   clip_debug;                    /* debug: log full-screen clipped polygons */
 	float clip_budget_ms;                /* EE time allowed for clipping near triangles per frame */
 	int   debug;                         /* bit 0: skip pass-1 batches, 1: skip pass 2, 2: skip overlay */
 	float fog_near, fog_far;

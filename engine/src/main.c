@@ -115,6 +115,8 @@ static void apply_options(void)
 	o.debug = (int)cfg_int(&s_cfg, "debug", 0);
 	if (cfg_floats(&s_cfg, "onlybatch", f, 2) >= 1) { o.only_batch = (int)f[0]; o.only_batch_hi = cfg_floats(&s_cfg, "onlybatch", f, 2) == 2 ? (int)f[1] : (int)f[0]; }
 	if (cfg_floats(&s_cfg, "clipbudget", f, 1) == 1) o.clip_budget_ms = f[0];
+	o.clip_debug = (int)cfg_int(&s_cfg, "clipdebug", 0);
+	o.cull_sign = (int)cfg_int(&s_cfg, "cullsign", 1);      // single-sided surfaces are not drawn from behind (the camera inside a beam saw its inside)
 	if (cfg_floats(&s_cfg, "fog", f, 6) >= 1 && f[0] != 0.0f) {
 		o.fog = 1;
 		if (cfg_floats(&s_cfg, "fog", f, 6) >= 3) { o.fog_near = f[1]; o.fog_far = f[2]; }
