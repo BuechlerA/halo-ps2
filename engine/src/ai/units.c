@@ -276,8 +276,9 @@ static void custom_root_motion(unit_t *u, const object_t *o, game_t *g)
 		cy = cosf(u->body.yaw); sy = sinf(u->body.yaw);
 		u->body.pos[0] += cy * d[0] - sy * d[1];
 		u->body.pos[1] += sy * d[0] + cy * d[1];
-		u->body.pos[2] += d[2];
+		/* d[2] (vertical root motion) is ignored: the body's physics keeps the unit on the floor */
 		u->body.yaw += d[3];
+		u->body.vel[0] = u->body.vel[1] = 0.0f;                  /* the animation moves the body: no leftover velocity to coast on afterwards */
 	}
 }
 
