@@ -72,7 +72,7 @@ Value types and argument orders were checked against all ten maps (constant type
 | `unit_exit_vehicle` `vehicle_unload` | partial | detach (all riders or those of the seat label); units stay where they are. The player: plays the seat's `exit` animation attached to the marker, `object_beautify false` places him at its pelvis (ADR-085). |
 | `vehicle_riders` `vehicle_test_seat_list` | full | riders as a list; whether any unit of a list sits in the vehicle (in the seat). |
 | `unit_open` `unit_close` | partial | a vehicle's `open` animation forwards / backwards (the cryo pod, ADR-085) |
-| `unit_set_emotion` `vehicle_hover` `units_set_desired_flashlight_state` `unit_solo_player_integrated_night_vision_is_active` (false) `player_add_equipment` (starting profiles are not in SCEN) `device_group_change_only_once_more_set` | no-op | |
+| `unit_set_emotion` `vehicle_hover` `units_set_desired_flashlight_state` `unit_solo_player_integrated_night_vision_is_active` (false) `player_add_equipment` (player0: the biped's default weapons into empty hands; starting profiles are not in SCEN) `device_group_change_only_once_more_set` | no-op | |
 | `unit_suspended` | partial | the unit is teleported back to where it was when the call was made, every tick. |
 | `player_enable_input` `player_camera_control` `player0_look_invert_pitch` `player0_look_pitch_is_inverted` `player0_joystick_set_is_normal` | full | flags in `hobj` (wiring 3). |
 | `player_action_test_*` (10 tests) and `player_action_test_reset` | full | latched since the reset from the input of `hs_host_obj_pre`: accept = jump, primary trigger = fire, grenade trigger, action = switch / pick up, back = move_y < -0.5, look up / down / left / right = look stick beyond 0.3 in screen sense, all directions = all four. |

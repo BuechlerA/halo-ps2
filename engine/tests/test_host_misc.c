@@ -746,7 +746,7 @@ static void test_noops(void)
 {
 	static const char *const names[] = { "objects_predict", "object_pvs_activate", "object_type_predict", "rasterizer_model_ambient_reflection_tint",
 		"garbage_collect_now", "object_pvs_set_camera", "breakable_surfaces_enable", "cls", "breakable_surfaces_reset", "object_pvs_clear", "object_pvs_set_object",
-		"render_lights", "rasterizer_lights_reset_for_new_map", "cinematic_screen_effect_set_convolution", "cinematic_screen_effect_set_filter",
+		"render_lights", "rasterizer_lights_reset_for_new_map", "cinematic_screen_effect_set_convolution",
 		"cinematic_screen_effect_set_filter_desaturation_tint", "cinematic_screen_effect_set_video", "sound_impulse_predict", "sound_looping_predict" };
 	unsigned i;
 	hs_value a[5];
@@ -762,6 +762,11 @@ static void test_noops(void)
 		CHECK(memcmp(cs, &X.cine, sizeof *cs) == 0 && want == (unsigned)X.m.want_bsp && ob == X.objects.count);
 		free(cs);
 	}
+	/* set_filter is the one screen-effect setter that does something: it arms the tutorial pod's veil (ADR-085), and the effect's stop disarms it */
+	(void)call("cinematic_screen_effect_set_filter", a, 5, HS_VOID);
+	CHECK(X.cine.screen.filter == 1);
+	(void)call("cinematic_screen_effect_stop", a, 0, HS_VOID);
+	CHECK(X.cine.screen.filter == 0);
 }
 
 /* ---- 8. every call site of the a10 script, once, with the script's own arguments ---------------------------------------------------------- */

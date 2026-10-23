@@ -81,6 +81,11 @@ void hud_render_pass(void *user, render_ctx_t *rc)
 			spr_state(&spr, tex0, SPR_BLEND_ALPHA, 0);
 			spr_quad(&spr, q->x0 * sx, q->y0 * sy, q->x1 * sx, q->y1 * sy, (float)q->u0, (float)q->v0, (float)q->u1, (float)q->v1, 0xFFFFFFu, q->rgba);
 		}
+		if (cs->screen.veil > 0.0f) {                  /* the tutorial pod's blurred, washed-out sight (cinematic_screen_effect_set_filter): a pale wash over the 3D view and the HUD */
+			unsigned a = (unsigned)(cs->screen.veil * 70.0f);
+			spr_state(&spr, 0, SPR_BLEND_ALPHA, 0);
+			spr_quad(&spr, 0.0f, 0.0f, (float)VIDEO_WIDTH, (float)VIDEO_HEIGHT, 0, 0, 0, 0, 0xFFFFFFu, 0xE8E8F0u | a << 24);
+		}
 		if (cs->screen.fade_alpha > 0.0f) {
 			unsigned a = (unsigned)(cs->screen.fade_alpha * 128.0f);
 			spr_state(&spr, 0, SPR_BLEND_ALPHA, 0);

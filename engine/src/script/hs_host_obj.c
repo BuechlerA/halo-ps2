@@ -1474,7 +1474,12 @@ BI(player_action_test_look_relative_all_directions)
 BI(player0_joystick_set_is_normal) { ENTER(player0_joystick_set_is_normal); ret_bool(r, !M->hobj.joystick_not_normal); return 0; }
 BI(player0_look_invert_pitch) { ENTER(player0_look_invert_pitch); M->hobj.pitch_inverted = argb(A(0)); return 0; }
 BI(player0_look_pitch_is_inverted) { ENTER(player0_look_pitch_is_inverted); ret_bool(r, M->hobj.pitch_inverted); return 0; }
-BI(player_add_equipment) { ENTER(player_add_equipment); return 0; }      /* starting profiles are not in SCEN: nothing to hand out */
+BI(player_add_equipment)      /* starting profiles are not in SCEN: player0 gets the biped's default weapons if his hands are empty (a10's bridge0_profile is the pistol) */
+{
+	ENTER(player_add_equipment);
+	if (M->game && is_player(M, obj_arg(M, A(0), 0))) game_give_default_weapons(M->game);
+	return 0;
+}
 BI(players_unzoom_all) { ENTER(players_unzoom_all); if (M->game) M->game->zoomed = 0; return 0; }
 
 /* ---- devices ----------------------------------------------------------------------------------------------------------------- */

@@ -155,6 +155,8 @@ typedef struct {
 void game_init(game_t *g, const game_init_t *in, const float pos[3], float yaw);
 /* Gives the slots the weapons with these tag ids (0 = keep), e.g. the biped's defaults. */
 void game_give_weapon(game_t *g, int slot, uint32_t weapon_tag);
+void game_drop_weapons(game_t *g);          /* empty hands (cfg startunarmed) */
+void game_give_default_weapons(game_t *g);  /* the biped's default weapons into empty hands (player_add_equipment) */
 /* One 30 Hz tick with this input. */
 void game_tick(game_t *g, const game_input_t *in);
 /* Call after an object was created at runtime (script object_create, AI spawn) so it gets its health and hit shapes. */

@@ -298,9 +298,9 @@ BI(fade_in)
 
 /* Screen effects (blur / filter / convolution of the cinematic renderer) have no PS2 counterpart: only the on / off state is kept. */
 BI(cinematic_screen_effect_start) { ENTER(cinematic_screen_effect_start); if (m) { m->misc.screen_effect = (uint8_t)argb(a, n, 0, 0); if (m->cine) { if (!m->cine->screen.effect && m->misc.screen_effect) m->cine->screen.effect_ticks = 0; m->cine->screen.effect = m->misc.screen_effect; } } return 0; }
-BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) { m->misc.screen_effect = 0; if (m->cine) m->cine->screen.effect = 0; } return 0; }
+BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) { m->misc.screen_effect = 0; if (m->cine) { m->cine->screen.effect = 0; m->cine->screen.filter = 0; } } return 0; }
 NOOP(cinematic_screen_effect_set_convolution)
-NOOP(cinematic_screen_effect_set_filter)
+BI(cinematic_screen_effect_set_filter) { ENTER(cinematic_screen_effect_set_filter); if (m && m->cine) m->cine->screen.filter = 1; return 0; }
 NOOP(cinematic_screen_effect_set_filter_desaturation_tint)
 NOOP(cinematic_screen_effect_set_video)
 BI(cinematic_suppress_bsp_object_creation) { ENTER(cinematic_suppress_bsp_object_creation); if (m) m->misc.suppress_bsp_objects = (uint8_t)argb(a, n, 0, 0); return 0; }
@@ -1066,6 +1066,12 @@ void misc_tick(mission_t *m)
 		if (object_frame(m, m->misc.cam_anchor_obj1 - 1, &f)) cine_cam_set_anchor(&m->cine->cam, &f);
 	}
 	misc_nav_refresh(m);
+	if (m->cine) {                                          /* the veil eases in over a third of a second and out over a second */
+		cine_screen *sc = &m->cine->screen;
+		float want = (sc->effect && sc->filter) ? 1.0f : 0.0f;
+		if (sc->veil < want) { sc->veil += 1.0f / 10.0f; if (sc->veil > want) sc->veil = want; }
+		else if (sc->veil > want) { sc->veil -= 1.0f / 30.0f; if (sc->veil < want) sc->veil = want; }
+	}
 }
 
 void hs_host_register_misc(hs_machine *m)

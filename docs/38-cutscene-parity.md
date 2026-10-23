@@ -36,5 +36,5 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
 10. Compare the end of a cutscene with the bot off (`bot 0`): the bot steers the player the moment control returns, which hides where the hand-off really puts the camera.
 
 ## Open (see ADR-081 .. 085)
-The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's blur filter and the player's empty hands at the start (a10's profile 0 is unarmed, SCEN has no starting profiles), the scorpions' colour, the ship hum, the title-safe
+The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's real blur filter (a veil stands in), the starting profile table (SCEN has none), the scorpions' colour, the ship hum, the title-safe
 margins of the Xbox view (we fill the whole buffer), the `camera_ticks` durations (the director divides ticks by 30 as an integer).

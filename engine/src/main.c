@@ -588,6 +588,7 @@ int main(int argc, char *argv[])
 			game_init(&s_game, &gi, pp, pp[3] * 3.14159265f / 180.0f);
 			s_game.all_weapons = (int)cfg_int(&s_cfg, "allweapons", 0);
 			s_game.difficulty = (int)cfg_int(&s_cfg, "difficulty", 1);
+			if (cfg_int(&s_cfg, "startunarmed", 0)) game_drop_weapons(&s_game);       /* a10: the first weapon is picked up on the way to the bridge */
 			s_game_on = 1;
 			checkpoint_save(&s_ckpt, &s_game, &s_fp, NULL);          /* the level-start checkpoint (fx are saved from the first Start press) */
 			printf("[game] fp: arms model %d graph %d anim %u, weapon model %d graph %d anim %u hand marker %d node %d\n", s_fp.arms_model, s_fp.arms_graph, s_fp.arms_anim,

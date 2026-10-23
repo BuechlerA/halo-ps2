@@ -959,9 +959,14 @@ so `stand_in_end` puts the player at the pelvis node of the exit animation at th
 **Also changed**: `object_beautify` was registered twice (H1 and H2 no-ops, the later one won): H2's is gone. The white fade rect was drawn at 128 (half intensity: an untextured GS quad takes 255 as
 white), so every fade to white was grey. `hud_state_t.hidden` carries `show_hud` / `hud_show_crosshair|health|shield|motion_sensor` to `hud_build` (the tutorial starts with the HUD hidden; the bits
 were stored and never read).
-**Not done**: the tutorial's blur / desaturation filter (`cinematic_screen_effect_set_*` are no-ops), the pod's glass in first person, and the weapon: the a10 profile 0 (`player0_starting_profile`) is
-unarmed, the engine starts with the biped's default weapon (docs/33, `player_add_equipment` has nothing to hand out: starting profiles are not in SCEN), so the player holds a rifle where the Xbox
-shows empty hands.
+**Unarmed start and tutorial veil (same ADR, second pass)**: a10's `player0_starting_profile` is unarmed (the pistol comes with `bridge0_profile` at the weapon room, `player_add_equipment (player0) <19:3>` in
+`mission_shoot`), so cfg `startunarmed 1` (a10 configs) empties the hands (`game_drop_weapons`) and `player_add_equipment` gives the biped's default weapons into empty hands (`game_give_default_weapons`;
+SCEN has no profiles, so the table itself is not read). `cinematic_screen_effect_set_filter` raises a pale veil (`cine_screen.veil`, eased 10 ticks in / 30 out, drawn in `hud_render`) while the effect is on: a
+stand-in for the Xbox's blur and desaturation of the pod's first sight, not a copy of it (no framebuffer blur on the PS2). Run through on normal difficulty with scripted input (look sweeps and Triangle,
+`bot 0`): seated at 6680, the HUD pieces appear as `tutorial_*` shows them, the exit cinematic runs 7802 .. 8067 (`CT-driver exit` seen from the camera points, white fade), the player appears at flag 14
+(-55.08, 0.54, yaw -1.64) in control with empty hands.
+**Not done**: the real convolution / desaturation of the tutorial's first sight, the pod's glass in first person (not verified: nothing in the video shows that view), the profile table (grenade counts,
+ammo of `bridge0_profile`).
 **Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
 exit and release of the player body.
 

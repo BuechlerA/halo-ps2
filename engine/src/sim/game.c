@@ -584,6 +584,24 @@ void game_init(game_t *g, const game_init_t *in, const float pos[3], float yaw)
 	}
 }
 
+/* An unarmed start (a10: player0_starting_profile has no weapon, the pistol comes with bridge0_profile): empty hands, nothing in the first person view. */
+void game_drop_weapons(game_t *g)
+{
+	int i;
+	for (i = 0; i < GAME_SLOTS; i++) g->slot[i].weapon = -1;
+	g->cur = -1; g->switch_to = -1; g->fp_action = -1; g->fp_timer = 0;
+	fp_apply_slot(g);
+}
+
+/* player_add_equipment: the biped's default weapons, only into empty hands (a profile gives the weapons of its table; SCEN has no profiles, ADR-085). */
+void game_give_default_weapons(game_t *g)
+{
+	int i;
+	if (!g->has_biped) return;
+	for (i = 0; i < GAME_SLOTS; i++) if (g->slot[i].weapon >= 0) return;
+	for (i = 0; i < g->biped.weapon_count && i < GAME_SLOTS; i++) game_give_weapon(g, i, g->biped.weapon_tags[i]);
+}
+
 /* ---- the tick ------------------------------------------------------------------------------------------------------------ */
 /* Aim assist (weapon autoaim cone and range): bends the fire direction towards the live, visible unit nearest to the crosshair. */
 static void autoaim(game_t *g, const weap_weapon *w, const float eye[3], const float fwd[3], float out[3])

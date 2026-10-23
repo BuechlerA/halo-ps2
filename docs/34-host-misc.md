@@ -67,7 +67,8 @@ Arguments are listed in script order, verified on a10 (and a30 for the object na
 | `cinematic_set_near_clip_distance(d)` | 4 | impl | `cine_cam_set_near_clip` |
 | `cinematic_skip_start_internal` / `_stop_internal` | 1 / 1 | impl | `cine_skip_begin / end` (a skippable section; the player's skip input is `cine_skip_request`, the cutscene logic stays in the scripts) |
 | `cinematic_screen_effect_start(on)` / `_stop` | 4 / 4 | state | `misc.screen_effect` (the Xbox convolution / filter / video effects have no PS2 counterpart) |
-| `cinematic_screen_effect_set_convolution / _filter / _filter_desaturation_tint / _set_video` | 4 / 3 / 3 / 0 | no-op | |
+| `cinematic_screen_effect_set_filter` | 3 | partial | raises the pale veil of the tutorial pod (ADR-085) |
+| `cinematic_screen_effect_set_convolution / _filter_desaturation_tint / _set_video` | 4 / 3 / 0 | no-op | |
 | `cinematic_suppress_bsp_object_creation(on)` | 0 | state | `misc.suppress_bsp_objects` (the BSP switch code may read it) |
 
 ### sound
