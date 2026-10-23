@@ -264,6 +264,7 @@ static void serve_mission(void)
 			if (load_bsp(want) == 0) {
 				mapp_set_bsp(want);
 				if (mm->want_teleport) game_teleport(&s_game, mm->want_pos, mm->want_yaw);
+				hud_message(&s_hs, "Loading... done", 120);          /* the Xbox streams the next section with `Loading...` / `Loading... done` on the HUD (video 286 .. 288 s); ours is a blocking load */
 			}
 			printf("[mission] switched to BSP %d in %.0f ms\n", want, timer_ms(t0, timer_cycles()));
 		}

@@ -39,6 +39,12 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
     `scripts/cmp-intro.sh` at ticks 7300 .. 8700 (offset 1.41) with `bot 0` in the cfg (`sed 's/^bot 1/bot 0/'`).
 12. A HUD element that is "missing" may only have failed to get texture pages: the overlay pass runs after the world, the 8-page font needs a contiguous run, and scattered free pages do not count (ADR-085, pinned font).
 
+13. **Later gameplay, by events** (the video's player cannot be reproduced, the scripted events can be lined up): the video's first 45 s after the pod (ticks 7337 .. 8717) show the corridor, the technician walking up
+    (7457), the lights going out with the red alarm and marines fighting (7697 ..), an explosion in the corridor (7697, 8057), `Checkpoint... done` (7399 .. 7519, 8177 .. 8237), a blue flash (8237), marines running
+    along the corridor (8300) and `Loading...` / `Loading... done` (8537 .. 8597). Our bot run shows the same sequence: checkpoints at 7319 and 8079 (the message lasts 150 ticks), AI placed at 7536 with the playfight
+    and berserk scripts at 7554, the red-lit fight room with dead marines (7820), the marines running at the camera (8300). Paths differ (the bot walks its own route, died once and reverted at 7940), the corridors are lit
+    more brightly than the video's (the known colour grade), and the Xbox shows `Loading...` while streaming a BSP: ours shows `Loading... done` after its blocking load.
+
 ## Open (see ADR-081 .. 085)
 The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's exact convolution kernel (a sprite blur and a veil stand in, ADR-085), the scorpions' colour, the ship hum, the title-safe
 margins of the Xbox view (we fill the whole buffer), the `camera_ticks` durations (the director divides ticks by 30 as an integer).
