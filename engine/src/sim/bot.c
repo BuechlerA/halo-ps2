@@ -102,9 +102,9 @@ static int pick_goal(bot_t *b, mission_t *m)
 	float best = 1e30f;
 	int found = 0;
 	const float *pp = m->game->player.pos;
-	{                                                           /* unarmed: the nearest weapon lying about comes first */
+	{                                                           /* unarmed: the nearest weapon lying about comes first (not on a10, which starts unarmed: its script gives the pistol) */
 		const game_slot_t *s0 = game_cur_slot(m->game);
-		if (!s0 || s0->weapon < 0) {
+		if ((!s0 || s0->weapon < 0) && !m->game->unarmed_start) {
 			unsigned k;
 			float bd = 1e30f;
 			for (k = 0; k < m->objects->count; k++) {

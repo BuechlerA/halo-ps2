@@ -590,6 +590,7 @@ void game_drop_weapons(game_t *g)
 	int i;
 	for (i = 0; i < GAME_SLOTS; i++) g->slot[i].weapon = -1;
 	g->cur = -1; g->switch_to = -1; g->fp_action = -1; g->fp_timer = 0;
+	g->unarmed_start = 1;
 	fp_apply_slot(g);
 }
 

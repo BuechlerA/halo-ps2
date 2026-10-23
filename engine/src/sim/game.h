@@ -116,6 +116,7 @@ typedef struct {
 	uint8_t               zoomed;
 	uint16_t              fp_timer;         /* ticks left of a one-shot first-person animation (0 = idle) */
 	int                   fp_action;        /* ANSM_FP_* of the running animation, -1 idle */
+	int                   unarmed_start;    /* the level starts with empty hands (game_drop_weapons): the script hands the first weapon out, the mission bot does not hunt for one */
 	int                   all_weapons;      /* debug: switch cycles through every weapon of the map */
 	int                   player_obj;       /* object slot of the player's body (-1 none): excluded from hit shapes */
 	int                   player_frozen;    /* cinematics: the player's body does not move (no gravity either) */
