@@ -266,8 +266,13 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 				int hide = (e.role == HUDDEF_R_SHIELD_BG && (hidden & HUD_HIDE_SHIELD)) || (e.role == HUDDEF_R_HEALTH_BG && (hidden & HUD_HIDE_HEALTH)) ||
 				           ((e.role == HUDDEF_R_MOTION_BG || e.role == HUDDEF_R_MOTION_FG) && (hidden & HUD_HIDE_MOTION)) ||
 				           (e.role == HUDDEF_R_HUD_BG && (hidden & (HUD_HIDE_SHIELD | HUD_HIDE_HEALTH)) == (HUD_HIDE_SHIELD | HUD_HIDE_HEALTH));
-				if (!hide && (e.role == HUDDEF_R_HUD_BG || e.role == HUDDEF_R_SHIELD_BG || e.role == HUDDEF_R_HEALTH_BG || e.role == HUDDEF_R_MOTION_BG ||
-				    e.role == HUDDEF_R_MOTION_FG))
+				if (!hide && (e.role == HUDDEF_R_MOTION_BG || e.role == HUDDEF_R_MOTION_FG)) {
+					/* measured on the Xbox video (a dark corridor): the tracker's disc is (10, 28, 48) over black and its centre (127, 157, 178), which is the tag colour
+					 * (3, 10, 20) / (53, 67, 80) modulated x2 and ADDED with full alpha, not blended with the tag's alpha (20 / 80 of 128) */
+					huddef_elem add = e;
+					add.blend = HUDDEF_BLEND_ADD;
+					draw_elem(f, s, &add, (e.colour ? (e.colour & 0x00FFFFFFu) : 0x00808080u) | 0x80000000u, tick);
+				} else if (!hide && (e.role == HUDDEF_R_HUD_BG || e.role == HUDDEF_R_SHIELD_BG || e.role == HUDDEF_R_HEALTH_BG))
 					draw_elem(f, s, &e, e.colour ? e.colour : 0x80808080u, tick);
 				if (e.role == HUDDEF_R_MOTION_BG && e.sprite != HUDDEF_NONE && !(hidden & HUD_HIDE_MOTION)) have_sensor = 1;
 				if (e.role == HUDDEF_R_MOTION_CENTER) {   /* radar centre; the centre's distance from the sensor corner is the radar radius */
