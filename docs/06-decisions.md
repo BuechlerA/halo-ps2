@@ -881,5 +881,24 @@ generic marine's; the crew jumpsuits are red / yellow where the Xbox shows brown
 cameras at ticks 2430 / 2520 and 6300 .. 6480 frame the scene differently; Cortana's hologram, the marine's light wands (3420), the red alert lighting and the engine bloom behind the hull (720 .. 900) differ.
 **Consequences**: `a10.tex.hp2` and `a10.obj.hp2` must be rebuilt (`scripts/build-world.sh a10`); no format change. New debug keys `nearaxes 1` (root axes in `nearlog`), `[camset] ... loop / loopstop` lines, and the `[stream]` statistics line at the end of every run. Host tests: `test_stream` (play-once, layering, owners), `test_host_misc` (overlapping impulses), `test_texconv` (`bsp_tone`).
 
+## ADR-082 Generic streamed textures: the BSP's textures stream too, reads are asynchronous, the pack decoder is 4x faster, bridge pilots sit on their chairs
+**Decision**: (1) The streamed high resolution variants (ADR-074, objects only) become a generic system (docs/37): `<map>.thires.hp2` carries variants of the BSP's textures at the source's size (up to 1024
+per side: `TEX_MAX_DIM` and `MAX_TEX_FORMAT` 512 -> 1024), written by `texconv.py` next to `<map>.tex.hp2`; the BSP material record carries `uv_world` (+0x10, `bspconv.uv_world`); `bsp_render.c` asks for a
+material's variant when one screen pixel covers 0.7 of a texel of the resident copy (`bhires_want`, texel density from the nearest visible batch), starts the read from 0.35, and draws it through the same texture
+cache keys (a reserved range per set). (2) One staging ring and one request path for both sets (`hires_ring_t`, `hires_request`), and the reads are **asynchronous**: `stream/aread.[ch]` runs them on an IO thread
+(blocking fio calls, the audio stream's pattern), a request returns the resident texture until the variant has arrived. (3) `hp2_crc32` is slicing-by-4 (was bit by bit: ~30 cycles a byte over every decoded
+section, 1.2 s of a 1.6 s BSP load) and the LZ4 match copy moves words when source and destination are 8 bytes apart: decoding the 3.7 MB BSP 1 took 1253 ms, now 287 ms; the BSP 1 load 2.4 s -> 0.9 s (BSP 0: 1.7 -> 0.7 s,
+the level boot is shorter by the same factor). (4) `unit_set_seat` and a `pchair...` / `pilot...` custom animation seat the unit on the `seat` marker of the "chair pod" vehicle within 0.15 units of it (the pod model's marker is
+0.38 behind its origin and 0.19 up; the pilot's pelvis sits on the unit's origin in these animations); the seat is retried each tick (the chair and the crew are not co-located when the script calls) and bound to the
+object's serial. (5) Pilot #507's colour permutation is 0 (brown-orange) in `a10intro.cfg` / `a10mission.cfg`, was 4 (red).
+**Why**: the bridge's console panels (`tech rack mount` 512 x 512 -> 256 x 256, `monitors` 1024 x 256 -> 512 x 128) were blurred at close range (tick 2250); ADR-074 only streamed object textures, and its reads blocked the game
+thread: real speed, ticks 1000 .. 1500 of the intro dropped frames 1175 1176 1221 1230 1265 1266 1306 1315 1320 1355 1356 with 38 .. 40 ms of EE time each, the transition from the Pillar's exterior to the bridge. After:
+the only dropped frame is the BSP switch (1306: 2431 ms -> 991 ms, under the fade to black; the Xbox's own load hitch is the 2.4 s black gap of the video), peak EE prep 39 -> 25 ms, averages unchanged (23 ms: the per material density test costs nothing
+measurable). The pilot who sits in front of the camera in the Xbox video at ticks 2057 .. 2177 stood at the chair's origin, behind the lens.
+**Measured / not changed**: no opaque cockpit glass was needed: the exterior-to-interior frames were EE bound by the reads, not by overdraw (GS 7 .. 9 ms). `[bsp] load` and `[pack]` log lines show the load phases (read / decode / render setup / game data).
+Streaming lightmaps, the glow pass texture and sky bitmaps, per-surface density and a cut prefetch hook are not done. The crewman at the console beside Keyes at ticks ~2340 still stands where the Xbox seats him (he plays other animations).
+**Consequences**: `scripts/build-world.sh a10` (bspconv writes `uv_world`, texconv the `thires` pack and removes a stale one); the BSP pack's material record keeps version 2 (older packs read `uv_world` 0 = no streaming).
+Host tests: `test_hires` (asynchronous ring: latency, one flight, lifetimes, unclaimed variants, failures, two sets), `test_hp2` (CRC at every alignment), `test_bsp`, `test_bspconv` (`uv_world`), `test_texconv` (`build_hires_pack`, 1024 wide textures).
+
 ## Open decisions
 None.

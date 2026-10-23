@@ -11,6 +11,7 @@
 #include "render/texcache.h"
 #include "render/vis.h"
 #include "world/bsp.h"
+#include "world/hires.h"
 
 #define MAT_ALPHA_TEST 1u
 #define MAT_BLEND      2u
@@ -110,3 +111,7 @@ void bsp_render_set_sky_pass(render_pass_fn fn, void *user);
 void bsp_render_set_overlay_pass(render_pass_fn fn, void *user);
 /* Reserves `count` texture residency keys for another texture set (HUD, effects); returns the key base to pass to rb_extra_tex0. Call before the first frame. */
 unsigned bsp_render_reserve_keys(unsigned count);
+/* Streamed high resolution variants of the BSP's textures (world/hires.h, docs/37). `key_base` is a bsp_render_reserve_keys range of the base texture count. A surface
+ * asks for the variant of its texture when one screen pixel covers at least `want_ratio` of a texel of the resident copy (0.7: the resident texture starts to blur), and
+ * starts the read from half of that ratio on; NULL switches the feature off. Needs the materials' uv_world (BSP section, tools/halo2ps2/bspconv.py). */
+void bsp_render_set_hires(hires_t *h, unsigned key_base, float want_ratio);

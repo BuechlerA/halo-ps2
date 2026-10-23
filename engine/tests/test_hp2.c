@@ -27,6 +27,23 @@ int main(int argc, char **argv)
 	uint8_t *img = slurp(argv[1], &n);
 	CHECK(img);
 
+	/* CRC-32 (slicing by 4): the standard check value at every alignment of the buffer and every length around the word and tail boundaries, against a bytewise reference */
+	{
+		static const uint8_t check[17] = "x123456789yzabcd";
+		uint8_t al[16 + 32];
+		uint32_t ref, k, off;
+		CHECK(hp2_crc32(check + 1, 9) == 0xCBF43926u);
+		for (off = 0; off < 8; off++) {
+			for (k = 0; k < 30; k++) al[off + k] = (uint8_t)(k * 37u + off * 11u + 5u);
+			for (k = 0; k <= 30; k++) {
+				uint32_t i, j;
+				ref = 0xFFFFFFFFu;
+				for (i = 0; i < k; i++) { ref ^= al[off + i]; for (j = 0; j < 8; j++) ref = (ref >> 1) ^ (0xEDB88320u & (0u - (ref & 1u))); }
+				CHECK(hp2_crc32(al + off, k) == ~ref);
+			}
+		}
+	}
+
 	hp2_pack pk;
 	CHECK(hp2_open(&pk, img, n) == HP2_OK);
 	CHECK(strcmp(pk.name, "test") == 0 && pk.count == 4);

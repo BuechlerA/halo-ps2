@@ -558,15 +558,24 @@ static void update_object_fx(mission_t *M)
 	}
 }
 
+static int seat_on_chair(mission_t *M, int u, int quiet);
+
 static void update_attachments(mission_t *M)
 {
 	mission_hostobj *h = &M->hobj;
 	uint32_t i;
+	for (i = 0; i < OBJ_MAX && i < M->objects->count; i++) {                  /* seat animations waiting for their chair */
+		uint32_t k;
+		if (!h->seat_want[i]) continue;
+		if (!obj_of(M, (int)i) || unit_of(M, (int)i) < 0) { h->seat_want[i] = 0; continue; }
+		for (k = 0; k < h->attach_count; k++) if (h->attach[k].child == (int)i) break;
+		if (k == h->attach_count) (void)seat_on_chair(M, (int)i, 1);
+	}
 	for (i = 0; i < h->attach_count;) {
 		mission_attach at = h->attach[i];
 		object_t *po = obj_of(M, at.parent), *co = obj_of(M, at.child);
 		mat4 w;
-		if (!po || !co) { h->attach[i] = h->attach[--h->attach_count]; continue; }
+		if (!po || !co || (at.pad && at.pad != (int16_t)((co->serial & 0x7FFFu) + 1u))) { h->attach[i] = h->attach[--h->attach_count]; continue; }
 		if (marker_world(M, po, at.marker, &w)) {
 			float pos[3] = { w.m[3][0], w.m[3][1], w.m[3][2] };
 			int ui = unit_of(M, at.child);
@@ -915,7 +924,45 @@ static void unseat_unit(mission_t *M, int unit_slot)
 	for (i = 0; i < h->attach_count; i++) if (h->attach[i].child == unit_slot) { h->attach[i] = h->attach[--h->attach_count]; break; }
 }
 
-BI(unit_set_seat) { ENTER(unit_set_seat); return 0; }     /* no vehicle given: nothing to sit in */
+/* Seat animations: the cinematic crew is placed at the origin of its chair (the biped and the "chair pod" vehicle share a position) and plays the seat's animations
+ * (`pchair-driver ...`, `pilot_fidget..`), whose pelvis sits on the unit's origin: the Xbox puts the unit on the chair's "seat" marker (a marker of the pod's model, 0.38
+ * behind its origin and 0.19 up). Without it the bridge pilot nearest the camera sat behind the lens (ticks 2057 .. 2177) and was not seen. A vehicle within 0.15 units
+ * (horizontally) that has a "seat" marker takes the unit; none: the unit stays where it is. */
+static int seat_on_chair(mission_t *M, int u, int quiet)
+{
+	int veh = -1, mk;
+	unsigned i;
+	float best = 0.15f * 0.15f;
+	mission_hostobj *h = &M->hobj;
+	uint32_t k;
+	const object_t *o;
+	if (u < 0 || is_player(M, u) || !M->objects) return 0;
+	o = &M->objects->obj[u];
+	for (i = 0; i < M->objects->count; i++) {
+		const object_t *v = &M->objects->obj[i];
+		float dx = v->pos[0] - o->pos[0], dy = v->pos[1] - o->pos[1];
+			if ((int)i == u || v->type != 2 || v->model < 0 || (v->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)) || dx * dx + dy * dy >= best) continue;
+		if (marker_index(M, v, "seat") < 0) continue;
+		best = dx * dx + dy * dy; veh = (int)i;
+	}
+	if (M->log_anim && !quiet && veh >= 0) printf("[anim] t%u seat: object %d takes the seat marker of vehicle %d\n", (unsigned)M->tick, u, veh);
+	if (veh < 0) return 0;
+	mk = marker_index(M, &M->objects->obj[veh], "seat");
+	for (k = 0; k < h->attach_count; k++) if (h->attach[k].child == u) break;
+	if (k == h->attach_count) {
+		if (h->attach_count >= MISSION_ATTACH_MAX) { mission_note_missing(M, "seat"); return 0; }
+		h->attach_count++;
+	}
+	h->attach[k].parent = (int16_t)veh; h->attach[k].child = (int16_t)u; h->attach[k].marker = (int16_t)mk; h->attach[k].pad = (int16_t)((o->serial & 0x7FFFu) + 1u);       /* bound to this object: a recreated one in the slot drops it */
+	return 1;
+}
+
+BI(unit_set_seat)
+{
+	ENTER(unit_set_seat);
+	{ int u = obj_arg(M, A(0), 0); if (u >= 0 && u < (int)OBJ_MAX) M->hobj.seat_want[u] = 1; (void)seat_on_chair(M, u, 0); }
+	return 0;
+}
 
 BI(unit_enter_vehicle)
 {
@@ -1023,6 +1070,7 @@ static int start_custom(mission_t *M, int slot, uint32_t graph_tag, const char *
 	if (frame >= (int)info.frame_count) frame = info.frame_count ? (int)info.frame_count - 1 : 0;
 	tps = info.fps > 0.0f ? info.fps / 30.0f : 1.0f;
 	ui = unit_of(M, slot);
+	if (ui >= 0 && (strncmp(name, "pchair", 6) == 0 || strncmp(name, "pilot", 5) == 0)) { M->hobj.seat_want[slot] = 1; (void)seat_on_chair(M, slot, 0); }     /* a seat animation: the unit sits on its chair's seat marker (now, or when the chair is under it) */
 	if (ui >= 0 && M->game) {                       /* a unit: the unit layer plays it (and hands the graph back by itself) */
 		unsigned t = units_custom_animation(M->units, M->game, ui, gi, idx, 1.0f, 0);
 		if (!t) return 0;
@@ -1062,8 +1110,11 @@ static int custom_time_left(const mission_t *M, int slot)
 
 BI(custom_animation)
 {
+	int slot;
 	ENTER(custom_animation);
-	(void)start_custom(M, obj_arg(M, A(0), 0), A(1)->v.h, str_arg(hm, A(2)), 0);
+	slot = obj_arg(M, A(0), 0);
+	if (slot < 0 && M->log_anim) printf("[anim] t%u custom_animation: object argument %08x does not resolve (anim \"%s\")\n", (unsigned)M->tick, (unsigned)A(0)->v.h, str_arg(hm, A(2)));
+	(void)start_custom(M, slot, A(1)->v.h, str_arg(hm, A(2)), 0);
 	return 0;
 }
 

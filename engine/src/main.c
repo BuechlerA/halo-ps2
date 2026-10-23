@@ -20,6 +20,7 @@
 #include "platform/memcard.h"
 #include "mission_app.h"
 #include "audio/stream.h"
+#include "stream/aread.h"
 #include "stream/file.h"
 #include "platform/pad.h"
 #include "platform/profiler.h"
@@ -55,14 +56,20 @@ static fpview_t   s_fp;
 static lodctl_t   s_lod;
 static float s_cine_light[3] = { 1.0f, 1.0f, 1.0f }, s_cine_amb = 1.0f;     /* cinematic object lighting gains (cfg objlight / objamb) */
 static obj_render_t s_objr;
-static hires_t s_hires;
-static int s_hires_open;
+/* Streamed high resolution textures (docs/37): the object set (<obj>.hires.hp2) and the BSP set (<tex>.thires.hp2) share one staging ring and each reads through its own IO thread. */
+static hires_t s_hires, s_bhires;
+static hires_ring_t s_hring;
+static aread_t s_ar_obj, s_ar_bsp;
+static int s_hires_open, s_bhires_open, s_ar_obj_open, s_ar_bsp_open;
+static unsigned s_bhires_key, s_bhires_keyed;
 static float s_cine_fxadd = 1.0f, s_cine_halo = 0.0f;
 static uint32_t s_hires_loads = 1;
-static float s_hires_px;
-static char s_hires_path[160];
+static float s_hires_px, s_bhires_ratio = 0.7f;
+static char s_hires_path[160], s_bhires_path[160];
 
-static int hires_file_read(void *user, uint32_t offset, void *dst, uint32_t bytes) { (void)user; return file_read_at(s_hires_path, (long)offset, dst, bytes); }
+static int hires_file_read(void *user, uint32_t offset, void *dst, uint32_t bytes) { return file_read_at((const char *)user, (long)offset, dst, bytes); }
+static int hires_ar_start(void *user, uint32_t offset, void *dst, uint32_t bytes) { return aread_start((aread_t *)user, offset, dst, bytes); }
+static int hires_ar_poll(void *user) { return aread_poll((aread_t *)user); }
 static int        s_have_objects;
 static gamedata_t s_gd;
 static game_t     s_game;
@@ -285,45 +292,99 @@ static void check_bsp_switch(void)
 	}
 }
 
-/* Streamed high resolution object textures (ADR-074): <obj pack>.hires.hp2 next to the object pack. Its staging ring lives above the BSP mark (a BSP switch frees it and this reopens it)
- * and is kept only when the arena still has 1 MB after it: b30 (the largest map) has no room for it, a10 does. */
+/* Streamed high resolution textures (docs/37, ADR-074 / ADR-082): the staging ring lives above the BSP mark (a BSP switch frees it and this reopens it) and is kept only when
+ * the arena still has 1 MB after it: b30 (the largest map) has no room for it, a10 does. The object set sits next to the object pack, the BSP set next to the texture pack. */
 #define HIRES_MARGIN (1024u * 1024u)
+static void close_hires(void)
+{
+	if (s_ar_obj_open) aread_close(&s_ar_obj);
+	if (s_ar_bsp_open) aread_close(&s_ar_bsp);
+	s_ar_obj_open = s_ar_bsp_open = 0;
+	s_hires_open = s_bhires_open = 0;
+	s_objr.hires = NULL;
+	bsp_render_set_hires(NULL, 0, 0.0f);
+}
+
+static int derive_path(char *out, size_t cap, const char *src, const char *from, const char *to)
+{
+	const char *dot = strstr(src, from);
+	size_t head, tail = strlen(to);
+	if (!dot) return 0;
+	head = (size_t)(dot - src);
+	if (head + tail + 1u > cap) return 0;
+	memcpy(out, src, head); strcpy(out + head, to);
+	return 1;
+}
+
+static int open_set(hires_t *h, const char *path, const char *what)
+{
+	long fsz = file_size_of(path);
+	if (fsz <= 0) { printf("[hires] %s: none (%s)\n", what, path); return -1; }
+	if (hires_open(h, &s_arena, hires_file_read, (void *)path, (size_t)fsz) != 0) { printf("[hires] %s: unusable (%s)\n", what, path); return -1; }
+	return 0;
+}
+
 static void open_hires(void)
 {
 	const char *obj = cfg_str(&s_cfg, "obj", "");
-	const char *dot = strstr(obj, ".obj.hp2");
-	size_t mark;
-	s_hires_open = 0; s_objr.hires = NULL;
-	if (!s_have_objects || !cfg_int(&s_cfg, "hires", 1) || !dot || (size_t)(dot - obj) + 11u >= sizeof s_hires_path) return;
-	memcpy(s_hires_path, obj, (size_t)(dot - obj)); strcpy(s_hires_path + (dot - obj), ".hires.hp2");
-	{
-		long fsz = file_size_of(s_hires_path);
-		if (fsz <= 0) { printf("[hires] none (%s)\n", s_hires_path); return; }
-		mark = arena_mark(&s_arena);
-		if (hires_open(&s_hires, &s_arena, hires_file_read, NULL, (size_t)fsz, (unsigned)cfg_int(&s_cfg, "hiresslots", 3)) != 0) { arena_release(&s_arena, mark); printf("[hires] unusable (%s)\n", s_hires_path); return; }
+	size_t mark = arena_mark(&s_arena);
+	int have_obj = 0, have_bsp = 0;
+	uint32_t slot_bytes = 0;
+	close_hires();
+	if (!s_have_objects) return;
+	if (cfg_int(&s_cfg, "hires", 1) && derive_path(s_hires_path, sizeof s_hires_path, obj, ".obj.hp2", ".hires.hp2") && open_set(&s_hires, s_hires_path, "objects") == 0) { have_obj = 1; slot_bytes = s_hires.max_bytes; }
+	if (cfg_int(&s_cfg, "bsphires", 1) && s_bhires_keyed && s_tex && derive_path(s_bhires_path, sizeof s_bhires_path, s_tex, ".tex.hp2", ".thires.hp2") && open_set(&s_bhires, s_bhires_path, "bsp") == 0) {
+		have_bsp = 1;
+		if (s_bhires.max_bytes > slot_bytes) slot_bytes = s_bhires.max_bytes;
 	}
-	if (arena_free(&s_arena) < HIRES_MARGIN) { printf("[hires] dropped: %u KB left after the staging ring (needs %u KB)\n", (unsigned)(arena_free(&s_arena) / 1024u), (unsigned)(HIRES_MARGIN / 1024u)); arena_release(&s_arena, mark); return; }
-	s_hires_px = 200.0f;
-	cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
+	if (!have_obj && !have_bsp) { arena_release(&s_arena, mark); return; }
+	if (hires_ring_init(&s_hring, &s_arena, (unsigned)cfg_int(&s_cfg, "hiresslots", 3), slot_bytes) != 0 || arena_free(&s_arena) < HIRES_MARGIN) {
+		printf("[hires] dropped: %u KB left after the staging ring (needs %u KB)\n", (unsigned)(arena_free(&s_arena) / 1024u), (unsigned)(HIRES_MARGIN / 1024u));
+		arena_release(&s_arena, mark); return;
+	}
 	s_hires_loads = (uint32_t)cfg_int(&s_cfg, "hiresloads", 1);
-	s_hires.max_loads = s_hires_loads;
-	s_hires_open = 1;
-	s_objr.hires = &s_hires; s_objr.hires_px = s_hires_px;
-	printf("[hires] %s: %u variants of %u textures, %u slots of %u KB, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (unsigned)s_hires.slots, (unsigned)(s_hires.slot_bytes / 1024u), (double)s_hires_px);
+	s_hring.max_loads = s_hires_loads;
+	s_hires_px = 200.0f; cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
+	s_bhires_ratio = 0.7f; cfg_floats(&s_cfg, "bsphiresratio", &s_bhires_ratio, 1);
+	if (have_obj) {
+		if (aread_open(&s_ar_obj, s_hires_path) == 0) {
+			s_ar_obj_open = 1;
+			hires_attach(&s_hires, &s_hring, hires_ar_start, hires_ar_poll, &s_ar_obj);
+			s_hires_open = 1;
+			s_objr.hires = &s_hires; s_objr.hires_px = s_hires_px;
+			printf("[hires] %s: %u variants of %u textures, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (double)s_hires_px);
+		} else printf("[hires] cannot open %s for streaming\n", s_hires_path);
+	}
+	if (have_bsp) {
+		if (aread_open(&s_ar_bsp, s_bhires_path) == 0) {
+			s_ar_bsp_open = 1;
+			hires_attach(&s_bhires, &s_hring, hires_ar_start, hires_ar_poll, &s_ar_bsp);
+			s_bhires_open = 1;
+			bsp_render_set_hires(&s_bhires, s_bhires_key, s_bhires_ratio);
+			printf("[hires] %s: %u variants of %u textures, from %.2f px per texel\n", s_bhires_path, (unsigned)s_bhires.tex.texture_count, (unsigned)s_bhires.map_count, (double)s_bhires_ratio);
+		} else printf("[hires] cannot open %s for streaming\n", s_bhires_path);
+	}
+	printf("[hires] ring: %u slots of %u KB, %u loads a frame\n", (unsigned)s_hring.slots, (unsigned)(s_hring.slot_bytes / 1024u), (unsigned)s_hring.max_loads);
 }
 
 static int load_bsp(int idx)
 {
-	s_objr.hires = NULL; s_hires_open = 0;
+	u32 t0 = timer_cycles(), t1;
+	float ms_world, ms_render, ms_game = 0.0f;
+	close_hires();
 	arena_release(&s_arena, s_bsp_mark);
 	if (world_load_bsp(&s_world, &s_arena, s_pack, s_tex, idx)) return -1;
+	t1 = timer_cycles(); ms_world = timer_ms(t0, t1); t0 = t1;
 	if (bsp_render_set_world(&s_arena, &s_world.bsp, &s_world.source)) return -1;
+	t1 = timer_cycles(); ms_render = timer_ms(t0, t1); t0 = t1;
 	if (s_have_objects) { s_objr.bsp = &s_world.bsp; s_objr.bsp_index = idx; objects_set_active_bsp(&s_objects, (unsigned)idx); }
 	if (cfg_str(&s_cfg, "game", NULL)) {
 		gamedata_load_bsp(&s_gd, &s_arena, cfg_str(&s_cfg, "game", NULL), idx);
 		if (s_game_on) game_set_collision(&s_game, s_gd.has_coll ? &s_gd.coll : NULL);
 	}
+	t1 = timer_cycles(); ms_game = timer_ms(t0, t1); t0 = t1;
 	open_hires();
+	printf("[bsp] load %d: world %.0f ms, render setup %.0f ms, game data %.0f ms, hires %.0f ms\n", idx, (double)ms_world, (double)ms_render, (double)ms_game, (double)timer_ms(t0, timer_cycles()));
 	return 0;
 }
 
@@ -488,6 +549,7 @@ int main(int argc, char *argv[])
 	if (s_have_objects) {
 		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
 		s_objr.hires_key_base = bsp_render_reserve_keys(s_world.obj_tex.has ? s_world.obj_tex.tex.texture_count : 0);       /* the key range is reserved whether or not the staging ring fits */
+		s_bhires_key = bsp_render_reserve_keys((unsigned)s_world.source.texture_count); s_bhires_keyed = 1;     /* the BSP set's range (docs/37) */
 		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
 		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
@@ -830,6 +892,7 @@ int main(int argc, char *argv[])
 					text_batch_print(&s_text, sx, sy, 0xFFFF00, buf);
 				}
 			}
+			if (s_hires_open || s_bhires_open) hires_ring_begin_frame(&s_hring);
 			bsp_render_build(frame, &rcam, &s_text);           /* overlaps the GS drawing frame-1 */
 		}
 		t1 = timer_cycles();
@@ -896,7 +959,7 @@ int main(int argc, char *argv[])
 				       (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024), (unsigned)(s_arena.high / 1024),
 				       (unsigned)rs->pages_free, (unsigned)bsp_render_cache_pages());
 			}
-			if (s_hires_open) printf("[hires] %u loads, %u KB read, %u refused (over the per frame budget)\n", (unsigned)s_hires.loads, (unsigned)(s_hires.bytes_read / 1024u), (unsigned)s_hires.refused);
+			if (s_hires_open || s_bhires_open) printf("[hires] %u loads, %u KB read, %u refused (budget / busy / no slot), %u failed, %u unclaimed\n", (unsigned)s_hring.loads, (unsigned)(s_hring.bytes_read / 1024u), (unsigned)s_hring.refused, (unsigned)s_hring.failed, (unsigned)s_hring.stale);
 			if (s_stream_on) {
 				const stream_stats *ss = stream_get_stats(&s_sp);
 				printf("[stream] %u plays, %u steals, %u finished, %u loop passes; %u reads %u KB, %u read errors; underruns voice %u (%u frames) output %u; ee ms avg %.2f max %.2f per service call\n",

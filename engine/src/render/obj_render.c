@@ -200,7 +200,7 @@ static u64 hires_tex0(obj_render_t *o, int tex)
 	was_resident = rb_extra_resident(o->hires_key_base, (unsigned)tex);
 	if (!was_resident) {
 		if ((unsigned)tex < HIRES_RETRY_MAX && o->frame_no < s_hires_retry[tex]) return 0;
-		if (hires_load(o->hires, (unsigned)tex, &v) != 0) return 0;
+		if (hires_request(o->hires, (unsigned)tex, &v) != 0) return 0;               /* still on its way (the read is asynchronous): the resident texture meanwhile */
 		SyncDCache((void *)v.clut, (u8 *)v.pixels + v.pixel_bytes);       /* the DMA reads RAM, not the cache */
 	}
 	img.pixels = v.pixels; img.clut = v.clut; img.pixel_bytes = v.pixel_bytes; img.clut_bytes = v.clut_bytes; img.w = v.w; img.h = v.h; img.psm = v.psm;
@@ -471,7 +471,6 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	if (!o->world.models || !o->world.scen) return;
 	camera_basis(cam, right, up, fwd);
 	emit_model_setup(rc->chain, rc);
-	if (o->hires) hires_begin_frame(o->hires);
 	o->want_hi = 0;
 	o->frame_no++;
 	o->clip_ms = 0.0f;

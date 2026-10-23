@@ -71,7 +71,7 @@ def test_sizes() -> None:
     assert tc.target_size(1024, 512) == (256, 128) and tc.target_size(2048, 64) == (256, 8)
     assert tc.target_size(1024, 1024) == (256, 256) and tc.target_size(512, 16) == (256, 8)
     assert tc.target_size(1024, 256, 512) == (512, 128) and tc.target_size(2048, 256, 512) == (512, 64)    # a hero bitmap (ADR-073): the cap is the argument
-    assert tc.target_size(1024, 256) == (256, 64) and tc.MAX_TEX == 256 and tc.MAX_TEX_FORMAT == 512      # ordinary textures keep the 256 cap
+    assert tc.target_size(1024, 256) == (256, 64) and tc.MAX_TEX == 256 and tc.MAX_TEX_FORMAT == 1024      # ordinary textures keep the 256 cap
     assert tc.mip_dims(256, 256) == [(256, 256), (128, 128), (64, 64), (32, 32)]       # max 4 levels
     assert tc.mip_dims(64, 64) == [(64, 64), (32, 32), (16, 16), (8, 8)]
     assert tc.mip_dims(128, 8) == [(128, 8)] and tc.mip_dims(16, 16) == [(16, 16), (8, 8)]
@@ -300,7 +300,7 @@ def test_sections() -> None:
     to, bo = tc.HEADER_SIZE, tc.HEADER_SIZE + 3 * tc.TEXTURE_REC
     bad = [blob[:30], blob[:-16], b"NOPE" + blob[4:], flip(4, 2, 2), flip(8, 0x20000, 4), flip(12, 0x20000, 4),
            flip(16, 4, 4), flip(20, 4000, 4), flip(24, 4, 4), flip(28, len(blob) + 16, 4),
-           flip(to + 8, 0x12), flip(to + 4, 17, 2), flip(to + 4, 1024, 2), flip(to + 9, 0), flip(to + 9, 5),
+           flip(to + 8, 0x12), flip(to + 4, 17, 2), flip(to + 4, 2048, 2), flip(to + 9, 0), flip(to + 9, 5),
            flip(to + 12, 1024, 4), flip(to + 16, 0, 4), flip(to + 20, len(blob), 4), flip(to + 24, 7, 4),
            flip(bo, 0xE1740030, 4), flip(bo + 32 + 4, 9, 2), flip(bo + 4, 7, 2)]
     for n, b in enumerate(bad):
@@ -525,20 +525,42 @@ def test_real_map() -> None:
 
 
 def test_wide_texture_format() -> None:
-    """The TEXS format holds textures up to 512 on a side (hero bitmaps, ADR-073); 1024 is refused by the reader."""
+    """The TEXS format holds textures up to 1024 on a side (512 for hero bitmaps, ADR-073; 1024 only for streamed variants, docs/37); 2048 is refused by the reader."""
     w, h = 512, 128
     rgba = bytes(v for y in range(h) for x in range(w) for v in ((x * 7) & 255, (y * 3) & 255, 90, 255))
     tex = tc.convert_rgba(0x4242, rgba, w, h, tc.CLASS_OPAQUE, 8)
     assert (tex.width, tex.height, tex.psm) == (512, 128, tc.PSMT8) and len(tex.mips) == 4
     view = tc.parse_texs(tc.build_texs([tex], []))
     assert (view.textures[0]["width"], view.textures[0]["height"]) == (512, 128)
-    big = tc.convert_rgba(0x4243, bytes(1024 * 8 * 4), 1024, 8, tc.CLASS_OPAQUE, 8)
+    wide = tc.convert_rgba(0x4244, bytes(1024 * 8 * 4), 1024, 8, tc.CLASS_OPAQUE, 8)
+    assert tc.parse_texs(tc.build_texs([wide], [])).textures[0]["width"] == 1024
+    big = tc.convert_rgba(0x4243, bytes(2048 * 8 * 4), 2048, 8, tc.CLASS_OPAQUE, 8)
     try:
         tc.parse_texs(tc.build_texs([big], []))
     except tc.TexError:
         pass
     else:
-        raise AssertionError("a 1024 wide texture was accepted")
+        raise AssertionError("a 2048 wide texture was accepted")
+
+
+def test_hires_pack() -> None:
+    """<map>.thires.hp2: variants (TEXS of textures only) and HMAP (base texture -> variant or 0xFFFF), stored uncompressed so a variant is one contiguous range."""
+    import struct
+    from halo2ps2 import hp2
+    def tex(w: int, h: int, sid: int) -> "tc.Ps2Texture":
+        px = bytes(v for y in range(h) for x in range(w) for v in ((x * 5) & 255, (y * 9) & 255, 40, 255))
+        t = tc.convert_rgba(sid, px, w, h, tc.CLASS_OPAQUE, 4)
+        t.mips = t.mips[:1]
+        return t
+    base = [tex(16, 16, 1), tex(32, 16, 2), tex(8, 8, 3)]
+    pack = tc.build_hires_pack("t", base, {0: tex(32, 32, 1), 2: tex(16, 16, 3)})
+    pk = hp2.parse(pack)
+    assert [s.tag for s in pk.sections] == ["TEXS", "HMAP"] and all(s.codec == hp2.CODEC_STORED for s in pk.sections)
+    view = tc.parse_texs(pk.read("TEXS"))
+    assert [(t["width"], t["height"]) for t in view.textures] == [(32, 32), (16, 16)]
+    hm = pk.read("HMAP")
+    assert struct.unpack_from("<I", hm)[0] == 3 and struct.unpack_from("<3H", hm, 4) == (0, 0xFFFF, 1)
+    assert len(hm) % 4 == 0
 
 
 def test_product() -> None:
@@ -564,6 +586,7 @@ def main() -> None:
     test_sections()
     test_shaders()
     test_product()
+    test_hires_pack()
     test_wide_texture_format()
     test_scan_bsp()
     test_real_map()

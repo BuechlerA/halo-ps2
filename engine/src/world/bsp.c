@@ -167,7 +167,10 @@ bsp_status bsp_open(bsp_section *s, const uint8_t *d, size_t size)
 bsp_material bsp_get_material(const bsp_section *s, uint32_t i)
 {
 	const uint8_t *p = s->materials + (size_t)i * MATERIAL_REC;
-	bsp_material m = { rd32(p), (uint16_t)rd16(p + 4), (uint16_t)rd16(p + 10), rd16(p + 8), rd32(p + 12) };
+	bsp_material m = { rd32(p), (uint16_t)rd16(p + 4), (uint16_t)rd16(p + 10), rd16(p + 8), rd32(p + 12), 0.0f };
+	uint32_t bits = rd32(p + 16);
+	memcpy(&m.uv_world, &bits, 4);
+	if (!(m.uv_world >= 0.0f && m.uv_world < 1.0e6f)) m.uv_world = 0.0f;   /* NaN, negative or absurd: unknown */
 	return m;
 }
 

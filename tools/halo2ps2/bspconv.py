@@ -322,6 +322,25 @@ def convex_polygon(verts: list[tuple[float, float, float]], plane: tuple[float, 
     return hull, True
 
 
+def uv_world(m: Material) -> float:
+    """World units per texture uv unit of a material (+0x10 of its 32 byte record; 0 = unknown): sqrt(area in the world / area in uv space) over its triangles. The
+    streamed texture variants (docs/37) use it with the shader's tiling and the texture size to tell how many texels a world unit has, so a surface asks for the sharper
+    texture when the camera comes near enough to magnify the resident one. Degenerate (uv-less or zero area) materials give 0."""
+    aw = au = 0.0
+    for a, b, c in m.tris:
+        pa, pb, pc = m.pos[a], m.pos[b], m.pos[c]
+        e1 = (pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2])
+        e2 = (pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2])
+        cx, cy, cz = e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]
+        ua, ub, uc = m.uv[a], m.uv[b], m.uv[c]
+        du = abs((ub[0] - ua[0]) * (uc[1] - ua[1]) - (ub[1] - ua[1]) * (uc[0] - ua[0]))
+        aw += 0.5 * (cx * cx + cy * cy + cz * cz) ** 0.5
+        au += 0.5 * du
+    if au < 1e-9 or aw < 1e-12:
+        return 0.0
+    return float((aw / au) ** 0.5)
+
+
 def build_section(materials: list[Material], bounds: tuple[float, ...],
                   structure: bsp.Structure | None = None) -> bytes:
     st = structure or trivial_structure(materials)
@@ -412,8 +431,8 @@ def build_section(materials: list[Material], bounds: tuple[float, ...],
     for b in batches:
         batch_counts[b.material] += 1
         tri_counts[b.material] += b.triangles
-    mtab = b"".join(struct.pack("<IHHHHI16x", m.shader_id, m.lightmap_page, 0, batch_counts[i], shifts[i],
-                                tri_counts[i]) for i, m in enumerate(materials))
+    mtab = b"".join(struct.pack("<IHHHHIf12x", m.shader_id, m.lightmap_page, 0, batch_counts[i], shifts[i],
+                                tri_counts[i], uv_world(m)) for i, m in enumerate(materials))
     ptab, pverts = bytearray(), bytearray()
     nverts = 0
     for p, verts, cen, rad in portals:
@@ -478,8 +497,8 @@ def parse_section(data: bytes) -> Section:
     vif = data[d["vif"][0]:d["vif"][0] + d["vif"][1]]
     materials = []
     for i in range(nm):
-        sid, page, _r6, bc, shift, t = rec("materials", "<IHHHHI", i)
-        materials.append({"shader_id": sid, "lightmap_page": page, "batch_count": bc, "shift": shift, "triangles": t})
+        sid, page, _r6, bc, shift, t, uvw = rec("materials", "<IHHHHIf", i)
+        materials.append({"shader_id": sid, "lightmap_page": page, "batch_count": bc, "shift": shift, "triangles": t, "uv_world": uvw})
     batches = []
     for i in range(nb):
         mat, t, off, qw, cx, cy, cz, r, _ = rec("batches", "<HHII3ffI", i)

@@ -83,7 +83,7 @@ GROUP_CODES = {"senv": 1, "sotr": 2, "schi": 3, "sgla": 4, "swat": 5}
 FLAT_GREY = 0x80808080               # RGBA8, alpha on the PS2 0x80 = 1.0 scale
 
 MAX_TEX, MIN_TEX, MAX_MIPS = 256, 8, 4
-MAX_TEX_FORMAT = 512       # the TEXS format allows 512 on a side; the converter's default cap is MAX_TEX, only HERO_BITMAPS go above it (ADR-073)
+MAX_TEX_FORMAT = 1024      # the TEXS format allows 1024 on a side; resident textures stay at the converter cap (MAX_TEX 256, HERO_BITMAPS 512, ADR-073), only streamed variants (docs/37) go to 1024
 # Bitmaps (tag paths) of surfaces a cinematic shows large that a half resolution strip would smear: the a10 command wall's monitors (1024 x 256, three screens side by side)
 # get 512 x 128 instead of 256 x 64.
 HERO_BITMAPS = {"levels\\a10\\bitmaps\\monitors": 512,
@@ -122,6 +122,9 @@ def bsp_tone(path: str) -> tuple[float, float, float, float] | None:
     return BSP_TONE.get(path.replace("/", "\\").rsplit("\\", 1)[-1])
 
 
+# Streamed high resolution variants of the BSP's textures (docs/37, <map>.thires.hp2): the source at full size (the resident copy is half of it), up to HIRES_CAP per side,
+# when its pixels fit one staging slot (HIRES_MAX_BYTES; a 512 x 512 or 1024 x 256 map is a 16 colour PSMT4 then).
+HIRES_CAP, HIRES_MAX_BYTES = 1024, 128 * 1024
 PSMT4_MAX_RMS = 3.0                  # 16 colours are used when they reproduce the image within this RMS
 
 # ---- shader tag layout --------------------------------------------------------------------
@@ -795,11 +798,16 @@ def bake_relief(rgba: bytes, w: int, h: int, height: bytes, strength: float = BU
 
 
 def convert_texture(m: MapData, img: bitmaps.BitmapImage, source_id: int, klass_cap: int,
-                    force_bits: int = 0, key_opaque: bool = False, bump: bitmaps.BitmapImage | None = None) -> Ps2Texture:
+                    force_bits: int = 0, key_opaque: bool = False, bump: bitmaps.BitmapImage | None = None, full_cap: int = 0) -> Ps2Texture:
     """Decode, shrink and quantise one bitmap image. ``klass_cap`` is the strongest alpha class the
     shader allows: CLASS_OPAQUE drops alpha, CLASS_PUNCH thresholds it, CLASS_BLEND keeps it; the
     class actually used is the lesser of that and what the pixels contain."""
-    tw, th = target_size(img.width, img.height, HERO_BITMAPS.get(m.by_id[source_id].path, MAX_TEX))
+    if full_cap:                                          # a streamed variant: the source's own size (halved until it fits full_cap)
+        tw, th = img.width, img.height
+        while tw > full_cap or th > full_cap:
+            tw, th = max(MIN_TEX, tw // 2), max(MIN_TEX, th // 2)
+    else:
+        tw, th = target_size(img.width, img.height, HERO_BITMAPS.get(m.by_id[source_id].path, MAX_TEX))
     level = 1 if img.mip_count >= 1 and img.width >> 1 >= tw and img.height >> 1 >= th and bump is None else 0
     w, h, rgba = bitmaps.decode_level(img, m.pixels(img), level)
     if key_opaque and klass_cap == CLASS_PUNCH:
@@ -1140,6 +1148,8 @@ class ConvertResult:
     seconds: float = 0.0
     untextured_materials: int = 0
     untextured_reasons: Counter = field(default_factory=Counter)
+    hires: bytes = b""                                    # the <map>.thires.hp2 pack (b"" = no variants)
+    hires_count: int = 0
 
 
 def klass_cap_for(info: ShaderInfo) -> int:
@@ -1223,6 +1233,16 @@ def glow_texture(m: MapData, base: bitmaps.BitmapImage, glow: bitmaps.BitmapImag
     return convert_rgba(source_id, bytes(out), tw, th, CLASS_OPAQUE, 0, 128)
 
 
+def build_hires_pack(name: str, textures: list[Ps2Texture], variants: dict[int, Ps2Texture]) -> bytes:
+    """<map>.thires.hp2: TEXS of the variants (textures only, one mip level, stored uncompressed so a variant is one contiguous range) and HMAP (u32 count of the base
+    textures, then a u16 per base texture: the index of its variant in that TEXS or 0xFFFF), the same layout as the object pack's .hires.hp2 (ADR-074)."""
+    order = sorted(variants)
+    texs = build_texs([variants[i] for i in order], [])
+    index = {b: n for n, b in enumerate(order)}
+    hmap = struct.pack("<I", len(textures)) + b"".join(struct.pack("<H", index.get(i, 0xFFFF)) for i in range(len(textures)))
+    return hp2.build(name, [("TEXS", texs), ("HMAP", hmap + bytes(-len(hmap) % 4))], compress=False)
+
+
 def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_GAIN,
                 bsp_filter: list[int] | None = None) -> ConvertResult:
     t0 = time.time()
@@ -1234,6 +1254,7 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
     seen: dict[tuple[int, int], int] = {}
     reasons: Counter = Counter()
     glow_bytes = 0
+    variant_src: dict[int, tuple] = {}                    # texture index -> (image, source id, alpha cap, alpha test): what a streamed variant is made from
     for s in shaders:
         if s.bitmap_id is None:
             reasons[s.note or "no base map"] += 1
@@ -1271,6 +1292,8 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
                 reasons["base map failed to decode"] += 1
                 continue
             seen[key] = len(textures)
+            if not prod and bump is None:
+                variant_src[len(textures)] = (images[0], s.bitmap_id, cap, s.alpha_test)
             textures.append(tex)
         s.texture = seen[key]
         if textures[s.texture].flags & TF_PUNCH and s.alpha_test:
@@ -1297,6 +1320,21 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
         untextured_mats += sum(c for sid, c in b.shaders.items()
                                if next(s for s in shaders if s.shader_id == sid).texture == NO_TEXTURE)
     sections: list[tuple[str, bytes]] = [("TEXS", build_texs(textures, shaders))]
+    variants: dict[int, Ps2Texture] = {}
+    for ti, (vimg, vsrc, vcap, vtest) in variant_src.items():
+        base = textures[ti]
+        if vimg.width <= base.width and vimg.height <= base.height:
+            continue
+        for bits in (0, 4):                               # as the palette decides, else 16 colours when the pixels do not fit a staging slot
+            try:
+                hi = convert_texture(m, vimg, vsrc, vcap, force_bits=bits, key_opaque=vtest, full_cap=HIRES_CAP)
+            except (bitmaps.BitmapError, ValueError):
+                break
+            hi.mips = hi.mips[:1]
+            if 4096 <= len(hi.mips[0]) <= HIRES_MAX_BYTES and (hi.width > base.width or hi.height > base.height) and hi.width * base.height == hi.height * base.width:
+                variants[ti] = hi
+                break
+    hires = build_hires_pack(path.stem, textures, variants) if variants else b""
     lm_pages: dict[int, list[LightmapPage]] = {}
     lm_shift: dict[int, int] = {}
     if lightmaps:
@@ -1316,7 +1354,7 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
             sections.append((f"LM{b.index}", build_lmap(pages, gain)))
     pack = hp2.build(path.stem, sections)
     return ConvertResult(pack, textures, shaders, infos, lm_pages, lm_shift, time.time() - t0,
-                         untextured_mats, reasons)
+                         untextured_mats, reasons, hires, len(variants))
 
 
 def report(name: str, r: ConvertResult) -> str:
@@ -1380,6 +1418,12 @@ def main(argv: list[str] | None = None) -> int:
     res = convert_map(args.input, not args.no_lightmaps, args.lm_gain, args.bsp)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_bytes(res.pack)
+    hires_path = args.out.with_name(args.out.name.replace(".tex.hp2", ".thires.hp2")) if ".tex.hp2" in args.out.name else args.out.with_suffix(".thires.hp2")
+    if res.hires:
+        hires_path.write_bytes(res.hires)
+        print(f"wrote {hires_path} ({len(res.hires) / 2**20:.2f} MiB, {res.hires_count} streamed high resolution BSP textures)")
+    elif hires_path.exists():
+        hires_path.unlink()                               # a stale pack of an earlier conversion would not match the new texture indices
     print(report(args.input.stem, res))
     print(f"wrote {args.out}")
     return 0

@@ -12,7 +12,7 @@
 #define TEX_PSMT4 0x14u
 #define TEX_MAX_MIPS 4u
 #define TEX_MIN_DIM 8u
-#define TEX_MAX_DIM 512u            /* the format's limit; the converter's default cap is 256, only hero textures (tools/halo2ps2 HERO_BITMAPS) go above it */
+#define TEX_MAX_DIM 1024u           /* the format's limit; resident textures stay at 256 (hero textures 512, ADR-073), only streamed variants (docs/37) go to 1024 */
 #define TEX_NONE 0xFFFFu           /* binding without a texture: draw flat grey */
 
 /* tex_info.flags */
