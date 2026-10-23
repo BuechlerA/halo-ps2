@@ -922,5 +922,21 @@ colour change source, so `a` / `b` do not tint it); Johnson's skin is lighter th
 **Consequences**: SCEN placements carry the permutation (`scripts/build-world.sh a10` rebuilds the object pack, no version change: the field was padding); debug keys `forcemodel`, `trackperm N`, `nearlog` prints name,
 permutations and screen position; `unitspeeds 1`.
 
+## ADR-084 The camera observer is the Xbox's: exact port of 0x11c500 .. 0x11cda0, verified against the Xbox code run under an emulator
+**Decision**: `cine.c` keeps the observer state of `XBE 0x11dd30` (position, field of view, forward and up, and the velocity and acceleration of the offset from the target) and runs its update at
+`camera_set` (dt 1e-4 s, like the director) and every tick, instead of ADR-063's history of the last three poses and a quaternion offset: the quintic is refitted every update from the analytic velocity and
+acceleration (`c3 = A s/2 - 10 D s^3 - 4 V s^2`, `c4 = 15 D s^4 + 7 V s^3 - A s^2`, `c5 = A s^3/2 - 6 D s^5 - 3 V s^4`, `s = 1 / T`), the orientation offset is the rotation vector turning the state's forward
+and up into the target's, the state is rotated by `D + e(t - dt)`, an acceleration beyond 1500 (positions) or 1e5 snaps, forward and up are re-orthonormalised past 1e-3, and the field of view is clamped to
+[0.001, pi/2]. `tools/xbe/observer_oracle.py` runs the executable's own code (0x11c760 .. 0x11d2d0) under the unicorn x86 emulator with the director's records and writes
+`engine/tests/cine_observer_golden.h` (behaviour only, no code); `test_cine_observer` replays four scripts, mid-flight retargets included, and compares position, forward and up every 5th tick.
+**Why**: the earlier port got a move from rest right (agreement 1e-4) but not a retarget in mid flight: random scripts of one to three moves differed from the Xbox by up to 1.3 units and 1.3 in the
+forward vector (finite differences of the last three poses instead of the analytic velocity and acceleration; the quaternion offset instead of one rotation vector summed with the velocity terms).
+Now every random script agrees with the oracle to 1e-3 .. 1e-2 units (float against x87) and 1e-4 in the vectors. Also verified in the same pass, against the decompile: the camera point's field offsets, `euler_angles3d_to_matrix`,
+and `forward = row 0, up = row 2`; the engine's basis (`camera_basis` with roll) reproduces the Xbox's forward, up and left to 1e-15 for random angles, so a settled pose looks exactly where the Xbox's does.
+**Measured, not changed**: the cinematic's field of view: the decompiled projection (0x5c5e0) treats it as the vertical one, but across 20 rotation-sensitive frames the 4:3 buffer with 70 degrees horizontal
+(`widescreen 0`) still correlates best with the Xbox video (0.63; `widescreen 1` 0.43, `2` 0.53, 4:3 vertical-kept 0.41). The cryo console shot (ticks 6100 .. 6240) is framed about 15 % closer than the video's with
+a settled, exact pose: its cause is not the camera's rotation. `camera_ticks` (ADR-066) is untouched; the director's seconds are an integer division (`ticks / 30`), which explains `200 -> 180` of its table but not `300 -> 270`.
+**Consequences**: host test `cine` gains `test_cine_observer`; `test_cine` tolerances allow for the update at `camera_set`. No pack rebuild.
+
 ## Open decisions
 None.

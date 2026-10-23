@@ -275,105 +275,180 @@ void cine_pose_relative(const cine_pose *world, const cine_frame *anchor, cine_p
 	*rel = o;
 }
 
-/* Halo's observer: every channel (position, orientation as a rotation vector from the target, field of view) follows
- * x(s) = c3 s^3 + c4 s^4 + c5 s^5 with s = remaining / total ticks, the offset from the target. The coefficients make the offset,
- * velocity and acceleration at the retarget equal to what the camera had (a quintic: no jump in speed or acceleration when a
- * script retargets in mid-flight). */
-enum { CAM_CH = 7 };
+/* Halo's observer, ported from the Xbox executable (docs/36; ADR-083). The director hands it a target (position, forward and up, field of view) and the seconds left to
+ * get there; once per update (0x11d2d0) it
+ *   - takes the offset D = target - state (0x11cb10; orientation: the rotation vector that turns the state's forward / up into the target's, angle in [0, pi]),
+ *   - fits the quintic e(t) = c3 t^3 + c4 t^4 + c5 t^5 in the remaining time t with e(T) = -D and the velocity V and acceleration A the previous fit had at this instant
+ *     (0x11c500: c3 = A s/2 - 10 D s^3 - 4 V s^2, c4 = 15 D s^4 + 7 V s^3 - A s^2, c5 = A s^3/2 - 6 D s^5 - 3 V s^4 with s = 1/T),
+ *   - evaluates V = e'(t'), A = e''(t') at t' = T - dt (0x11c130, 0x11c330) and moves the state by D + e(t') (0x11cda0): positions and field of view add, the rotation
+ *     vector D + e(t') rotates forward and up (0x11ca50), and when t' <= 0 the state becomes the target exactly,
+ *   - re-orthonormalises forward and up when they drift by more than 1e-3.
+ * An acceleration beyond the channel's limit (1500 for positions, 1e5 for the rest) snaps the camera to the target. */
+enum { OB_N = 7 };                                       /* position 3, field of view 1, rotation vector 3 */
+static const float OB_A_LIMIT[OB_N] = { 1500.0f, 1500.0f, 1500.0f, 100000.0f, 100000.0f, 100000.0f, 100000.0f };
 
-static void quat_conj(const float q[4], float o[4])
+static void v3_cross(const float a[3], const float b[3], float o[3])
 {
-	o[0] = -q[0]; o[1] = -q[1]; o[2] = -q[2]; o[3] = q[3];
+	o[0] = a[1] * b[2] - a[2] * b[1]; o[1] = a[2] * b[0] - a[0] * b[2]; o[2] = a[0] * b[1] - a[1] * b[0];
 }
+static float v3_dot(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 
-static void quat_log(const float q[4], float rv[3])
+/* forward / up of a ypr pose and back (the camera_t convention: forward (cp cy, cp sy, sp), roll banks right) */
+static void pose_axes(const cine_pose *p, float f[3], float u[3])
 {
-	float s = q[3] < 0.0f ? -1.0f : 1.0f, x = q[0] * s, y = q[1] * s, z = q[2] * s, w = q[3] * s;
-	float n = sqrtf(x * x + y * y + z * z), k;
-	k = n > 1e-6f ? 2.0f * atan2f(n, w) / n : 2.0f;
-	rv[0] = x * k; rv[1] = y * k; rv[2] = z * k;
-}
-
-static void quat_exp(const float rv[3], float q[4])
-{
-	float a = sqrtf(rv[0] * rv[0] + rv[1] * rv[1] + rv[2] * rv[2]), k = a > 1e-6f ? sinf(a * 0.5f) / a : 0.5f;
-	q[0] = rv[0] * k; q[1] = rv[1] * k; q[2] = rv[2] * k; q[3] = cosf(a * 0.5f);
-}
-
-static void pose_offset(const cine_pose *p, const cine_pose *tgt, const float qt[4], float ch[CAM_CH])
-{
-	float q[4], qc[4], r[4];
+	float cy = cosf(p->yaw), sy = sinf(p->yaw), cp = cosf(p->pitch), sp = sinf(p->pitch), cr = cosf(p->roll), sr = sinf(p->roll);
+	float r0[3] = { sy, -cy, 0.0f }, u0[3] = { -sp * cy, -sp * sy, cp };
 	int i;
-	cine_ypr_to_quat(p->yaw, p->pitch, p->roll, q);
-	quat_conj(qt, qc);
-	quat_mul(q, qc, r);
-	for (i = 0; i < 3; i++) ch[i] = p->pos[i] - tgt->pos[i];
-	quat_log(r, ch + 3);
-	ch[6] = p->fov - tgt->fov;
+	f[0] = cp * cy; f[1] = cp * sy; f[2] = sp;
+	for (i = 0; i < 3; i++) u[i] = sr * r0[i] + cr * u0[i];
 }
 
-static void cam_retarget(cine_camera *c, uint32_t ticks, const cine_pose *to, int relative, const cine_frame *anchor)
+static void axes_to_ypr(const float f[3], const float u[3], float *yaw, float *pitch, float *roll)
 {
-	cine_pose h[3];
-	float ch[3][CAM_CH], T = (float)ticks;
-	int i, k, n;
-	h[0] = c->from;                                         /* the pose now (set by the caller, in the new space) */
-	for (i = 1; i < 3; i++) {
-		h[i] = c->hist[i];
-		if (c->hist_n > (uint8_t)i && relative != c->hist_rel) {                                       /* history from the other space */
-			cine_pose o;
-			if (relative) cine_pose_relative(&h[i], anchor, &o);
-			else cine_pose_compose(&h[i], anchor, &o);
-			h[i] = o;
+	float y = atan2f(f[1], f[0]), p = asinf(clampf(f[2], -1.0f, 1.0f)), sy = sinf(y), cy = cosf(y), sp = sinf(p), cp = cosf(p);
+	float u0x = -sp * cy, u0y = -sp * sy, u0z = cp, r0x = sy, r0y = -cy;
+	*yaw = y; *pitch = p;
+	*roll = atan2f(u[0] * r0x + u[1] * r0y, u[0] * u0x + u[1] * u0y + u[2] * u0z);
+}
+
+/* the rotation vector (axis x angle, angle in [0, pi]) that turns the frame (f0, u0) into (f1, u1): 0x11cb10 */
+static void obs_rotvec(const float f0[3], const float u0[3], const float f1[3], const float u1[3], float rv[3])
+{
+	float l0[3], l1[3], m[3][3], w, x, y, z, tr, len, ang;
+	const float *c0[3], *c1[3];
+	int i, j, k;
+	v3_cross(u0, f0, l0); v3_cross(u1, f1, l1);
+	c0[0] = f0; c0[1] = l0; c0[2] = u0; c1[0] = f1; c1[1] = l1; c1[2] = u1;
+	for (i = 0; i < 3; i++) for (j = 0; j < 3; j++) { m[i][j] = 0.0f; for (k = 0; k < 3; k++) m[i][j] += c1[k][i] * c0[k][j]; }       /* R1 R0^T */
+	tr = m[0][0] + m[1][1] + m[2][2];
+	if (tr > 0.0f) {
+		float s = sqrtf(tr + 1.0f);
+		w = 0.5f * s; s = 0.5f / s;
+		x = (m[2][1] - m[1][2]) * s; y = (m[0][2] - m[2][0]) * s; z = (m[1][0] - m[0][1]) * s;
+	} else {
+		int a = m[1][1] > m[0][0] ? 1 : 0, b, c;
+		float q[3], s;
+		if (m[2][2] > m[a][a]) a = 2;
+		b = (a + 1) % 3; c = (a + 2) % 3;
+		s = sqrtf(m[a][a] - (m[b][b] + m[c][c]) + 1.0f);
+		q[a] = 0.5f * s; if (s != 0.0f) s = 0.5f / s;
+		q[b] = (m[a][b] + m[b][a]) * s; q[c] = (m[a][c] + m[c][a]) * s;
+		w = (m[c][b] - m[b][c]) * s;
+		x = q[0]; y = q[1]; z = q[2];
+	}
+	len = sqrtf(x * x + y * y + z * z);
+	if (len >= 1e-4f) { x /= len; y /= len; z /= len; } else len = 0.0f;
+	ang = 2.0f * atan2f(len, w);
+	if (ang > 3.14159265f) { x = -x; y = -y; z = -z; ang = 6.28318531f - ang; }
+	rv[0] = x * ang; rv[1] = y * ang; rv[2] = z * ang;
+}
+
+/* 0x11ca50: rotate forward and up about the (normalised) rotation vector by its length */
+static void obs_rotate(float f[3], float u[3], const float rv[3])
+{
+	float a[3] = { rv[0], rv[1], rv[2] }, len = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]), s, c;
+	float *vs[2] = { f, u };
+	int k;
+	if (len < 1e-4f) return;
+	a[0] /= len; a[1] /= len; a[2] /= len;
+	s = sinf(len); c = cosf(len);
+	for (k = 0; k < 2; k++) {
+		float *v = vs[k], d = (1.0f - c) * v3_dot(v, a), o[3];
+		o[0] = d * a[0] + c * v[0] - (v[1] * a[2] - v[2] * a[1]) * s;
+		o[1] = d * a[1] + c * v[1] - (v[2] * a[0] - v[0] * a[2]) * s;
+		o[2] = d * a[2] + c * v[2] - (v[0] * a[1] - v[1] * a[0]) * s;
+		v[0] = o[0]; v[1] = o[1]; v[2] = o[2];
+	}
+}
+
+static void obs_orthonormalise(float f[3], float u[3])
+{
+	float fu = v3_dot(f, u), nf = v3_dot(f, f) - 1.0f, nu = v3_dot(u, u) - 1.0f;
+	if (nf == nf && fabsf(nf) < 1e-3f && nu == nu && fabsf(nu) < 1e-3f && fu == fu && fabsf(fu) < 1e-3f) return;
+	{
+		float n[3], g[3], len;
+		v3_cross(u, f, n);                                    /* (f x u) negated: the normal of the plane */
+		v3_cross(f, n, g);                                    /* the part of up orthogonal to forward */
+		u[0] = g[0]; u[1] = g[1]; u[2] = g[2];
+		len = sqrtf(v3_dot(f, f));
+		if (len >= 1e-4f) { f[0] /= len; f[1] /= len; f[2] /= len; }
+		len = sqrtf(v3_dot(u, u));
+		if (len >= 1e-4f) { u[0] /= len; u[1] /= len; u[2] /= len; }
+	}
+}
+
+/* One observer update: T seconds were left at the start of the update, dt passes. The target is c->to / c->tgt_*. */
+static void obs_update(cine_camera *c, float T, float dt)
+{
+	float D[OB_N], P3[OB_N], P4[OB_N], P5[OB_N], tn = T - dt, e[OB_N];
+	int k, snap = 0;
+	for (k = 0; k < 3; k++) D[k] = c->to.pos[k] - c->os_pos[k];
+	D[3] = c->to.fov - c->os_fov;
+	obs_rotvec(c->os_fwd, c->os_up, c->tgt_fwd, c->tgt_up, D + 4);
+	if (tn > 0.0f && T > dt) {
+		float s = 1.0f / T, s2 = s * s, s3 = s2 * s, s4 = s3 * s, s5 = s4 * s;
+		for (k = 0; k < OB_N; k++) {                                          /* 0x11c500 */
+			P5[k] = 0.5f * c->os_a[k] * s3 - (6.0f * D[k] * s5 + 3.0f * c->os_v[k] * s4);
+			P4[k] = (15.0f * D[k] * s4 + 7.0f * c->os_v[k] * s3) - c->os_a[k] * s2;
+			P3[k] = 0.5f * c->os_a[k] * s - (10.0f * D[k] * s3 + 4.0f * c->os_v[k] * s2);
 		}
+		for (k = 0; k < OB_N; k++) {                                          /* 0x11c330: A at the next step */
+			float a = 6.0f * tn * P3[k] + 12.0f * tn * tn * P4[k] + 20.0f * tn * tn * tn * P5[k];
+			if (a > OB_A_LIMIT[k] || a < -OB_A_LIMIT[k]) snap = 1;
+			c->os_a[k] = a;
+		}
+		if (!snap) {
+			for (k = 0; k < OB_N; k++) {                                      /* 0x11c130: V at the next step, the offset e(t') */
+				c->os_v[k] = 3.0f * tn * tn * P3[k] + 4.0f * tn * tn * tn * P4[k] + 5.0f * tn * tn * tn * tn * P5[k];
+				e[k] = D[k] + tn * tn * tn * P3[k] + tn * tn * tn * tn * P4[k] + tn * tn * tn * tn * tn * P5[k];
+			}
+			for (k = 0; k < 3; k++) c->os_pos[k] += e[k];                     /* 0x11cda0 */
+			c->os_fov += e[3];
+			obs_rotate(c->os_fwd, c->os_up, e + 4);
+		}
+	} else snap = 1;
+	if (snap) {                                                              /* arrived: the target exactly */
+		for (k = 0; k < OB_N; k++) c->os_v[k] = c->os_a[k] = 0.0f;
+		for (k = 0; k < 3; k++) { c->os_pos[k] = c->to.pos[k]; c->os_fwd[k] = c->tgt_fwd[k]; c->os_up[k] = c->tgt_up[k]; }
+		c->os_fov = c->to.fov;
 	}
-	n = c->hist_n;
-	c->to = *to;
-	cine_ypr_to_quat(to->yaw, to->pitch, to->roll, c->qt);
-	c->hist_rel = (uint8_t)relative;
-	c->hist[0] = h[0];
-	c->hist[1] = n > 1 ? h[1] : h[0];
-	c->hist[2] = n > 2 ? h[2] : c->hist[1];
-	c->hist_n = 3;
-	memset(c->coef, 0, sizeof c->coef);
-	if (!ticks) return;
-	for (i = 0; i < 3; i++) pose_offset(&c->hist[i], to, c->qt, ch[i]);
-	for (k = 0; k < CAM_CH; k++) {
-		float D = ch[0][k], v = ch[0][k] - ch[1][k], a = ch[0][k] - 2.0f * ch[1][k] + ch[2][k];
-		float V = -v * T, A = a * T * T;                    /* d/ds and d2/ds2 at s = 1 */
-		c->coef[k][0] = 10.0f * D - 4.0f * V + 0.5f * A;
-		c->coef[k][1] = 7.0f * V - 15.0f * D - A;
-		c->coef[k][2] = 6.0f * D - 3.0f * V + 0.5f * A;
-	}
+	obs_orthonormalise(c->os_fwd, c->os_up);
+	c->os_fov = clampf(c->os_fov, 0.001f, 1.5707964f);                       /* 0x11d900 */
+}
+
+static void obs_from_pose(cine_camera *c, const cine_pose *p, int rel)
+{
+	int k;
+	for (k = 0; k < 3; k++) c->os_pos[k] = p->pos[k];
+	c->os_fov = p->fov;
+	pose_axes(p, c->os_fwd, c->os_up);
+	for (k = 0; k < OB_N; k++) c->os_v[k] = c->os_a[k] = 0.0f;
+	c->os_valid = 1; c->os_rel = (uint8_t)rel;
 }
 
 static void cam_eval(cine_camera *c)
 {
 	cine_pose t = c->to;
-	float s = c->ticks && c->elapsed < c->ticks ? (float)(c->ticks - c->elapsed) / (float)c->ticks : 0.0f, ch[CAM_CH], q[4], r[4];
 	int k;
-	for (k = 0; k < CAM_CH; k++) ch[k] = ((c->coef[k][2] * s + c->coef[k][1]) * s + c->coef[k][0]) * s * s * s;
-	for (k = 0; k < 3; k++) t.pos[k] = c->to.pos[k] + ch[k];
-	t.fov = c->to.fov + ch[6];
-	quat_exp(ch + 3, r);
-	quat_mul(r, c->qt, q);
-	cine_quat_to_ypr(q, &t.yaw, &t.pitch, &t.roll);
-	if (s == 0.0f) {                                        /* arrived: exactly the target, no Euler round trip */
-		t.yaw = c->to.yaw; t.pitch = c->to.pitch; t.roll = c->to.roll;
-	}
+	for (k = 0; k < 3; k++) t.pos[k] = c->os_pos[k];
+	t.fov = c->os_fov;
+	if (c->rem <= 0.0f && c->elapsed >= c->ticks) { t.yaw = c->to.yaw; t.pitch = c->to.pitch; t.roll = c->to.roll; }      /* arrived: exactly the target, no round trip */
+	else axes_to_ypr(c->os_fwd, c->os_up, &t.yaw, &t.pitch, &t.roll);
 	if (c->relative) cine_pose_compose(&t, &c->anchor, &c->cur);
 	else c->cur = t;
 	if (c->fov_active) c->cur.fov = lerpf(c->fov_from, c->fov_to, c->fov_ticks ? clampf((float)c->fov_elapsed / (float)c->fov_ticks, 0.0f, 1.0f) : 1.0f);
 	c->rel_cur = t;
 }
 
-static void cam_reset_history(cine_camera *c)
+/* the camera_set pass of the director (0x120eb0): the target, the seconds, and one observer update of 1e-4 s (0x38d1b717) */
+static void cam_retarget(cine_camera *c, uint32_t ticks, const cine_pose *to, int relative, const cine_frame *anchor)
 {
-	cine_ypr_to_quat(c->to.yaw, c->to.pitch, c->to.roll, c->qt);
-	c->hist[0] = c->hist[1] = c->hist[2] = c->rel_cur;
-	c->hist_n = 1;
-	c->hist_rel = c->relative;
-	memset(c->coef, 0, sizeof c->coef);
+	(void)anchor;
+	if (!c->os_valid || c->os_rel != (uint8_t)relative) obs_from_pose(c, &c->from, relative);
+	c->to = *to;
+	pose_axes(to, c->tgt_fwd, c->tgt_up);
+	c->rem = (float)ticks / (float)CINE_TICKS_PER_SECOND;
+	obs_update(c, c->rem, 1e-4f);
 }
 
 void cine_cam_init(cine_camera *c)
@@ -394,7 +469,8 @@ void cine_cam_control(cine_camera *c, int on)
 			c->relative = 0;
 			c->ticks = c->elapsed = 0;
 			c->from = c->to = c->cur = c->rel_cur = c->player;
-			cam_reset_history(c);
+			obs_from_pose(c, &c->player, 0);
+			pose_axes(&c->to, c->tgt_fwd, c->tgt_up);
 		}
 	} else {
 		c->control = 0;
@@ -409,6 +485,7 @@ static cine_pose cam_start_pose(const cine_camera *c) { return c->control && c->
 void cine_cam_set(cine_camera *c, const cine_pose *to, uint32_t ticks, int ease)
 {
 	cine_pose start = cam_start_pose(c);
+	if (!(c->control && c->mode == CINE_CAM_POSE)) c->os_valid = 0;               /* the observer starts from the camera the player had */
 	c->control = 1;
 	c->mode = CINE_CAM_POSE;
 	c->relative = 0;
@@ -419,12 +496,12 @@ void cine_cam_set(cine_camera *c, const cine_pose *to, uint32_t ticks, int ease)
 	c->elapsed = 0;
 	cam_retarget(c, ticks, to, 0, &c->anchor);
 	cam_eval(c);
-	if (!ticks) { c->hist_n = 1; cam_reset_history(c); }
 }
 
 void cine_cam_set_relative(cine_camera *c, const cine_pose *rel, uint32_t ticks, int ease, const cine_frame *anchor)
 {
 	cine_pose start = cam_start_pose(c);
+	if (!(c->control && c->mode == CINE_CAM_POSE)) c->os_valid = 0;
 	c->control = 1;
 	c->mode = CINE_CAM_POSE;
 	c->fov_active = 0;
@@ -436,7 +513,6 @@ void cine_cam_set_relative(cine_camera *c, const cine_pose *rel, uint32_t ticks,
 	c->elapsed = 0;
 	cam_retarget(c, ticks, rel, 1, anchor);
 	cam_eval(c);
-	if (!ticks) cam_reset_history(c);
 }
 
 void cine_cam_set_anchor(cine_camera *c, const cine_frame *anchor)
@@ -476,11 +552,8 @@ void cine_cam_tick(cine_camera *c)
 	if (!c->control || c->mode != CINE_CAM_POSE) return;
 	if (c->elapsed < c->ticks) c->elapsed++;
 	if (c->fov_active && c->fov_elapsed < c->fov_ticks) c->fov_elapsed++;
+	{ float dt = 1.0f / (float)CINE_TICKS_PER_SECOND; obs_update(c, c->rem, dt); c->rem = c->rem - dt > 0.0f ? c->rem - dt : 0.0f; }
 	cam_eval(c);
-	c->hist[2] = c->hist[1];
-	c->hist[1] = c->hist[0];
-	c->hist[0] = c->rel_cur;
-	if (c->hist_n < 3) c->hist_n++;
 }
 
 uint32_t cine_cam_time(const cine_camera *c)

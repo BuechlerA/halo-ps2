@@ -260,12 +260,12 @@ static int check_camera(void)
 	CHECK(c.control && c.mode == CINE_CAM_POSE && cine_cam_pose(&c).pos[0] == 1.0f);
 	/* from rest: Halo's observer, a quintic (minimum jerk) with no velocity at either end */
 	cine_cam_set(&c, &t, 30, CINE_EASE_LINEAR);
-	CHECK(cine_cam_time(&c) == 30 && cine_cam_pose(&c).pos[0] == 1.0f);
+	CHECK(cine_cam_time(&c) == 30 && near(cine_cam_pose(&c).pos[0], 1.0f, 1e-5f));     /* camera_set runs one observer update of 1e-4 s (XBE 0x120eb0) */
 	for (i = 1; i <= 30; i++) {
 		cine_cam_tick(&c);
 		now = cine_cam_pose(&c);
 		float sr = (float)(30 - i) / 30.0f;
-		CHECK(near(now.pos[0], 11.0f - 10.0f * (10.0f * sr * sr * sr - 15.0f * sr * sr * sr * sr + 6.0f * sr * sr * sr * sr * sr), 1e-3f) && cine_cam_time(&c) == 30 - i);
+		CHECK(near(now.pos[0], 11.0f - 10.0f * (10.0f * sr * sr * sr - 15.0f * sr * sr * sr * sr + 6.0f * sr * sr * sr * sr * sr), 3e-3f) && cine_cam_time(&c) == 30 - i);   /* the update of 1e-4 s at camera_set shifts the curve by 1e-4 of the distance */
 	}
 	CHECK(now.pos[0] == 11.0f && near(now.yaw, 0.5f, 1e-6f));
 	cine_cam_tick(&c);
@@ -291,7 +291,7 @@ static int check_camera(void)
 	cine_cam_set(&c, &p0, 20, CINE_EASE_LINEAR);
 	for (i = 0; i < 10; i++) cine_cam_tick(&c);
 	cine_cam_set(&c, &t, 10, CINE_EASE_LINEAR);
-	CHECK(near(cine_cam_pose(&c).pos[0], 6.0f, 1e-4f));
+	CHECK(near(cine_cam_pose(&c).pos[0], 6.0f, 1e-2f));                 /* plus the 1e-4 s observer update of camera_set */
 	/* a retarget in mid flight keeps the velocity and the acceleration: no kink in the speed */
 	{
 		cine_pose far = p0, back = p0;

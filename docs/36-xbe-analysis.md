@@ -26,6 +26,18 @@ converters and the engine can follow it.
   The full per-pass assignment of textures to stages was not completed: the programs are parametric (stores through registers), which `defs.py` handles only
   partly.
 
+## The camera (analysis of 2026-10-23, ADR-084)
+* `camera_set` of a scenario camera point (0x120eb0): the 0x68 byte point is read at +0x28 position, +0x34 yaw, +0x38 pitch, +0x3c roll, +0x40 field of view (0 = 70 degrees);
+  the angles go through `euler_angles3d_to_matrix` (0xb67f0, rows `forward = (c1c2, s1c3 - s2s3c1, s1s3 + s2c3c1)`, `left = (-s1c2, c1c3 + s2s3s1, c1s3 - s2c3s1)`, `up = (-s2, -c2s3, c2c3)`
+  for yaw `1`, pitch `2`, roll `3`) and the director keeps position, forward (row 0) and up (row 2). The seconds are `ticks / 30` by integer division. The call ends with an observer update of 1e-4 s.
+* The observer (0x11dd30 per player: 0x11c760 copies the director's record, 0x11d2d0 runs 0x11cb10 / 0x11c500 / 0x11c330 / 0x11c130 / 0x11cda0, 0x11d900 adds the focus / distance and the
+  collision) has the channels position 3, focus 3, distance 1, field of view 1 and orientation (forward + up as the state, a rotation vector as the offset). Every update refits a quintic
+  `e(t) = c3 t^3 + c4 t^4 + c5 t^5` of the offset in the remaining time with the velocity and acceleration of the previous fit (kept analytically in 0x2715c4 / 0x2715fc) and moves the state by
+  `D + e(t - dt)`; the orientation channel rotates forward and up about the rotation vector (0x11ca50). A fit whose acceleration exceeds 1500 (positions) or 1e5 snaps the camera.
+* The projection (0x5c5e0): `1 / tan(fov / 2)` scales the vertical axis, `height / (width tan(fov / 2))` the horizontal one: the field of view is the *vertical* one of the window rectangle.
+  Against the Xbox video the engine's 4:3 buffer with 70 degrees horizontal still correlates best (ADR-073, rechecked in ADR-084: mean 0.63 against 0.43 / 0.53 / 0.41 for the other
+  `widescreen` modes), so the rectangle the cinematic uses is not established.
+
 ## Not found / still open
 * The vertex shader's lighting model for objects (ambient + lights), the exact `V0` for BSP surfaces, the glow / bloom of additive materials, the lens-flare and sun-glow
   passes (`rasterizer_sun_glow_*` exist), the second pass of the model shader for the Cortana hologram's multi-stage `sotr` programs.

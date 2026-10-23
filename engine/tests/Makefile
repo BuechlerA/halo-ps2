@@ -124,6 +124,8 @@ cine: $(CINE_REAL) $(PYTESTS)/test_cinconv.py ../../tools/halo2ps2/cinconv.py
 	$(HOST_TMP)/test_cinedef $(HOST_TMP)/halo-cine.hp2 $(CINE_REAL)
 	cc $(CFLAGS) test_cine.c ../src/sim/cine.c ../src/world/cinedef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_cine
 	$(HOST_TMP)/test_cine $(HOST_TMP)/halo-cine.hp2 $(CINE_REAL)
+	cc $(CFLAGS) test_cine_observer.c ../src/sim/cine.c ../src/world/cinedef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_cine_observer
+	$(HOST_TMP)/test_cine_observer
 
 $(HOST_TMP)/halo-cine-%.hp2: ../../assets/decompressed/%.map ../../tools/halo2ps2/cinconv.py
 	python3 -I ../../tools/halo2ps2/cinconv.py $< -o $@ > /dev/null
