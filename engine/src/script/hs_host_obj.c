@@ -1600,6 +1600,7 @@ BI(effect_new)
 	ENTER(effect_new);
 	if (!M->fx || !flag_arg(M, A(1), &f)) return 0;
 	dir[0] = cosf(f.pitch) * cosf(f.yaw); dir[1] = cosf(f.pitch) * sinf(f.yaw); dir[2] = sinf(f.pitch);
+	if (M->log_anim) printf("[anim] t%u effect_new %08x at %.1f %.1f %.1f\n", (unsigned)M->tick, (unsigned)A(0)->v.h, f.pos[0], f.pos[1], f.pos[2]);
 	fx_spawn(M->fx, A(0)->v.h, f.pos, dir, 0);
 	return 0;
 }
@@ -1615,6 +1616,7 @@ BI(effect_new_on_object_marker)
 	if (!marker_world(M, &M->objects->obj[slot], marker_index(M, &M->objects->obj[slot], str_arg(hm, A(2))), &w)) w = M->objects->obj[slot].root;
 	pos[0] = w.m[3][0]; pos[1] = w.m[3][1]; pos[2] = w.m[3][2];
 	dir[0] = w.m[0][0]; dir[1] = w.m[0][1]; dir[2] = w.m[0][2];
+	if (M->log_anim) printf("[anim] t%u effect_new_on_object_marker %08x at %.1f %.1f %.1f\n", (unsigned)M->tick, (unsigned)A(0)->v.h, pos[0], pos[1], pos[2]);
 	fx_spawn(M->fx, A(0)->v.h, pos, dir, 0);
 	return 0;
 }

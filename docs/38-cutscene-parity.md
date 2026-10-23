@@ -45,6 +45,10 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
     and berserk scripts at 7554, the red-lit fight room with dead marines (7820), the marines running at the camera (8300). Paths differ (the bot walks its own route, died once and reverted at 7940), the corridors are lit
     more brightly than the video's (the known colour grade), and the Xbox shows `Loading...` while streaming a BSP: ours shows `Loading... done` after its blocking load.
 
+14. **Explosions** (`animlog 1` prints `effect_new` with tick and place): the corridor explosion of the video (7697) corresponds to our `effect_new e92707b3` x3 at 7600 .. 7620 near (-50, -13) (and again at 7746 .. 7766
+    after the bot's revert) and a second kind (`ed2a0bb6`) at 7620 / 7665 / 7829 / 8401. Rendered (ticks 7604 .. 7670) ours shows two small orange flames and grey smoke puffs at the crates and a body on the floor where the video
+    has a large fireball with a silhouetted body thrown through it: the particle effect is much smaller than the Xbox's (open: the fx particle fidelity, not the hand-off).
+
 ## Open (see ADR-081 .. 085)
 The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's exact convolution kernel (a sprite blur and a veil stand in, ADR-085), the scorpions' colour, the ship hum, the title-safe
 margins of the Xbox view (we fill the whole buffer), the `camera_ticks` durations (the director divides ticks by 30 as an integer).
