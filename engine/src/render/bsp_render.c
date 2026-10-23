@@ -977,6 +977,9 @@ u64  rb_take_pending(void) { return take_pending(); }
 void rb_set_pending(u64 pair) { s_pending = pair; }
 u32  rb_model_entry(void) { return entry_addr(&VU1Model_Entry); }
 const u32 *rb_zbuf_page_ptr(void) { return &s_zbuf_page; }
+static u32 s_blur_target;
+void bsp_render_set_blur_target(u32 fb_word_address) { s_blur_target = fb_word_address; }
+u32 rb_blur_target(void) { return s_blur_target; }
 
 void rb_fog_params(float *k, float *b)
 {

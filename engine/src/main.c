@@ -950,6 +950,7 @@ int main(int argc, char *argv[])
 				}
 			}
 			if (s_hires_open || s_bhires_open) hires_ring_begin_frame(&s_hring);
+			bsp_render_set_blur_target(s_video.fb[s_video.back ^ 1].address);     /* build overlaps the GS drawing the other buffer; the kick after the flip draws into this one */
 			bsp_render_build(frame, &rcam, &s_text);           /* overlaps the GS drawing frame-1 */
 		}
 		t1 = timer_cycles();

@@ -2,6 +2,7 @@
 #include "render/hud_render.h"
 #include "platform/timer.h"
 #include "platform/video.h"
+#include "render/gs.h"
 #include <string.h>
 
 static void prefetch_tex(hud_render_t *h, unsigned tex, int pin)
@@ -106,6 +107,16 @@ void hud_render_pass(void *user, render_ctx_t *rc)
 			if (!tex0) continue;
 			spr_state(&spr, tex0, SPR_BLEND_ALPHA, 0);
 			spr_quad(&spr, q->x0 * sx, q->y0 * sy, q->x1 * sx, q->y1 * sy, (float)q->u0, (float)q->v0, (float)q->u1, (float)q->v1, 0xFFFFFFu, q->rgba);
+		}
+		if (cs->screen.veil > 0.0f && rb_blur_target()) {   /* the tutorial pod's blur (XBE convolution 10 -> 0.001 over 5 s): four offset copies of the picture drawn so far, read back from the colour buffer */
+			static const float dx[4] = { -1.0f, 1.0f, 0.0f, 0.0f }, dy[4] = { 0.0f, 0.0f, -1.0f, 1.0f };
+			static const unsigned al[4] = { 64u, 43u, 32u, 26u };
+			float d = 1.0f + 5.0f * cs->screen.veil;
+			u64 tex0 = GS_TEX0(rb_blur_target() / 64u, VIDEO_WIDTH / 64u, GS_PSMCT16S, 9, 9, 0, 0, 0, 0, 0, 0, 0);
+			unsigned k;
+			spr_state(&spr, tex0, SPR_BLEND_ALPHA, 0);
+			for (k = 0; k < 4; k++)
+				spr_quad(&spr, 0.0f, 0.0f, (float)VIDEO_WIDTH, (float)VIDEO_HEIGHT, dx[k] * d, dy[k] * d, (float)VIDEO_WIDTH + dx[k] * d, (float)VIDEO_HEIGHT + dy[k] * d, 0xFFFFFFu, 0x00808080u | al[k] << 24);
 		}
 		if (cs->screen.veil > 0.0f) {                  /* the tutorial pod's blurred, washed-out sight (cinematic_screen_effect_set_filter): a pale wash over the 3D view and the HUD */
 			unsigned a = (unsigned)(cs->screen.veil * 70.0f);

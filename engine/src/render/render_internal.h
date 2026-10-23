@@ -35,5 +35,8 @@ void rb_fog_params(float *k, float *b);
 /* VU1 entry address (MSCAL operand) of the model program. */
 u32  rb_model_entry(void);
 const u32 *rb_zbuf_page_ptr(void);
+/* VRAM word address of the colour buffer the frame being built will be drawn into (set by the host before bsp_render_build; 0 = unknown): the tutorial's blur reads it back as a texture. */
+void bsp_render_set_blur_target(u32 fb_word_address);
+u32  rb_blur_target(void);
 
 #endif

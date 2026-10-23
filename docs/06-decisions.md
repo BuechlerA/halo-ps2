@@ -987,7 +987,11 @@ only in the pause menu: the Xbox shows the help line), the line is `»` (Latin-1
 needs a grenade now, and the empty-handed default weapon HUD draws its crosshair only (no ammo statics). The `hud_state_t.hidden` bits written for the tutorial had not reached the bar, meter and tracker loops (a patch of
 `ui/hud.c` that silently did not apply): now they do, and the tutorial starts with no HUD at all, as `tutorial_setup` asks (checked: ticks 6900 .. 7700 of a normal difficulty run show only the help text).
 Still different: the tracker (a grey ring where the Xbox has a blue glowing disc) and the player's movement (the bot off stands still, the video walks).
-**Not done**: the real convolution and desaturation of the tutorial's first sight (the veil is a flat pale wash: a framebuffer blur on the PS2 would need a readback pass whose GS cost cannot be measured in PCSX2, ADR-022).
+**Tutorial blur (third pass)**: while the filter's veil is up the overlay pass also draws four copies of the picture offset by 1 .. 6 pixels (alpha 0.5, 0.33, 0.25, 0.2), reading the colour buffer back as a PSMCT16S 512 x 512 texture
+(`bsp_render_set_blur_target`: the frame being built is drawn into `fb[back ^ 1]`, because the kick comes after the flip). The offset follows the filter pair, `1 + 5 x veil`, so the pod's first sight starts blurred and washed out and
+is sharp after 5 s (ticks 6700 .. 6860 of a normal difficulty run). It is an approximation of the executable's convolution (10 -> 0.001 over the same 5 s) built from sprites, checked on PCSX2 only (ADR-022): reading the buffer being
+drawn is a GS hazard whose behaviour on a console is a Phase 6 check.
+**Not done**: reproducing the executable's own convolution kernel and desaturation exactly, matching any gameplay of the video beyond the first seconds (a person steers it), the pause menu.
 **Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
 exit and release of the player body.
 
