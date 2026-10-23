@@ -68,6 +68,7 @@ typedef struct {
 	uint32_t weapon_fp_model_tag, weapon_fp_anim_tag;
 	uint32_t biped_def;                /* definition index + 1 of the player's biped (Master Chief), 0 = none */
 	uint16_t arms_idle_anim, weapon_idle_anim;   /* animation indices (SCEN_NO_ANIM = none) */
+	uint16_t weapon_loaded, weapon_total;        /* rounds the starting profile that gives the weapon loads / carries (0 0: the weapon's own defaults; packs before ADR-085 have zeros) */
 	char     weapon_hand_marker[SCEN_NAME_LEN];  /* marker on the arms' model the weapon attaches to */
 	float    fp_offset[3];             /* camera-space offset (x right, y up, z forward) of the arms origin */
 } scen_player;

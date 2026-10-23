@@ -284,6 +284,28 @@ static void test_player_stand_in(void)
 	CHECK(fabsf(F.game.player.pos[0] - pos[0]) < 1e-3f && fabsf(F.game.player.pos[1] - pos[1]) < 1e-3f);
 }
 
+/* An unarmed start hands the pistol out with the starting profile's ammunition when the script asks (player_add_equipment, a10's bridge0_profile: 6 + 48) */
+static void test_player_equipment(void)
+{
+	scen_player pl;
+	int slot = -1;
+	fresh(42, 0);
+	pl = scen_get_player(F.mission.ow.scen);
+	game_drop_weapons(&F.game);
+	CHECK(F.game.cur < 0 && F.game.unarmed_start);
+	call3("player_add_equipment", HS_VOID, mfix_obj(F.mission.player_obj), mfix_handle(3, 19), mfix_bool(0));
+	CHECK(F.game.cur >= 0 && F.game.slot[F.game.cur].weapon >= 0);
+	if (F.game.cur >= 0) {
+		const game_slot_t *sl = &F.game.slot[F.game.cur];
+		if (pl.weapon_total) CHECK(sl->st.loaded[0] == pl.weapon_loaded && sl->st.reserve[0] == pl.weapon_total);        /* packs built before ADR-085 carry no ammunition: the weapon's own */
+		else CHECK(sl->st.loaded[0] == sl->def.magazine[0].rounds_loaded_max);
+		slot = F.game.cur;
+	}
+	call3("player_add_equipment", HS_VOID, mfix_obj(F.mission.player_obj), mfix_handle(3, 19), mfix_bool(0));          /* already armed: nothing changes */
+	CHECK(F.game.cur == slot);
+	printf("  player_add_equipment: pistol with %u loaded + %u reserve (pack profile: %u + %u)\n", slot >= 0 ? (unsigned)F.game.slot[slot].st.loaded[0] : 0u, slot >= 0 ? (unsigned)F.game.slot[slot].st.reserve[0] : 0u, (unsigned)pl.weapon_loaded, (unsigned)pl.weapon_total);
+}
+
 static void test_volumes(void)
 {
 	unsigned vi, tested = 0;
@@ -1329,6 +1351,7 @@ int main(int argc, char **argv)
 	test_create_destroy();
 	test_teleport();
 	test_player_stand_in();
+	test_player_equipment();
 	test_volumes();
 	test_attach();
 	test_sight();

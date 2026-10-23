@@ -220,6 +220,8 @@ class Player:
     biped_tag: int = 0                   # object tag id of the player biped (-> biped_def)
     arms_idle_anim: int = NO_ANIM
     weapon_idle_anim: int = NO_ANIM
+    weapon_loaded: int = 0               # rounds loaded / in reserve the starting profile gives the weapon (0 0 = the weapon's own defaults)
+    weapon_total: int = 0
     weapon_hand_marker: str = ""
     fp_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     weapon_def: int = 0                  # def index + 1 (set when the section is built)
@@ -426,6 +428,7 @@ def read_player(r: Region, dt: DefTable, problems: list[str]) -> Player:
                 g, tid = r.tagref(o + i * PROFILE_REC + off)
                 if g == "weap" and r.entry(tid):
                     weapon = tid
+                    p.weapon_loaded, p.weapon_total = r.u("<2H", o + i * PROFILE_REC + (0x38 if off == 0x28 else 0x4C))     # a10: bridge0_profile gives the pistol 6 + 48
                     break
             if weapon:
                 break
@@ -732,7 +735,7 @@ HEADER_FMT = "<4sHHIIIIIIIIII"      # magic, version, reserved, size, defs, plac
 DEF_FMT = "<IIIBBH32sf12x"
 PLACEMENT_FMT = "<HHI3f3f16shH12x"
 LIGHT_FMT = "<3Bx3Bx3hxx"
-PLAYER_FMT = "<6IHH3f32s8x"
+PLAYER_FMT = "<6IHH3f32sHH4x"
 for _f, _n in ((DEF_FMT, DEF_REC), (PLACEMENT_FMT, PLACEMENT_REC), (LIGHT_FMT, LIGHT_REC), (PLAYER_FMT, PLAYER_REC)):
     assert struct.calcsize(_f) == _n, (_f, struct.calcsize(_f), _n)
 assert struct.calcsize(HEADER_FMT) <= HEADER_SIZE
@@ -792,7 +795,7 @@ def build(defs: list[Def], placements: list[Placement], player: Player,
     out += struct.pack(PLAYER_FMT, player.fp_arms_model_tag, player.fp_arms_anim_tag, player.weapon_def,
                        player.weapon_fp_model_tag, player.weapon_fp_anim_tag, player.biped_def,
                        player.arms_idle_anim, player.weapon_idle_anim, *player.fp_offset,
-                       _str(player.weapon_hand_marker, NAME_LEN))
+                       _str(player.weapon_hand_marker, NAME_LEN), player.weapon_loaded, player.weapon_total)
     _pad16(out)
     per_type = [0] * 10
     for p in placements:
@@ -852,7 +855,8 @@ def parse_section(data: bytes) -> Section:
     pv = struct.unpack_from(PLAYER_FMT, data, o_pla)
     player = dict(fp_arms_model_tag=pv[0], fp_arms_anim_tag=pv[1], weapon_def=pv[2], weapon_fp_model_tag=pv[3],
                   weapon_fp_anim_tag=pv[4], biped_def=pv[5], arms_idle_anim=pv[6], weapon_idle_anim=pv[7],
-                  fp_offset=pv[8:11], weapon_hand_marker=pv[11].split(b"\0", 1)[0].decode("latin1"))
+                  fp_offset=pv[8:11], weapon_hand_marker=pv[11].split(b"\0", 1)[0].decode("latin1"),
+                  weapon_loaded=pv[12], weapon_total=pv[13])
     return Section(size, defs, pls, lights, player, list(struct.unpack_from("<10I", data, 0x38)))
 
 

@@ -51,7 +51,7 @@ probes, `bsp_filter`; a cluster past the table): ambient 64, sun 64 (both 0.5), 
 
 **Player, 80 B**: `u32 fp_arms_model_tag, fp_arms_anim_tag, weapon_def, weapon_fp_model_tag, weapon_fp_anim_tag,
 biped_def` (`*_def` = def index + 1, 0 none), `u16 arms_idle_anim, weapon_idle_anim`, `f32 fp_offset[3]`,
-`char[32] weapon_hand_marker`, 8 reserved.
+`char[32] weapon_hand_marker`, `u16 weapon_loaded`, `u16 weapon_total` (the rounds the starting profile that gives the default weapon loads / carries, 0 0 = none; ADR-085), 4 reserved.
 
 ## Reader validation (`scen_open`)
 Size field (`SCEN_ERR_TRUNCATED` if larger than the buffer, `SCEN_ERR_LAYOUT` if smaller), signature

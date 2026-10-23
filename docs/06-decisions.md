@@ -966,8 +966,15 @@ stand-in for the Xbox's blur and desaturation of the pod's first sight, not a co
 `bot 0`): seated at 6680, the HUD pieces appear as `tutorial_*` shows them, the exit cinematic runs 7802 .. 8067 (`CT-driver exit` seen from the camera points, white fade), the player appears at flag 14
 (-55.08, 0.54, yaw -1.64) in control with empty hands.
 **Mission bot**: with empty hands the bot used to walk to the nearest weapon lying about; on a10 that is an unreachable ledge pickup (the bot stood still for 700 s), so `game_t.unarmed_start` turns the hunt off (the script gives the pistol at volume 85). The gate run then matches the armed run until the frame cap (BSP 1 at 441-461 s, 19 assists, 7 rescues; the run is capped at 21700 frames, `won 0`).
-**Not done**: the real convolution / desaturation of the tutorial's first sight, the pod's glass in first person (not verified: nothing in the video shows that view), the profile table (grenade counts,
-ammo of `bridge0_profile`).
+**Starting profile ammunition**: the profile table is read as far as the player needs it: `scenconv.read_player` keeps the rounds loaded / carried of the profile that gives the default weapon
+(a10: `bridge0_profile`, the pistol with 6 + 48, where the weapon's own defaults are 12 + 100) in the SCEN player record's reserved bytes (+72, +74; no version change, old packs read 0 0 = the weapon's defaults) and
+`player_add_equipment (player0)` applies them (`scen_player.weapon_loaded / weapon_total`). Rebuild the object pack (`scripts/build-world.sh a10`, or `objpack.py` alone) to get them. a10's profiles give no
+grenades (all counts are 0), the engine keeps its 2 + 2.
+**Checked**: host test `test_player_equipment` (drop the weapons, `player_add_equipment`: the pistol with 6 + 48; again: unchanged). The call is made by `mission_shoot`, which `mission_a10` wakes only after the bridge
+cutscene (`$mark_bridge_cutscene`), so the mission bot (capped at 21700 frames, BSP 1 at 441 s) does not get there: the hand-over is checked at the built-in, not inside a full playthrough. From the closed pod's eye
+position (cinematic camera locked there with `camlock -56.41 0.41 1.04 0 0`, tick 6980) the pod's glass shows as a haze over the room: it is drawn from inside.
+**Not done**: the real convolution and desaturation of the tutorial's first sight (the veil is a flat pale wash: a framebuffer blur on the PS2 would need a readback pass whose GS cost cannot be measured in PCSX2, ADR-022), a
+full playthrough to the end of the level (the bot does not finish it with or without these changes).
 **Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
 exit and release of the player body.
 

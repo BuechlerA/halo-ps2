@@ -1474,10 +1474,20 @@ BI(player_action_test_look_relative_all_directions)
 BI(player0_joystick_set_is_normal) { ENTER(player0_joystick_set_is_normal); ret_bool(r, !M->hobj.joystick_not_normal); return 0; }
 BI(player0_look_invert_pitch) { ENTER(player0_look_invert_pitch); M->hobj.pitch_inverted = argb(A(0)); return 0; }
 BI(player0_look_pitch_is_inverted) { ENTER(player0_look_pitch_is_inverted); ret_bool(r, M->hobj.pitch_inverted); return 0; }
-BI(player_add_equipment)      /* starting profiles are not in SCEN: player0 gets the biped's default weapons if his hands are empty (a10's bridge0_profile is the pistol) */
+BI(player_add_equipment)      /* player0 gets the default weapon (the first weapon any starting profile gives: a10's bridge0_profile, the pistol) with that profile's ammunition, if his hands are empty */
 {
 	ENTER(player_add_equipment);
-	if (M->game && is_player(M, obj_arg(M, A(0), 0))) game_give_default_weapons(M->game);
+	if (M->game && is_player(M, obj_arg(M, A(0), 0))) {
+		scen_player pl = scen_get_player(M->ow.scen);
+		int armed = 0, i;
+		for (i = 0; i < GAME_SLOTS; i++) if (M->game->slot[i].weapon >= 0) armed = 1;
+		game_give_default_weapons(M->game);
+		if (!armed && pl.weapon_total && M->game->cur >= 0) {            /* the profile's own ammunition (bridge0_profile: the pistol with 6 + 48) */
+			game_slot_t *sl = &M->game->slot[M->game->cur];
+			if (sl->def.magazine_count) weapon_state_set_ammo(&sl->st, &sl->def, 0, pl.weapon_loaded, pl.weapon_total);
+		}
+		if (M->log_anim) printf("[anim] t%u player_add_equipment: %s, weapon slot %d, profile ammo %u + %u\n", (unsigned)M->tick, armed ? "already armed" : "hands were empty", M->game->cur, (unsigned)pl.weapon_loaded, (unsigned)pl.weapon_total);
+	}
 	return 0;
 }
 BI(players_unzoom_all) { ENTER(players_unzoom_all); if (M->game) M->game->zoomed = 0; return 0; }
