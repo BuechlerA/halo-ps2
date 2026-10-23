@@ -983,8 +983,10 @@ weapon. (2) The HUD text (help line `» Find Captain Keyes on the Bridge`, `Chec
 pages) found no free run in the texture window (`TC_FULL`, free pages 11 but scattered) for hundreds of frames; the font is now claimed early in the frame (`hud_render_prefetch`, called from the sky pass) and pinned
 (`tc_entry.pinned`, `rb_extra_tex0_pinned`), and the other HUD sprites are touched early too. (3) The text is the HUD's pale blue (white was invisible against the bright wall), the objective is not drawn on the HUD (it is
 only in the pause menu: the Xbox shows the help line), the line is `»` (Latin-1 0xBB, was `?`), and the checkpoint message is the tag data's own `Checkpoint... done`, shown under the help line for 150 ticks.
-Still different: the layout of the HUD itself (ours has a second small bar at the top left and a grey tracker ring where the Xbox has the shield and health bars together at the top right and a blue tracker disc), and the
-player's movement (the bot off stands still, the video walks).
+(4) The HUD itself: the extra bar at the top left was the grenade HUD drawn with zero grenades (the Xbox's first minutes show only the shield / health widget at the top right and a small crosshair), so the grenade HUD
+needs a grenade now, and the empty-handed default weapon HUD draws its crosshair only (no ammo statics). The `hud_state_t.hidden` bits written for the tutorial had not reached the bar, meter and tracker loops (a patch of
+`ui/hud.c` that silently did not apply): now they do, and the tutorial starts with no HUD at all, as `tutorial_setup` asks (checked: ticks 6900 .. 7700 of a normal difficulty run show only the help text).
+Still different: the tracker (a grey ring where the Xbox has a blue glowing disc) and the player's movement (the bot off stands still, the video walks).
 **Not done**: the real convolution and desaturation of the tutorial's first sight (the veil is a flat pale wash: a framebuffer blur on the PS2 would need a readback pass whose GS cost cannot be measured in PCSX2, ADR-022).
 **Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
 exit and release of the player body.

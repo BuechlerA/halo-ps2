@@ -149,7 +149,7 @@ static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hu
 		loaded = sl->st.loaded[mag]; reserve = sl->st.reserve[mag]; heat = sl->st.heat;
 	}
 	low_ammo = (h.loaded_ammo_cutoff && loaded <= h.loaded_ammo_cutoff) || (h.total_ammo_cutoff && reserve <= h.total_ammo_cutoff);
-	for (i = 0; i < h.elem_count; i++) {
+	for (i = 0; (sl && sl->weapon >= 0) && i < h.elem_count; i++) {          /* empty hands: no ammo statics (the default HUD's left bar), only the crosshair below */
 		huddef_elem e = huddef_get_elem(s, (uint32_t)h.elem_first + i);
 		uint32_t col;
 		/* statics and overlay sub elements (the "x" and clip icon after the ammo count are the latter) */
@@ -184,7 +184,7 @@ static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hu
 		draw_number(f, s, &gl, &n, v, col);
 	}
 	/* crosshair: the zoom reticle when zoomed, else the aim reticle */
-	if (depth == 0 && sl && sl->weapon >= 0) {
+	if (depth == 0 && !(hidden & HUD_HIDE_CROSSHAIR)) {
 		huddef_crosshair c;
 		uint32_t type = g->zoomed ? HUDDEF_X_ZOOM : HUDDEF_X_AIM;
 		if (!huddef_find_crosshair(s, hud_tag, type, &c) && type != HUDDEF_X_AIM) { type = HUDDEF_X_AIM; huddef_find_crosshair(s, hud_tag, type, &c); }
@@ -263,10 +263,13 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 			int have_sensor = 0;
 			for (i = 0; i < h.elem_count; i++) {
 				huddef_elem e = huddef_get_elem(s, (uint32_t)h.elem_first + i);
-				if (e.role == HUDDEF_R_HUD_BG || e.role == HUDDEF_R_SHIELD_BG || e.role == HUDDEF_R_HEALTH_BG || e.role == HUDDEF_R_MOTION_BG ||
-				    e.role == HUDDEF_R_MOTION_FG)
+				int hide = (e.role == HUDDEF_R_SHIELD_BG && (hidden & HUD_HIDE_SHIELD)) || (e.role == HUDDEF_R_HEALTH_BG && (hidden & HUD_HIDE_HEALTH)) ||
+				           ((e.role == HUDDEF_R_MOTION_BG || e.role == HUDDEF_R_MOTION_FG) && (hidden & HUD_HIDE_MOTION)) ||
+				           (e.role == HUDDEF_R_HUD_BG && (hidden & (HUD_HIDE_SHIELD | HUD_HIDE_HEALTH)) == (HUD_HIDE_SHIELD | HUD_HIDE_HEALTH));
+				if (!hide && (e.role == HUDDEF_R_HUD_BG || e.role == HUDDEF_R_SHIELD_BG || e.role == HUDDEF_R_HEALTH_BG || e.role == HUDDEF_R_MOTION_BG ||
+				    e.role == HUDDEF_R_MOTION_FG))
 					draw_elem(f, s, &e, e.colour ? e.colour : 0x80808080u, tick);
-				if (e.role == HUDDEF_R_MOTION_BG && e.sprite != HUDDEF_NONE) have_sensor = 1;
+				if (e.role == HUDDEF_R_MOTION_BG && e.sprite != HUDDEF_NONE && !(hidden & HUD_HIDE_MOTION)) have_sensor = 1;
 				if (e.role == HUDDEF_R_MOTION_CENTER) {   /* radar centre; the centre's distance from the sensor corner is the radar radius */
 					int ox = e.off_x < 0 ? -e.off_x : e.off_x, oy = e.off_y < 0 ? -e.off_y : e.off_y;
 					cx = (float)e.x; cy = (float)e.y; radius = (float)(ox < oy ? ox : oy);
@@ -274,8 +277,8 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 			}
 			for (i = 0; i < h.meter_count; i++) {
 				huddef_meter m = huddef_get_meter(s, (uint32_t)h.meter_first + i);
-				if (m.role == HUDDEF_M_SHIELD) draw_meter(f, s, &m, shield, tick, shield < 0.25f && shield > 0.0f);
-				else if (m.role == HUDDEF_M_HEALTH) draw_meter(f, s, &m, health, tick, health < 0.25f);
+				if (m.role == HUDDEF_M_SHIELD && !(hidden & HUD_HIDE_SHIELD)) draw_meter(f, s, &m, shield, tick, shield < 0.25f && shield > 0.0f);
+				else if (m.role == HUDDEF_M_HEALTH && !(hidden & HUD_HIDE_HEALTH)) draw_meter(f, s, &m, health, tick, health < 0.25f);
 			}
 			if (have_sensor) draw_blips(f, s, &gl, g, cx, cy, radius);
 		}
@@ -289,7 +292,7 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 		if (wt && !all) draw_weapon_hud(f, s, wt, g, tick, 0, hidden);
 	}
 	/* grenades */
-	if (!all && huddef_find_link(s, HUDDEF_L_GRENADE, (uint32_t)g->grenade_type, 0, &tag)) {
+	if (!all && (g->grenades[0] || g->grenades[1]) && huddef_find_link(s, HUDDEF_L_GRENADE, (uint32_t)g->grenade_type, 0, &tag)) {         /* no grenades, no grenade HUD (the Xbox's first minutes show nothing at the top left) */
 		int hi = huddef_find_hud(s, tag);
 		if (hi >= 0) {
 			huddef_hud h = huddef_get_hud(s, (uint32_t)hi);

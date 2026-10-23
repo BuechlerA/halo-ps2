@@ -40,5 +40,5 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
 12. A HUD element that is "missing" may only have failed to get texture pages: the overlay pass runs after the world, the 8-page font needs a contiguous run, and scattered free pages do not count (ADR-085, pinned font).
 
 ## Open (see ADR-081 .. 085)
-The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's real blur filter (a veil stands in), the HUD layout against the video's (two bars top left / grey tracker vs shield and health top right and a blue tracker disc), the scorpions' colour, the ship hum, the title-safe
+The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's real blur filter (a veil stands in), the motion tracker's look (grey ring vs the video's blue glowing disc), the scorpions' colour, the ship hum, the title-safe
 margins of the Xbox view (we fill the whole buffer), the `camera_ticks` durations (the director divides ticks by 30 as an integer).
