@@ -863,6 +863,8 @@ int main(int argc, char *argv[])
 					cine_pose cp = cine_cam_pose(&cs->cam);
 					cine_pose_to_camera(&cp, &s_cam);
 					s_cam.pitch += (float)cfg_int(&s_cfg, "campitch", 0) * 0.01745329f;                  /* debug */
+					{ float cl[5]; if (cfg_floats(&s_cfg, "camlock", cl, 5) == 5) {      /* debug (cfg camlock x y z yaw pitch, degrees): the cinematic camera stays where this says, to look at a scene from outside the shot */
+						s_cam.pos[0] = cl[0]; s_cam.pos[1] = cl[1]; s_cam.pos[2] = cl[2]; s_cam.yaw = cl[3] * 0.01745329f; s_cam.pitch = cl[4] * 0.01745329f; s_cam.roll = 0.0f; } }
 					{ int cperm = (int)cfg_int(&s_cfg, "camperm", 0);                       /* debug: try other angle conventions for cutscene cameras */
 					  if (cperm) { float y = s_cam.yaw, pi = s_cam.pitch, ro = s_cam.roll;
 						if (cperm & 4) { float t = pi; pi = ro; ro = t; }
