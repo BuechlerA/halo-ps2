@@ -905,11 +905,17 @@ int main(int argc, char *argv[])
 				s_fxr.add_gain = cin ? s_cine_fxadd : 1.0f;
 				s_fxr.halo = cin ? s_cine_halo : 0.0f;
 			}
-			if (cfg_int(&s_cfg, "widescreen", 0) == 2) {              /* debug: the horizontal field of view kept (70 degrees across the 16:9 picture) */
-				rcam.aspect = 16.0f / 9.0f;
-			} else if (cfg_int(&s_cfg, "widescreen", 0)) {                 /* 1: 16:9 with the 4:3 vertical field of view kept (hfov 70 -> 86 degrees, anamorphic buffer). Off by default: measured against the Xbox video (ADR-073) the picture is the 4:3 render, hfov 70 */
-				rcam.hfov = 2.0f * atanf(tanf(s_cam.hfov * 0.5f) * ((16.0f / 9.0f) / s_cam.aspect));
-				rcam.aspect = 16.0f / 9.0f;
+			{                                                          /* cfg widescreen: 0 the Xbox's projection, 1 16:9 with the 4:3 vertical field of view kept, 2 the horizontal field of view kept across 16:9, 3 the old 4:3 buffer with the point's fov as the horizontal one */
+				int ws = (int)cfg_int(&s_cfg, "widescreen", 0);
+				if (ws == 0) {                                         /* XBE 0xbc260: the view's vertical tangent is 0.6375 tan(fov / 2) and 0x5c5e0 scales x by the window's 4:3 (544 x 408 of 640 x 480): the horizontal tangent is 0.85 tan(fov / 2) (62 degrees for a 70 degree point) */
+					rcam.hfov = 2.0f * atanf(0.85f * tanf(s_cam.hfov * 0.5f));
+					rcam.aspect = 4.0f / 3.0f;
+				} else if (ws == 2) {
+					rcam.aspect = 16.0f / 9.0f;
+				} else if (ws == 1) {
+					rcam.hfov = 2.0f * atanf(tanf(s_cam.hfov * 0.5f) * ((16.0f / 9.0f) / s_cam.aspect));
+					rcam.aspect = 16.0f / 9.0f;
+				}
 			}
 			if (s_have_objects && cfg_int(&s_cfg, "objlabel", 0)) {   /* debug: the index of every unit (type 1, 5, 2) at its projected position, to read colour-change picks off a frame */
 				float m[4][4];

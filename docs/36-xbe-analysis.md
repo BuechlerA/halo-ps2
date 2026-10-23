@@ -34,9 +34,9 @@ converters and the engine can follow it.
   collision) has the channels position 3, focus 3, distance 1, field of view 1 and orientation (forward + up as the state, a rotation vector as the offset). Every update refits a quintic
   `e(t) = c3 t^3 + c4 t^4 + c5 t^5` of the offset in the remaining time with the velocity and acceleration of the previous fit (kept analytically in 0x2715c4 / 0x2715fc) and moves the state by
   `D + e(t - dt)`; the orientation channel rotates forward and up about the rotation vector (0x11ca50). A fit whose acceleration exceeds 1500 (positions) or 1e5 snaps the camera.
-* The projection (0x5c5e0): `1 / tan(fov / 2)` scales the vertical axis, `height / (width tan(fov / 2))` the horizontal one: the field of view is the *vertical* one of the window rectangle.
-  Against the Xbox video the engine's 4:3 buffer with 70 degrees horizontal still correlates best (ADR-073, rechecked in ADR-084: mean 0.63 against 0.43 / 0.53 / 0.41 for the other
-  `widescreen` modes), so the rectangle the cinematic uses is not established.
+* The projection: 0xbc260 fills the view from the observer's output: position, forward, up and `vfov = 2 atan(0.6375 tan(fov / 2))` (qword 1.0 at 0x1f0a70 as the divisor of `fpatan`). The view window
+  (`FUN_000bba00`) is the title-safe rectangle top 36, left 48, bottom 444, right 592 (544 x 408) of the 640 x 480 screen (set at 0x1f8c5c..0x1f8c6a at start up). 0x5c5e0 maps y by `1 / tan(vfov / 2)` and x
+  by `height / (width tan(vfov / 2))`: the horizontal half tangent is `0.85 tan(fov / 2)`, 62 degrees for 70. The cinematic bars are overlay quads (0x29fd0), not a smaller window.
 
 ## Not found / still open
 * The vertex shader's lighting model for objects (ambient + lights), the exact `V0` for BSP surfaces, the glow / bloom of additive materials, the lens-flare and sun-glow

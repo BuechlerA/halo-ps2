@@ -933,9 +933,13 @@ and up into the target's, the state is rotated by `D + e(t - dt)`, an accelerati
 forward vector (finite differences of the last three poses instead of the analytic velocity and acceleration; the quaternion offset instead of one rotation vector summed with the velocity terms).
 Now every random script agrees with the oracle to 1e-3 .. 1e-2 units (float against x87) and 1e-4 in the vectors. Also verified in the same pass, against the decompile: the camera point's field offsets, `euler_angles3d_to_matrix`,
 and `forward = row 0, up = row 2`; the engine's basis (`camera_basis` with roll) reproduces the Xbox's forward, up and left to 1e-15 for random angles, so a settled pose looks exactly where the Xbox's does.
-**Measured, not changed**: the cinematic's field of view: the decompiled projection (0x5c5e0) treats it as the vertical one, but across 20 rotation-sensitive frames the 4:3 buffer with 70 degrees horizontal
-(`widescreen 0`) still correlates best with the Xbox video (0.63; `widescreen 1` 0.43, `2` 0.53, 4:3 vertical-kept 0.41). The cryo console shot (ticks 6100 .. 6240) is framed about 15 % closer than the video's with
-a settled, exact pose: its cause is not the camera's rotation. `camera_ticks` (ADR-066) is untouched; the director's seconds are an integer division (`ticks / 30`), which explains `200 -> 180` of its table but not `300 -> 270`.
+**Projection, the same pass (changed)**: the executable builds the view's field of view in 0xbc260 as `vfov = 2 atan(0.6375 tan(fov / 2))` (0.6375 = 0.75 x 0.85, the 4:3 window and a fixed
+0.85) and 0x5c5e0 scales x by the view window's 544 x 408 (the title-safe rectangle of 640 x 480, set at start up), so the horizontal half tangent is `0.85 tan(fov / 2)`: 62 degrees for the camera points' 70
+(0x5c0a0 returns the same `0.85 tan(fov / 2)` for its culling). `main.c` now renders with exactly that (`widescreen 0`, the default; 4:3 aspect); the old behaviour (70 degrees across the 4:3 buffer) is
+`widescreen 3`, 1 and 2 are the 16:9 variants. ADR-073's measurement against the video preferred the old one (mean correlation 0.63 against 0.50 for the Xbox projection over 20 frames), but the video
+is only an approximation (it may not be a 4:3 Xbox capture at all); the executable decides. Every shot is therefore about 17 % tighter than before, the cryo console shot (ticks 6100 .. 6240) included:
+its panel now overflows the frame, so the 15 % mismatch against the video there is not the field of view.
+**Also verified**: `camera_ticks` (ADR-066) is untouched; the director's seconds are an integer division (`ticks / 30`), which explains `200 -> 180` of its table but not `300 -> 270`.
 **Consequences**: host test `cine` gains `test_cine_observer`; `test_cine` tolerances allow for the update at `camera_set`. No pack rebuild.
 
 ## Open decisions
