@@ -166,6 +166,7 @@ scen_placement scen_get_placement(const scen_section *s, uint32_t index)
 		memcpy(r.variant, p + 32, sizeof r.variant);
 		r.variant[sizeof r.variant - 1] = 0;
 		r.name_index = (int16_t)rd16(p + 48);
+		r.permutation = (uint16_t)rd16(p + 50);
 	}
 	return r;
 }

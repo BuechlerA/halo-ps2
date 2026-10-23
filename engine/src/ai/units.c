@@ -105,11 +105,24 @@ static int weapon_decode(const game_t *g, int widx, weap_weapon *w) { return g->
 /* ---- animation lookup ------------------------------------------------------------------------------------------------------- */
 static int get_graph(const game_t *g, const unit_t *u, ansm_graph *gr) { return g->ansm && u->anim_tag && ansm_find_graph(g->ansm, u->anim_tag, gr) == 0; }
 
+/* The class block of unit block `ui` that holds the weapon's animations. A weapon names its *type* ("ar", "pp"), and only the `stand` block (and `crouch`) lists type blocks; the
+ * `alert` block has class level animations only (`alert rifle idle%0`), so a miss there is answered with the class the `stand` block uses for the weapon, found again by name. -1: none. */
+static int class_for_weapon(const ansm_section *a, const ansm_graph *gr, int ui, const char *wlabel)
+{
+	int ci = (wlabel && wlabel[0]) ? ansm_find_class_for_type(a, gr, (uint32_t)ui, wlabel) : -1;
+	if (ci < 0 && wlabel && wlabel[0]) {
+		int su = ansm_find_unit(a, gr, "stand"), sc;
+		ansm_class info;
+		if (su >= 0 && su != ui && (sc = ansm_find_class_for_type(a, gr, (uint32_t)su, wlabel)) >= 0 && ansm_class_info(a, gr, (uint32_t)su, (uint32_t)sc, &info) == 0 && info.name)
+			ci = ansm_find_class(a, gr, (uint32_t)ui, info.name);
+	}
+	return ci;
+}
+
 static int pick_class(const ansm_section *a, const ansm_graph *gr, int ui, const char *wlabel)
 {
-	int ci = -1;
+	int ci = class_for_weapon(a, gr, ui, wlabel);
 	ansm_unit info;
-	if (wlabel && wlabel[0]) ci = ansm_find_class_for_type(a, gr, (uint32_t)ui, wlabel);
 	if (ci < 0) ci = ansm_find_class(a, gr, (uint32_t)ui, "unarmed");
 	if (ci < 0) ci = ansm_find_class(a, gr, (uint32_t)ui, "unuarmed");     /* misspelt in some graphs */
 	if (ci < 0 && ansm_unit_info(a, gr, (uint32_t)ui, &info) == 0 && info.class_count > 0) ci = 0;
@@ -123,6 +136,7 @@ static int block_slot(const ansm_section *a, const ansm_graph *gr, const char *u
 	unsigned lvl = ANSM_ACTION_LEVEL(action), slot = ANSM_ACTION_SLOT(action);
 	if (ui < 0) return -1;
 	if (lvl == ANSM_L_UNIT) return ansm_unit_slot(a, gr, (uint32_t)ui, slot);
+	if (wlabel && wlabel[0] && strcmp(ulabel, "stand") != 0 && class_for_weapon(a, gr, ui, wlabel) < 0) return -1;    /* an armed unit never takes another weapon's (the pistol's) animations from a posture block: the caller falls back to `stand` */
 	ci = pick_class(a, gr, ui, wlabel);
 	if (class_out) *class_out = ci;
 	if (ci < 0) return -1;
@@ -280,6 +294,57 @@ static void custom_root_motion(unit_t *u, const object_t *o, game_t *g)
 		u->body.yaw += d[3];
 		u->body.vel[0] = u->body.vel[1] = 0.0f;                  /* the animation moves the body: no leftover velocity to coast on afterwards */
 	}
+}
+
+/* Ground speed of animation k of ANIM graph gi in wu/s: its root motion over one cycle (the tag's frame info). 0 when it has none. */
+static float anim_ground_speed(const game_t *g, int gi, int k)
+{
+	anim_graph ag;
+	anim_info in;
+	float sx = 0.0f, sy = 0.0f;
+	uint32_t f;
+	if (k < 0 || gi < 0 || !g->ow.anims || (unsigned)gi >= g->ow.anims->graph_count) return 0.0f;
+	ag = anim_get_graph(g->ow.anims, (uint32_t)gi);
+	if ((unsigned)k >= ag.anim_count) return 0.0f;
+	in = anim_get(g->ow.anims, &ag, (uint32_t)k);
+	if (!in.root_motion || in.frame_count < 2) return 0.0f;
+	for (f = 0; f < in.frame_count; f++) {
+		float d[4];
+		anim_root_motion(g->ow.anims, &ag, (uint32_t)k, f, d);
+		sx += d[0]; sy += d[1];
+	}
+	return sqrtf(sx * sx + sy * sy) * (in.fps > 0.0f ? in.fps : 30.0f) / (float)in.frame_count;
+}
+
+/* An actor moves as fast as the move animation its posture and weapon select: the marines' `stand rifle move-front` covers 2.1 wu/s, their `alert rifle move-front` 0.42 and the
+ * pistol's 2.25. The speeds of the biped tag (params_for) are the standing ones, so the other postures and weapons take the ground speed of their own animation, else the unit would
+ * slide over the floor at four times the pace of its feet (Johnson's slow walk into the hangar, ADR-083). Recomputed when the posture, weapon or graph changes. */
+static void refresh_move_speeds(unit_t *u, const game_t *g)
+{
+	ansm_graph gr;
+	uint32_t key;
+	float s[3], scale = 1.0f;
+	unsigned d;
+	if (u->base_graph < 0 || !get_graph(g, u, &gr)) return;
+	if (!u->mv_have) {
+		u->mv_base[0] = u->pp.run_speed; u->mv_base[1] = u->pp.back_speed; u->mv_base[2] = u->pp.strafe_speed; u->mv_base[3] = u->pp.crouch_speed; u->mv_base[4] = u->pp.walk_speed;
+		u->mv_have = 1; u->mv_key = 0xFFFFFFFFu;
+	}
+	key = (uint32_t)u->posture | (((uint32_t)(u->weapon + 1) & 0xFFFu) << 2) | (((uint32_t)u->base_graph & 0x3FFu) << 14);
+	if (key == u->mv_key) return;
+	u->mv_key = key;
+	u->pp.run_speed = u->mv_base[0]; u->pp.back_speed = u->mv_base[1]; u->pp.strafe_speed = u->mv_base[2]; u->pp.crouch_speed = u->mv_base[3]; u->pp.walk_speed = u->mv_base[4];
+	for (d = 0; d < 3; d++) {
+		int k = lookup_action(g, u, &gr, UA_MOVE, d, 0.0f, NULL);
+		s[d] = (k >= 0 && !is_overlay(g->ansm, &gr, k)) ? anim_ground_speed(g, u->base_graph, k) : 0.0f;
+	}
+	if (s[0] < 0.05f) return;                                       /* no root motion to follow: the tag's speeds stay */
+	if (u->posture == 1) { u->pp.crouch_speed = s[0]; return; }
+	if (u->mv_base[0] > 0.05f) scale = s[0] / u->mv_base[0];
+	u->pp.run_speed = s[0];
+	if (s[1] > 0.05f) u->pp.back_speed = s[1];                         /* a direction whose animation carries no root motion keeps the tag's speed (the player's biped: its animations have none) */
+	if (s[2] > 0.05f) u->pp.strafe_speed = s[2];
+	u->pp.walk_speed = u->mv_base[4] * scale;
 }
 
 static void sync_object(const unit_t *u, object_t *o)
@@ -440,6 +505,7 @@ int units_attach(units_t *s, game_t *g, int obj, int team, int32_t weapon_tag)
 	player_init(&u->body, o->pos, yaw);
 	u->body.pos[2] += 0.02f;                                    /* a placement stands exactly on the floor: start a hair above it */
 	params_for(g, &b, &u->pp, &u->turn_speed);
+	u->mv_have = 0;                                                  /* the speeds of the new tag are the base of refresh_move_speeds */
 	u->ctl.aim_yaw = yaw; u->ctl.weapon_slot = -1;
 	u->spawn_tick = g->tick;
 	/* weapon: -1 unarmed, 0 the biped's first default weapon */
@@ -1043,10 +1109,11 @@ static void tick_unit(units_t *s, unit_t *u, game_t *g, object_t *o)
 	else if (u->action == UA_LAND) throttle_scale = u->move_dir ? 0.2f : 0.6f;
 	else if (u->action == UA_FLINCH) throttle_scale = 0.3f;
 	u->posture = u->body.crouch > 0.5f ? 1u : 0u;
-	if (!u->posture && u->weapon < 0 && !(u->flags & UF_PLAYER)) {                 /* an unarmed non-player unit stands in the graph's `alert` block when it has one */
+	if (!u->posture && (u->weapon < 0 || (u->flags & UF_ALERT)) && !(u->flags & UF_PLAYER)) {   /* an unarmed non-player unit, and any unit a script put in the alert posture (the marines at port arms, ADR-083), stands in the graph's `alert` block when it has one */
 		if (!u->alert_state) { ansm_graph agr; u->alert_state = (get_graph(g, u, &agr) && ansm_find_unit(g->ansm, &agr, "alert") >= 0) ? 1u : 2u; }
 		if (u->alert_state == 1) u->posture = 2;
 	}
+	if (!(u->flags & UF_PLAYER) && !s->tag_speeds) refresh_move_speeds(u, g);
 	step_body(u, g, u->action != UA_CUSTOM, throttle_scale, phys_divider(s, u, g), &turn_left);
 	if (u->body.landed_speed > 0.0f) { landed(s, u, g); u->body.landed_speed = 0.0f; }
 	spd = speed2d(u);

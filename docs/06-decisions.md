@@ -900,5 +900,27 @@ Streaming lightmaps, the glow pass texture and sky bitmaps, per-surface density 
 **Consequences**: `scripts/build-world.sh a10` (bspconv writes `uv_world`, texconv the `thires` pack and removes a stale one); the BSP pack's material record keeps version 2 (older packs read `uv_world` 0 = no streaming).
 Host tests: `test_hires` (asynchronous ring: latency, one flight, lifetimes, unclaimed variants, failures, two sets), `test_hp2` (CRC at every alignment), `test_bsp`, `test_bspconv` (`uv_world`), `test_texconv` (`build_hires_pack`, 1024 wide textures).
 
+## ADR-083 Cutscene marines: Johnson and the head pool, speed follows the animation, the alert posture is a script's, objects draw whole or not at all
+**Decision**: (1) The scenario's *desired permutation* of a biped (+0x06; Sergeant Johnson 100, marine 101 the cap) is carried in the SCEN placement (`+50`, `Placement.permutation`, was padding) and selects, per
+region, the model permutation whose name ends in `-<number>` (`model_name_number`, `model_select_variant`); a placement without one draws from the random pool `-1 .. -99` (the marines' heads `-10 .. -14`), stable per object, and
+never takes `-100` (Johnson), `-101` (the cap) or `-102` (the damaged torso). Variant names (`sky`, first person) keep `model_select_permutations`. (2) A unit moves at the ground speed of the move animation its posture, weapon
+and graph select (`refresh_move_speeds`, root motion over one cycle of `stand rifle move-front` 2.10, `alert rifle move-front` 0.42, `alert pistol move-front` 0.67 wu/s), not at the standing speed of the biped tag; a direction
+whose animation has no root motion keeps the tag's speed. Debug: cfg `unitspeeds 1` restores the tag speeds. (3) The alert posture of an armed unit is set by the script (`unit_set_seat unit "alert"` sets `UF_ALERT`; a
+unit created anew starts without it); unarmed non-player units stay alert (ADR-080). The global "every unit in a cinematic is alert" of the first version of this work is gone. The `FORCE_ALERT` bit of a recording is not a
+posture. (4) The held weapon sits on the unit's `right hand` marker. (5) `pick_lod` only takes a level at which every region that has parts at some level has parts, and `obj_render_pass` draws a model whole: when its batches
+do not fit what is left of the frame's budget the next level down is tried, else the object is skipped (parts used to be dropped one by one, leaving a head and a rifle floating over nothing: marine #533 at tick 4970).
+(6) Colour permutations of crewmen #223, #224 (brown-orange, the cryo console) and #546 (yellow, the cryo bay) in `a10intro.cfg` / `a10mission.cfg`.
+**Why**: recordings carry controls, not positions (docs/28): the speed of a recorded walk is the unit's physics. Johnson's 134 ticks of throttle (`johnson_enter`) at the tag's 2.10 wu/s carried him 9 wu past the camera
+that the script cuts to (`you_heard_1a`, 0.5 wu from where he stops); at the alert animation's 0.42 wu/s he stops at x = -24.0, next to the camera point, as in the Xbox video (ticks 4380 .. 4470, 4700 .. 4800: he was
+invisible before). The six `pep_run` marines are created anew, have no `unit_set_seat`, stand and run at 2.10: they pass the low camera 118 in the Xbox video (boots at ticks 4540 .. 4700) and stayed behind it at 0.42.
+Johnson's model was a generic marine because the placement's permutation was dropped.
+**Measured**: the parity frames of ticks 3420 .. 7300 (`scripts/cmp-intro.sh` with offset 1.41): Johnson, the formation, the marching marines and the close-ups line up with the video; host tests `test_units` (speed of
+every species equals the ground speed of the animation it plays, alert posture speed and animation names, the permutation pool) and `test_scenconv` (permutation round trip) cover it.
+**Open**: the video's hangar is lit green-grey, ours neutral and darker (the marines' base maps are right: the armour's brown plates are in the texture and get the sage reflection of ADR-029; `soso` of the marine has no
+colour change source, so `a` / `b` do not tint it); Johnson's skin is lighter than the video's; the crew at the cryo console (ticks 6420 .. 6500) is closer to the camera than in the video; Chief does not step out of the pod
+(7020 .. 7200); the scorpions are tan, the video's olive.
+**Consequences**: SCEN placements carry the permutation (`scripts/build-world.sh a10` rebuilds the object pack, no version change: the field was padding); debug keys `forcemodel`, `trackperm N`, `nearlog` prints name,
+permutations and screen position; `unitspeeds 1`.
+
 ## Open decisions
 None.

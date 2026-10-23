@@ -17,7 +17,7 @@ static int alloc_slot(object_table_t *t)
 }
 
 /* Fills slot `slot` for definition `def` at `pos` with Halo-order rotation `rot` (yaw, pitch, roll). Returns 0 or -1 (no model). */
-static int make_object(object_table_t *t, const object_world_t *w, int slot, unsigned def, const float pos[3], const float rot[3], const char *variant,
+static int make_object(object_table_t *t, const object_world_t *w, int slot, unsigned def, const float pos[3], const float rot[3], const char *variant, unsigned desired,
                        int placement, uint32_t bsp_mask)
 {
 	scen_def d = scen_get_def(w->scen, def);
@@ -48,7 +48,8 @@ static int make_object(object_table_t *t, const object_world_t *w, int slot, uns
 	mi = model_get(w->models, (uint32_t)model);
 	o->radius = d.radius > 0.0f ? d.radius : mi.radius;
 	o->region_count = mi.region_count > OBJ_MAX_REGIONS ? OBJ_MAX_REGIONS : mi.region_count;
-	model_select_permutations(w->models, &mi, variant, o->perm);
+	if (variant && variant[0]) model_select_permutations(w->models, &mi, variant, o->perm);
+	else model_select_variant(w->models, &mi, desired, (uint32_t)(placement >= 0 ? placement : slot) * 2654435761u ^ (uint32_t)def * 40503u, o->perm);
 	for (r = 0; r < o->region_count; r++) if (o->perm[r] >= mi.permutation_count) o->perm[r] = 0;
 	/* stagger animation phase by position so identical idles do not move in lockstep */
 	o->frame = (float)((unsigned)(fabsf(pos[0] * 7.0f + pos[1] * 13.0f)) % 64u);
@@ -64,7 +65,7 @@ int objects_spawn_placement(object_table_t *t, const object_world_t *w, unsigned
 	p = scen_get_placement(w->scen, placement);
 	slot = alloc_slot(t);
 	if (slot < 0) { t->skipped_cap++; return -1; }
-	if (make_object(t, w, slot, p.def, p.pos, p.rot, p.variant, (int)placement, p.bsp_mask) != 0) {
+	if (make_object(t, w, slot, p.def, p.pos, p.rot, p.variant, p.permutation, (int)placement, p.bsp_mask) != 0) {
 		t->obj[slot].flags = OBJ_F_FREE; t->obj[slot].model = -1;
 		if ((unsigned)slot + 1 == t->count) t->count--;
 		t->skipped_no_model++;
@@ -353,7 +354,7 @@ int objects_spawn_def(object_table_t *t, const object_world_t *w, unsigned def, 
 	if (def >= w->scen->def_count) return -1;
 	slot = alloc_slot(t);
 	if (slot < 0) return -1;
-	if (make_object(t, w, slot, def, pos, rot, NULL, -1, 0) != 0) {
+	if (make_object(t, w, slot, def, pos, rot, NULL, 0, -1, 0) != 0) {
 		t->obj[slot].flags = OBJ_F_FREE; t->obj[slot].model = -1;
 		if ((unsigned)slot + 1 == t->count) t->count--;
 		return -1;

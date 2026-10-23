@@ -29,8 +29,9 @@ scenario (``scnr``)
               ``looking_panel_down_success`` while 177 of 182 without it are unnamed set dressing),
               bits 1..3 "not placed on easy / normal / hard" and bit 4 "use player appearance" (unverified
               meaning: only the bit patterns 0, 1, 3, 8 and 4 were seen)
-        +0x06 u16 desired permutation (always 0 on scenery; 100, 10, 12 on 5 of 107 a10 bipeds: not a
-              permutation index we can resolve, ignored; ``variant`` is therefore always empty)
+        +0x06 u16 desired permutation (always 0 on scenery; 100, 10, 12 on 5 of 107 a10 bipeds): the number the model's
+              permutation names end in (``sgt_johnson-100``, ``head_charles_helmet-10``, ``head_marcus_cap-101``,
+              ``damaged torso-102``); a biped's value is carried in the SCEN placement (docs/13), ``variant`` stays empty
         +0x08 f32 x, y, z world units           +0x14 f32 yaw, pitch, roll radians
     Scenery and light fixtures additionally carry +0x20 u16 "manual BSP flags": bit n = BSP n.
     verified: on a10 scenery it equals the BSP set found by point location on 270 of 274 placements, and is a
@@ -203,6 +204,7 @@ class Placement:
     name_index: int = -1
     bsp_mask: int = 0
     variant: str = ""
+    permutation: int = 0                 # "desired permutation" (+0x06): selects the model permutations whose name ends in -<number> (docs/13)
     manual_bsp: int = 0
     mask_tier: str = "none"
     def_index: int = 0
@@ -547,8 +549,9 @@ def collect_objects(m: texconv.MapData, probes: list[BspProbe], extra: dict[int,
             flags = (raw & 0x1E) | (0 if raw & 1 else P_INITIALLY_VISIBLE)
             manual = r.u("<H", e + 0x20)[0] if kind in MANUAL_BSP_KINDS else 0
             mask, tier = locate_mask(probes, pos, manual) if probes else (0, "none")
+            perm = r.u("<H", e + 6)[0] if kind == "biped" else 0     # a10: 100 on Sergeant Johnson, 10 / 12 on the two lab crew (assistant, technician)
             placements.append(Placement(d.tag_id, kind, flags, pos, rot, ni if ni < nname else -1,
-                                        mask, "", manual, tier))
+                                        mask, "", perm, manual, tier))
     for tid, group in sorted((extra or {}).items()):
         if group == "bipd":
             dt.get(tid, BIPED, "bipd", 0)
@@ -727,7 +730,7 @@ def map_lights(m: texconv.MapData, indices: list[int] | None) -> list[list[Clust
 # ---- section writer / reference parser ----------------------------------------------------------
 HEADER_FMT = "<4sHHIIIIIIIIII"      # magic, version, reserved, size, defs, placements, bsps, 5 offsets, lights
 DEF_FMT = "<IIIBBH32sf12x"
-PLACEMENT_FMT = "<HHI3f3f16shh12x"
+PLACEMENT_FMT = "<HHI3f3f16shH12x"
 LIGHT_FMT = "<3Bx3Bx3hxx"
 PLAYER_FMT = "<6IHH3f32s8x"
 for _f, _n in ((DEF_FMT, DEF_REC), (PLACEMENT_FMT, PLACEMENT_REC), (LIGHT_FMT, LIGHT_REC), (PLAYER_FMT, PLAYER_REC)):
@@ -770,7 +773,7 @@ def build(defs: list[Def], placements: list[Placement], player: Player,
         if not 0 <= p.def_index < len(defs):
             raise ScenError("placement definition index out of range")
         out += struct.pack(PLACEMENT_FMT, p.def_index, p.flags, p.bsp_mask, *p.pos, *p.rot,
-                           _str(p.variant, VARIANT_LEN), p.name_index, 0)
+                           _str(p.variant, VARIANT_LEN), p.name_index, p.permutation)
     _pad16(out)
     offs["lights"] = len(out)
     table = bytearray()
@@ -832,10 +835,10 @@ def parse_section(data: bytes) -> Section:
                          name=name.split(b"\0", 1)[0].decode("latin1"), radius=radius))
     pls = []
     for i in range(npl):
-        d, fl, mask, x, y, z, yaw, pitch, roll, var, ni, _pd = struct.unpack_from(
+        d, fl, mask, x, y, z, yaw, pitch, roll, var, ni, perm = struct.unpack_from(
             PLACEMENT_FMT, data, o_pl + i * PLACEMENT_REC)
         pls.append(dict(def_index=d, flags=fl, bsp_mask=mask, pos=(x, y, z), rot=(yaw, pitch, roll),
-                        variant=var.split(b"\0", 1)[0].decode("latin1"), name_index=ni))
+                        variant=var.split(b"\0", 1)[0].decode("latin1"), name_index=ni, permutation=perm))
     allc = []
     for i in range(nlights):
         v = struct.unpack_from(LIGHT_FMT, data, o_li + i * LIGHT_REC)

@@ -384,3 +384,42 @@ uint32_t model_pick_lod(const model_info *m, float diameter_px)
 		if (diameter_px >= m->lod_cutoff[lod]) return lod;
 	return MODEL_LODS - 1;                 /* smaller than every cutoff, or NaN: the cheapest */
 }
+
+unsigned model_name_number(const char *name)
+{
+	size_t n = strnlen(name, MODEL_NAME_LEN), i = n;
+	unsigned v = 0, mul = 1;
+	while (i > 0 && name[i - 1] >= '0' && name[i - 1] <= '9') { i--; }
+	if (i == n || i == 0 || name[i - 1] != '-' || n - i > 4) return 0;
+	for (size_t k = n; k > i; k--) { v += (unsigned)(name[k - 1] - '0') * mul; mul *= 10u; }
+	return v;
+}
+
+void model_select_variant(const model_section *s, const model_info *m, unsigned desired, uint32_t seed, uint16_t *out)
+{
+	for (uint32_t r = 0; r < m->region_count; r++) {
+		uint32_t first = ANY, hit = ANY, pool = 0, pick;
+		for (uint32_t p = 0; p < m->permutation_count; p++) {
+			const uint8_t *rec = perm_rec(s, m, p);
+			unsigned num;
+			if (!rec || rd16(rec + 32) != r) continue;
+			if (first == ANY) first = p;
+			num = model_name_number((const char *)rec);
+			if (desired && num == desired && hit == ANY) hit = p;
+			if (num >= 1 && num < 100) pool++;
+		}
+		if (hit == ANY && pool) {                                   /* the random pool: a stable pick for this object and region */
+			uint32_t h = seed * 2654435761u + (r + 1u) * 40503u;
+			h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+			pick = h % pool;
+			for (uint32_t p = 0; p < m->permutation_count; p++) {
+				const uint8_t *rec = perm_rec(s, m, p);
+				unsigned num;
+				if (!rec || rd16(rec + 32) != r) continue;
+				num = model_name_number((const char *)rec);
+				if (num >= 1 && num < 100 && pick-- == 0) { hit = p; break; }
+			}
+		}
+		out[r] = (uint16_t)(hit != ANY ? hit : first);
+	}
+}

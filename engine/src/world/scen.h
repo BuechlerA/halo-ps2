@@ -50,7 +50,7 @@ typedef struct {
 	float    rot[3];                   /* yaw, pitch, roll in radians (Halo order; see the doc) */
 	char     variant[16];              /* permutation name, "" = default */
 	int16_t  name_index;               /* scenario object-name index or -1 */
-	int16_t  pad;
+	uint16_t permutation;              /* the "desired permutation": selects the model permutations whose name ends in -<number> (Sergeant Johnson 100, the lab crew 10 / 12); 0 = random */
 } scen_placement;
 
 /* Object lighting: Halo samples the BSP lightmap for objects; here a baked ambient + one directional

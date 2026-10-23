@@ -129,22 +129,44 @@ static void emit_batch(chain_t *c, const render_ctx_t *rc, const model_section *
 	s_last_serial = s_pal_serial;
 }
 
+/* The detail level a model is drawn at. A level is complete when every region that has parts at any level has parts at this one: a marine's far levels carry the torso of one
+ * permutation and not the legs of another, and a level that is merely non-empty draws the head and the rifle with nothing between (ADR-083). Incomplete levels are used only
+ * when no level is complete. */
 static unsigned pick_lod(const model_section *ms, const model_info *mi, const uint16_t *perm, unsigned regions, float diameter_px, int bias)
 {
-	int lod = (int)model_pick_lod(mi, diameter_px) + bias, l;
+	int lod = (int)model_pick_lod(mi, diameter_px) + bias, l, pass;
+	uint32_t need = 0;
+	unsigned r;
 	if (lod >= MODEL_LODS) lod = MODEL_LODS - 1;
 	if (lod < 0) lod = 0;
-	for (l = lod; l < MODEL_LODS; l++) {            /* the nearest existing LOD at or below this detail, else above */
-		unsigned r, parts = 0;
-		for (r = 0; r < regions; r++) parts += model_parts(ms, mi, perm[r], (uint32_t)l).part_count;
-		if (parts) return (unsigned)l;
-	}
-	for (l = lod - 1; l >= 0; l--) {
-		unsigned r, parts = 0;
-		for (r = 0; r < regions; r++) parts += model_parts(ms, mi, perm[r], (uint32_t)l).part_count;
-		if (parts) return (unsigned)l;
+	for (r = 0; r < regions && r < 32; r++)
+		for (l = 0; l < MODEL_LODS; l++) if (model_parts(ms, mi, perm[r], (uint32_t)l).part_count) { need |= 1u << r; break; }
+	for (pass = 0; pass < 2; pass++) {
+		for (l = lod; l < MODEL_LODS; l++) {            /* the nearest existing LOD at or below this detail, else above */
+			uint32_t have = 0;
+			unsigned parts = 0;
+			for (r = 0; r < regions; r++) { unsigned n = model_parts(ms, mi, perm[r], (uint32_t)l).part_count; parts += n; if (n && r < 32) have |= 1u << r; }
+			if (parts && (pass || (have & need) == need)) return (unsigned)l;
+		}
+		for (l = lod - 1; l >= 0; l--) {
+			uint32_t have = 0;
+			unsigned parts = 0;
+			for (r = 0; r < regions; r++) { unsigned n = model_parts(ms, mi, perm[r], (uint32_t)l).part_count; parts += n; if (n && r < 32) have |= 1u << r; }
+			if (parts && (pass || (have & need) == need)) return (unsigned)l;
+		}
 	}
 	return (unsigned)lod;
+}
+
+/* VIF batches a model needs at `lod` (every part of its permutations). */
+static unsigned model_batch_total(const model_section *ms, const model_info *mi, const uint16_t *perm, unsigned regions, unsigned lod)
+{
+	unsigned r, p, n = 0;
+	for (r = 0; r < regions; r++) {
+		model_part_range pr = model_parts(ms, mi, perm[r], lod);
+		for (p = 0; p < pr.part_count; p++) n += model_get_part(ms, (uint32_t)pr.first_part + p).batch_count;
+	}
+	return n;
 }
 
 /* Draw one model with the given node matrices. Returns the number of batches emitted. */
@@ -530,6 +552,12 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 				lod = pick_lod(o->world.models, &mi, ob->perm, ob->region_count, diameter, bias);
 				o->want_hi = o->hires == NULL ? 0 : diameter >= o->hires_px ? 1 : diameter >= 0.5f * o->hires_px ? 2 : 0;      /* 2: approaching, load and upload the variant now, draw the resident one until it counts */
 				if (pass && !model_has_blend(o, ob->model, ob->perm, ob->region_count, lod)) continue;
+				if (!pass) {                                                       /* a model is drawn whole or not at all: parts that miss the budget one by one leave a head and a rifle floating over nothing */
+					unsigned left = budget > o->st_batches ? budget - o->st_batches : 0, l = lod;
+					while (l < MODEL_LODS && (model_batch_total(o->world.models, &mi, ob->perm, ob->region_count, l) > left || !model_batch_total(o->world.models, &mi, ob->perm, ob->region_count, l))) l++;
+					if (l >= MODEL_LODS) { o->st_skipped++; continue; }
+					lod = l;
+				}
 				if ((ob->flags & (OBJ_F_ANIMATED | OBJ_F_POSED)) ? !objects_pose(ob, &o->world, &s_nodes) : !objects_pose_static(ob, &o->world, &s_nodes)) { if (!pass) o->st_culled++; continue; }
 				light_at(o, c, &light);
 				if (!pass) o->st_visible++;

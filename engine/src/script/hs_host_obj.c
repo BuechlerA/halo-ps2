@@ -510,7 +510,7 @@ static void update_held_weapons(mission_t *M)
 		if (hc->slot != slot + 1 || hc->pmodel != po->model || hc->cmodel != co->model || hc->serial != co->serial) {
 			hc->slot = slot + 1; hc->pmodel = po->model; hc->cmodel = co->model; hc->serial = co->serial;
 			hc->pm = marker_by_names(M, po, "right hand", NULL);
-			hc->cm = marker_by_names(M, co, "right hand", "primary trigger");
+			hc->cm = marker_by_names(M, co, "right hand", NULL);       /* no "right hand" marker (the assault rifle has none): the weapon's origin sits on the hand marker, as in Halo; "primary trigger" is 0.22 units down the barrel */
 			hc->have_inv = 0;
 			if (hc->cm >= 0 && !(co->flags & (OBJ_F_ANIMATED | OBJ_F_POSED))) {
 				mat4 gl;
@@ -960,7 +960,14 @@ static int seat_on_chair(mission_t *M, int u, int quiet)
 BI(unit_set_seat)
 {
 	ENTER(unit_set_seat);
-	{ int u = obj_arg(M, A(0), 0); if (u >= 0 && u < (int)OBJ_MAX) M->hobj.seat_want[u] = 1; (void)seat_on_chair(M, u, 0); }
+	{
+		int u = obj_arg(M, A(0), 0), ui;
+		ensure_unit(M, u);
+		ui = unit_of(M, u);
+		if (ui >= 0 && !strcmp(str_arg(hm, A(1)), "alert")) M->units->u[ui].flags |= UF_ALERT;       /* the posture, not a seat: a unit created anew starts without it */
+		if (u >= 0 && u < (int)OBJ_MAX) M->hobj.seat_want[u] = 1;
+		(void)seat_on_chair(M, u, 0);
+	}
 	return 0;
 }
 

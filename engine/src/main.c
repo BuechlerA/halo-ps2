@@ -269,6 +269,15 @@ static void serve_mission(void)
 }
 
 /* (Re)loads BSP `idx` after the arena mark: render geometry, lightmap, collision; rebinds everything that points at BSP data. */
+/* Debug (nearlog): the name of the animation an object is posed with. */
+static const char *object_anim_label(const object_t *ob)
+{
+	anim_graph g;
+	if (ob->graph < 0 || ob->anim == SCEN_NO_ANIM || !s_world.anims.graph_count || (uint32_t)ob->graph >= s_world.anims.graph_count) return "";
+	g = anim_get_graph(&s_world.anims, (uint32_t)ob->graph);
+	return ob->anim < g.anim_count ? anim_get(&s_world.anims, &g, ob->anim).name : "";
+}
+
 static int load_bsp(int idx);
 
 /* Debug: `bspswitch <seconds> <bsp> <x> <y> <z> <yaw deg>` lines switch the loaded BSP and teleport the player (what the scripts' switch_bsp does). */
@@ -788,8 +797,18 @@ int main(int argc, char *argv[])
 						scen_def d;
 						if (ob->model < 0 || dx * dx + dy * dy + dz * dz > (float)cfg_int(&s_cfg, "nearrad", 10) * (float)cfg_int(&s_cfg, "nearrad", 10)) continue;
 						d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
-						printf("[near] #%u %s type %u model %d graph %d anim %u frame %.1f flags %02x at %.2f %.2f %.2f (d %.2f)\n", oi, d.name, ob->type, ob->model, ob->graph, (unsigned)ob->anim, (double)ob->frame, ob->flags,
+						printf("[near] #%u %s type %u model %d graph %d anim %u \"%s\" frame %.1f flags %02x perm %u/%u/%u/%u at %.2f %.2f %.2f (d %.2f)\n", oi, d.name, ob->type, ob->model, ob->graph, (unsigned)ob->anim,
+						       						       object_anim_label(ob),
+						       (double)ob->frame, ob->flags, (unsigned)ob->perm[0], (unsigned)ob->perm[1], (unsigned)ob->perm[2], (unsigned)ob->perm[3],
 						       (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (double)sqrtf(dx * dx + dy * dy + dz * dz));
+						{                                                   /* where it lands on the screen (0..1 from the left, from the top), to name an object in a frame */
+							float cyw = cosf(cp.yaw), syw = sinf(cp.yaw), cpt = cosf(cp.pitch), spt = sinf(cp.pitch);
+							float fwd = dx * cyw * cpt + dy * syw * cpt + dz * spt, lft = -dx * syw + dy * cyw, up = -dx * cyw * spt - dy * syw * spt + dz * cpt;
+							if (fwd > 0.05f) {
+								float th = tanf(cp.fov * 0.5f);
+								printf("[near]    screen x %.2f y %.2f (depth %.2f)\n", (double)(0.5f - 0.5f * lft / fwd / th), (double)(0.5f - 0.5f * up / fwd / th), (double)fwd);
+							}
+						}
 						if (cfg_int(&s_cfg, "nearaxes", 0))
 							printf("[near]    root fwd %.2f %.2f %.2f  left %.2f %.2f %.2f  up %.2f %.2f %.2f\n", (double)ob->root.m[0][0], (double)ob->root.m[0][1], (double)ob->root.m[0][2],
 							       (double)ob->root.m[1][0], (double)ob->root.m[1][1], (double)ob->root.m[1][2], (double)ob->root.m[2][0], (double)ob->root.m[2][1], (double)ob->root.m[2][2]);
@@ -810,6 +829,25 @@ int main(int argc, char *argv[])
 				if (s_have_objects && cfg_floats(&s_cfg, "forceanim", fa, 3) == 3 && fa[0] >= 0.0f && (unsigned)fa[0] < s_objects.count) {
 					object_t *fo = &s_objects.obj[(unsigned)fa[0]];
 					fo->anim = (uint16_t)fa[1]; fo->frame = fa[2]; fo->flags |= OBJ_F_ANIMATED;
+				}
+			}
+			if (s_have_objects && (s_tick % 30) == 0 && cfg_int(&s_cfg, "trackperm", -1) >= 0) {   /* debug (cfg trackperm N): every 30 ticks, the live objects whose first region's permutation is N (Sergeant Johnson: 1 on the marine model) */
+				unsigned ti;
+				for (ti = 0; ti < s_objects.count; ti++) {
+					const object_t *to = &s_objects.obj[ti];
+					if (to->model < 0 || (to->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)) || (int)to->perm[0] != (int)cfg_int(&s_cfg, "trackperm", -1) || to->type != 1) continue;
+					printf("[track] t%u #%u at %.2f %.2f %.2f yaw %.2f anim %u frame %.1f flags %02x\n", (unsigned)s_tick, ti, (double)to->pos[0], (double)to->pos[1], (double)to->pos[2], (double)atan2f(to->root.m[0][1], to->root.m[0][0]), (unsigned)to->anim, (double)to->frame, to->flags);
+				}
+			}
+			{                                                  /* debug (cfg forcemodel "model anim frame"): pose every object of this model with that animation of its graph every frame (compare candidates for a whole crowd) */
+				float fm[3];
+				if (s_have_objects && cfg_floats(&s_cfg, "forcemodel", fm, 3) == 3 && fm[0] >= 0.0f) {
+					unsigned fi;
+					for (fi = 0; fi < s_objects.count; fi++) {
+						object_t *fo = &s_objects.obj[fi];
+						if (fo->model != (int)fm[0] || (fo->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)) || fo->graph < 0) continue;
+						fo->anim = (uint16_t)fm[1]; fo->frame = fm[2]; fo->flags |= OBJ_F_ANIMATED;
+					}
 				}
 			}
 			if (s_have_objects && cfg_int(&s_cfg, "hideobj", -1) >= 0 && (unsigned)cfg_int(&s_cfg, "hideobj", -1) < s_objects.count)       /* debug: never draw this object */
