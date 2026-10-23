@@ -160,7 +160,9 @@ typedef struct {
 	uint8_t  effect;                 /* cinematic_screen_effect_start / _stop: the hologram look of the briefing (hud_render draws a teal wash and scan bars) */
 	uint32_t effect_ticks;
 	uint8_t  filter;                 /* cinematic_screen_effect_set_filter was called: the veil of the tutorial's pod (a pale wash standing in for the Xbox's blur and desaturation) */
-	float    veil;                   /* 0 .. 1 its strength, eased by misc_tick */
+	float    veil;                   /* 0 .. 1 its strength: lerp(filter_from, filter_to) over filter_ticks, advanced by misc_tick */
+	float    filter_from, filter_to;
+	uint32_t filter_ticks, filter_elapsed;
 } cine_screen;
 
 /* ---- 5. titles and messages ------------------------------------------------------------------------------------------ */

@@ -300,7 +300,19 @@ BI(fade_in)
 BI(cinematic_screen_effect_start) { ENTER(cinematic_screen_effect_start); if (m) { m->misc.screen_effect = (uint8_t)argb(a, n, 0, 0); if (m->cine) { if (!m->cine->screen.effect && m->misc.screen_effect) m->cine->screen.effect_ticks = 0; m->cine->screen.effect = m->misc.screen_effect; } } return 0; }
 BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) { m->misc.screen_effect = 0; if (m->cine) { m->cine->screen.effect = 0; m->cine->screen.filter = 0; } } return 0; }
 NOOP(cinematic_screen_effect_set_convolution)
-BI(cinematic_screen_effect_set_filter) { ENTER(cinematic_screen_effect_set_filter); if (m && m->cine) m->cine->screen.filter = 1; return 0; }
+/* XBE 0xee1b0 -> 0x61c40: (a b c d on seconds); the renderer (0x61aa0) lerps the pairs (a -> b) and (c -> d) over the `seconds` that follow the call, so the tutorial's
+ * `1 0 1 0 true 5` is a sight that clears linearly in 5 s, not one that stays until the effect stops. The pale veil follows the first pair. */
+BI(cinematic_screen_effect_set_filter)
+{
+	ENTER(cinematic_screen_effect_set_filter);
+	if (m && m->cine) {
+		cine_screen *sc = &m->cine->screen;
+		float secs = argf(a, n, 5, 0.0f);
+		sc->filter = 1; sc->filter_from = argf(a, n, 0, 1.0f); sc->filter_to = argf(a, n, 1, 0.0f);
+		sc->filter_ticks = secs > 0.0f ? (uint32_t)(secs * 30.0f + 0.5f) : 0u; sc->filter_elapsed = 0;
+	}
+	return 0;
+}
 NOOP(cinematic_screen_effect_set_filter_desaturation_tint)
 NOOP(cinematic_screen_effect_set_video)
 BI(cinematic_suppress_bsp_object_creation) { ENTER(cinematic_suppress_bsp_object_creation); if (m) m->misc.suppress_bsp_objects = (uint8_t)argb(a, n, 0, 0); return 0; }
@@ -1066,11 +1078,15 @@ void misc_tick(mission_t *m)
 		if (object_frame(m, m->misc.cam_anchor_obj1 - 1, &f)) cine_cam_set_anchor(&m->cine->cam, &f);
 	}
 	misc_nav_refresh(m);
-	if (m->cine) {                                          /* the veil eases in over a third of a second and out over a second */
+	if (m->cine) {                                          /* the veil: the filter's first pair lerped over its duration (XBE 0x61aa0), gone when the effect stops */
 		cine_screen *sc = &m->cine->screen;
-		float want = (sc->effect && sc->filter) ? 1.0f : 0.0f;
-		if (sc->veil < want) { sc->veil += 1.0f / 10.0f; if (sc->veil > want) sc->veil = want; }
-		else if (sc->veil > want) { sc->veil -= 1.0f / 30.0f; if (sc->veil < want) sc->veil = want; }
+		if (sc->effect && sc->filter) {
+			float t = sc->filter_ticks ? (float)sc->filter_elapsed / (float)sc->filter_ticks : 1.0f;
+			if (t > 1.0f) t = 1.0f;
+			sc->veil = sc->filter_from + (sc->filter_to - sc->filter_from) * t;
+			if (sc->veil < 0.0f) sc->veil = 0.0f;
+			if (sc->filter_elapsed < 0xFFFFFFu) sc->filter_elapsed++;
+		} else sc->veil = 0.0f;
 	}
 }
 
