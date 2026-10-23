@@ -1482,6 +1482,7 @@ BI(player_add_equipment)      /* player0 gets the default weapon (the first weap
 		int armed = 0, i;
 		for (i = 0; i < GAME_SLOTS; i++) if (M->game->slot[i].weapon >= 0) armed = 1;
 		game_give_default_weapons(M->game);
+		if (!armed) { M->game->grenades[0] += pl.equip_grenades[0]; M->game->grenades[1] += pl.equip_grenades[1]; }      /* the profile's grenades are added to what he carries */
 		if (!armed && pl.weapon_total && M->game->cur >= 0) {            /* the profile's own ammunition (bridge0_profile: the pistol with 6 + 48) */
 			game_slot_t *sl = &M->game->slot[M->game->cur];
 			if (sl->def.magazine_count) weapon_state_set_ammo(&sl->st, &sl->def, 0, pl.weapon_loaded, pl.weapon_total);

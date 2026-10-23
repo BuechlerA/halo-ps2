@@ -226,5 +226,6 @@ scen_player scen_get_player(const scen_section *s)
 	r.weapon_hand_marker[SCEN_NAME_LEN - 1] = 0;
 	r.weapon_loaded = rd16(p + 72);
 	r.weapon_total = rd16(p + 74);
+	for (k = 0; k < 2; k++) { r.start_grenades[k] = p[76 + k]; r.equip_grenades[k] = p[78 + k]; }
 	return r;
 }

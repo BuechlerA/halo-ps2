@@ -197,6 +197,14 @@ void mapp_tick(const game_input_t *in)
 		bot_tick(&s_bot, &s_m, s_env.gd->has_path ? &s_env.gd->path : NULL, s_pscratch, &bot_in);
 		in = &bot_in;
 	}
+	{                                                       /* debug (cfg setglobal <tick> <script global>): sets a boolean script global once, to skip a cutscene the bot cannot play (a report must say so) */
+		int at = (int)cfg_int(s_env.cfg, "setglobal", 0);
+		const char *gn = cfg_str(s_env.cfg, "setglobalname", NULL);
+		if (at > 0 && gn && s_m.tick == (uint32_t)at && s_m.hs && s_m.scripts) {
+			int gi = hs_find_global(s_m.scripts, gn);
+			printf("[mission] t%u debug: global %s %s\n", (unsigned)s_m.tick, gn, gi >= 0 && hs_global_set(s_m.hs, (unsigned)gi, hs_make_bool(1)) == 0 ? "set true" : "not found");
+		}
+	}
 	mission_tick(&s_m, in);
 	if (cfg_int(s_env.cfg, "missionlog", 0) && (s_m.tick - s_status_tick) >= 300) { s_status_tick = s_m.tick; mapp_log_status(); }
 }

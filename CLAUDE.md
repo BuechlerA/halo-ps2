@@ -15,7 +15,7 @@ order (01 → 06) before changing architecture; `docs/06-decisions.md` is the AD
   runs the ELF in PCSX2 against a config (`docs/10-m1-hardware-check.md`); `scripts/profile-m1.sh` runs the M1
   fly-throughs (incl. `a10game`, the Gate M3 shooting scenario with scripted `input` lines; `game <prefix>` in halo.cfg turns gameplay on); `fbdump <frame>` in the config + `scripts/fb2png.py` is how rendering is checked without a screen.
 - Phase 4 mission: `build-world.sh` also writes `.script .ai .path .dev .cin .strm .hp2` (strm is ~120 MB per map); `scripts/paths/a10mission.cfg` is the Gate M4 run (`mission 1`, `bot 1`: the in-engine
-  mission bot, ADR-054; `exitonend 1` stops at game_won/lost; `SPEED=n scripts/run-headless.sh ...` speeds PCSX2 up for development only, timings then mean nothing; `threaddump 1` lists what scripts wait on).
+  mission bot, ADR-054; `exitonend 1` stops at game_won/lost; `SPEED=n scripts/run-headless.sh ...` speeds PCSX2 up for development only, timings then mean nothing; `threaddump 1` lists what scripts wait on; `setglobal <tick>` + `setglobalname <global>` sets one boolean script global, e.g. `mark_bridge_cutscene`, to get the bot past a cutscene it cannot play: say so in reports).
   Reports must state the bot's assists (teleports) and what it does not cover.
 - Xbox reference: `scripts/xemu-setup.sh` then `scripts/xemu-run.sh` boot the ISO in xemu for parity checks (`docs/35-xbox-reference.md`, ADR-055); the
   MCPX/BIOS/HDD files are user-supplied (`~/Developer/xbox-bios/`) and never committed.

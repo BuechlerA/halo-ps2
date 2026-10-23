@@ -292,9 +292,11 @@ static void test_player_equipment(void)
 	fresh(42, 0);
 	pl = scen_get_player(F.mission.ow.scen);
 	game_drop_weapons(&F.game);
+	F.game.grenades[0] = pl.start_grenades[0]; F.game.grenades[1] = pl.start_grenades[1];
 	CHECK(F.game.cur < 0 && F.game.unarmed_start);
 	call3("player_add_equipment", HS_VOID, mfix_obj(F.mission.player_obj), mfix_handle(3, 19), mfix_bool(0));
 	CHECK(F.game.cur >= 0 && F.game.slot[F.game.cur].weapon >= 0);
+	CHECK(F.game.grenades[0] == pl.start_grenades[0] + pl.equip_grenades[0] && F.game.grenades[1] == pl.start_grenades[1] + pl.equip_grenades[1]);
 	if (F.game.cur >= 0) {
 		const game_slot_t *sl = &F.game.slot[F.game.cur];
 		if (pl.weapon_total) CHECK(sl->st.loaded[0] == pl.weapon_loaded && sl->st.reserve[0] == pl.weapon_total);        /* packs built before ADR-085 carry no ammunition: the weapon's own */
