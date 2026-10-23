@@ -974,8 +974,10 @@ engine used to start with 2 + 2.
 after the bridge cutscene (`$mark_bridge_cutscene`), which the bot cannot play, so a debug key forces that one global (`setglobal 8000` + `setglobalname mark_bridge_cutscene`: a shortcut, to be named in any report);
 then the bot walks to the weapon room and the log shows `t12815 player_add_equipment: hands were empty, weapon slot 0, profile ammo 6 + 48`. From the closed pod's eye position (cinematic camera locked there with
 `camlock -56.41 0.41 1.04 0 0`, tick 6980) the pod's glass shows as a haze over the room: it is drawn from inside.
-**Not done**: the real convolution and desaturation of the tutorial's first sight (the veil is a flat pale wash: a framebuffer blur on the PS2 would need a readback pass whose GS cost cannot be measured in PCSX2, ADR-022), a
-full playthrough to the end of the level (the bot does not finish it with or without these changes).
+**Full run**: `a10mission.cfg` (difficulty 3, bot, `startunarmed`, nothing forced, frame cap raised from 21700 to 26000 because the level needs 22540) ends at `game_won` after 738 s: pod sequence, unarmed start, `player_add_equipment` at tick 16372
+("hands were empty, weapon slot 0, profile ammo 6 + 48", by the script, after the bridge cutscene), and the rest of the level to the win; the bot used 95 assists (42 rescues) and does not cover
+the tutorial path (difficulty 1 was run separately with scripted input, see above). There is no Xbox capture of the gameplay after the intro, so that part is the scenario's own scripts and data running, not a comparison.
+**Not done**: the real convolution and desaturation of the tutorial's first sight (the veil is a flat pale wash: a framebuffer blur on the PS2 would need a readback pass whose GS cost cannot be measured in PCSX2, ADR-022).
 **Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
 exit and release of the player body.
 
