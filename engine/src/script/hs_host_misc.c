@@ -646,7 +646,7 @@ static uint32_t hud_message_text(const mission_t *m, uint32_t idx, uint16_t *out
 	return pos;
 }
 
-BI(show_hud_help_text) { ENTER(show_hud_help_text); if (m && m->cine) cine_msg_set_visible(m->cine, CINE_MSG_HELP, argb(a, n, 0, 1)); return 0; }
+BI(show_hud_help_text) { ENTER(show_hud_help_text); if (m && m->log_anim) printf("[anim] t%u show_hud_help_text %d\n", (unsigned)m->tick, argb(a, n, 0, 1)); if (m && m->cine) cine_msg_set_visible(m->cine, CINE_MSG_HELP, argb(a, n, 0, 1)); return 0; }
 BI(enable_hud_help_flash) { ENTER(enable_hud_help_flash); if (m) m->misc.help_flash = (uint8_t)argb(a, n, 0, 0); return 0; }
 
 BI(hud_set_help_text)
@@ -659,6 +659,7 @@ BI(hud_set_help_text)
 	units = hud_message_text(m, (uint32_t)idx, t, CINE_TEXT_UNITS);
 	if (units == HUDDEF_STR_NONE) { mission_note_missing(m, "hud_set_help_text"); return 0; }
 	cine_msg_post(m->cine, CINE_MSG_HELP, t, units, 0);
+	if (m->log_anim) printf("[anim] t%u hud_set_help_text %d units %u\n", (unsigned)m->tick, (int)idx, (unsigned)units);
 	m->misc.help_shown++;
 	m->misc.help_msg1 = (int16_t)(idx + 1 > 32767 ? 32767 : idx + 1);
 	return 0;

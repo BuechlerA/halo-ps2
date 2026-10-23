@@ -1023,6 +1023,16 @@ u64 rb_extra_tex0(unsigned key_base, unsigned index, const tex_image_t *img, u64
 	return resident_tex0(key_base + index, img, tfx);
 }
 
+/* The same, for a texture that must never be evicted (the HUD font): allocated pinned, so ask for it early in a frame / right after a flush, while a free run exists. */
+u64 rb_extra_tex0_pinned(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx)
+{
+	u64 r;
+	s_tc.pin_next = 1;
+	r = resident_tex0(key_base + index, img, tfx);
+	s_tc.pin_next = 0;
+	return r;
+}
+
 void bsp_render_set_overlay_pass(render_pass_fn fn, void *user)
 {
 	s_overlay_pass = fn;

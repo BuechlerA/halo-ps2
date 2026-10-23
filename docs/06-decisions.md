@@ -977,6 +977,14 @@ then the bot walks to the weapon room and the log shows `t12815 player_add_equip
 **Full run**: `a10mission.cfg` (difficulty 3, bot, `startunarmed`, nothing forced, frame cap raised from 21700 to 26000 because the level needs 22540) ends at `game_won` after 738 s: pod sequence, unarmed start, `player_add_equipment` at tick 16372
 ("hands were empty, weapon slot 0, profile ammo 6 + 48", by the script, after the bridge cutscene), and the rest of the level to the win; the bot used 95 assists (42 rescues) and does not cover
 the tutorial path (difficulty 1 was run separately with scripted input, see above). There is no Xbox capture of the gameplay after the intro, so that part is the scenario's own scripts and data running, not a comparison.
+**Post-hand-off comparison with the video (ticks 7330 .. 7470, bot off)**: the Xbox video does contain the gameplay that follows the pod (it runs 467 s; the first minute after the white fade shows the corridor, Keyes' technician
+walking up, the checkpoint line): so the hand-off was compared against it, and four differences were fixed. (1) Empty hands drew the first person arms (two gauntlets); the Xbox shows nothing: the arms are drawn only with a
+weapon. (2) The HUD text (help line `» Find Captain Keyes on the Bridge`, `Checkpoint... done`) did not appear at all with the bot off: the overlay pass runs last and the font atlas (PSMT8 256 x 256 = 8 contiguous
+pages) found no free run in the texture window (`TC_FULL`, free pages 11 but scattered) for hundreds of frames; the font is now claimed early in the frame (`hud_render_prefetch`, called from the sky pass) and pinned
+(`tc_entry.pinned`, `rb_extra_tex0_pinned`), and the other HUD sprites are touched early too. (3) The text is the HUD's pale blue (white was invisible against the bright wall), the objective is not drawn on the HUD (it is
+only in the pause menu: the Xbox shows the help line), the line is `»` (Latin-1 0xBB, was `?`), and the checkpoint message is the tag data's own `Checkpoint... done`, shown under the help line for 150 ticks.
+Still different: the layout of the HUD itself (ours has a second small bar at the top left and a grey tracker ring where the Xbox has the shield and health bars together at the top right and a blue tracker disc), and the
+player's movement (the bot off stands still, the video walks).
 **Not done**: the real convolution and desaturation of the tutorial's first sight (the veil is a flat pale wash: a framebuffer blur on the PS2 would need a readback pass whose GS cost cannot be measured in PCSX2, ADR-022).
 **Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
 exit and release of the player body.

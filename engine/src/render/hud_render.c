@@ -1,7 +1,32 @@
+#define HUD_MSG_COLOUR 0x80785646u     /* the HUD's pale blue (the Xbox's help and checkpoint lines are blue-grey, not white: white vanished against the bright hangar wall) */
 #include "render/hud_render.h"
 #include "platform/timer.h"
 #include "platform/video.h"
 #include <string.h>
+
+static void prefetch_tex(hud_render_t *h, unsigned tex, int pin)
+{
+	tex_image_t img;
+	if (h->tex && h->tex->texture && h->tex->texture(h->tex->user, (int)tex, &img) == 0) (void)(pin ? rb_extra_tex0_pinned(h->key_base, tex, &img, 0) : rb_extra_tex0(h->key_base, tex, &img, 0));
+}
+
+void hud_render_prefetch(hud_render_t *h)
+{
+	static hud_frame_t pf;
+	unsigned i;
+	int text = 0;
+	if (!h->enabled || !h->game || !h->tex || !h->hud) return;
+	if (!(h->cine && h->cine->screen.cinematic)) {
+		hud_build(&pf, h->hud, h->fonts, h->game, h->tick, h->state);
+		for (i = 0; i < pf.n; i++) prefetch_tex(h, (unsigned)pf.q[i].tex, 0);
+	}
+	text = 1;                                           /* the font stays resident (pinned) whether or not there is text this frame */
+	if (text && h->fonts && h->fonts->font_count) {
+		huddef_glyph gl;
+		int fi = huddef_find_font(h->fonts, huddef_get_globals(h->hud).font_sp);
+		if (huddef_find_glyph(h->fonts, (uint32_t)(fi < 0 ? 0 : fi), 'A', &gl) && gl.tex != HUDDEF_NONE) prefetch_tex(h, (unsigned)gl.tex, 1);
+	}
+}
 
 void hud_render_pass(void *user, render_ctx_t *rc)
 {
@@ -53,11 +78,12 @@ void hud_render_pass(void *user, render_ctx_t *rc)
 				unsigned k;
 				float y;
 				if (!mg || !mg->units) continue;
-				for (k = 0; k < mg->units && k < CINE_TEXT_UNITS; k++) line[k] = mg->text[k] < 128 ? (char)mg->text[k] : '?';
+				if (mg->kind == CINE_MSG_OBJECTIVE) continue;            /* the objective only shows in the pause menu: the HUD line is the help text */
+				for (k = 0; k < mg->units && k < CINE_TEXT_UNITS; k++) line[k] = mg->text[k] < 256 ? (char)mg->text[k] : '?';
 				line[k] = 0;
-				y = mg->kind == CINE_MSG_SUBTITLE ? 392.0f : mg->kind == CINE_MSG_OBJECTIVE ? 90.0f : 60.0f;
+				y = mg->kind == CINE_MSG_SUBTITLE ? 392.0f : mg->kind == CINE_MSG_OBJECTIVE ? 90.0f : 96.0f;
 				if (cs->screen.cinematic && mg->kind != CINE_MSG_SUBTITLE) continue;
-				hud_text(&tf, h->fonts, font, 60.0f, y, line, 0x80808080u);
+				hud_text(&tf, h->fonts, font, 60.0f, y, line, HUD_MSG_COLOUR);
 			}
 			for (i = 0; i < CINE_TITLE_SLOTS; i++) {
 				const cine_title *tt = &cs->titles[i];

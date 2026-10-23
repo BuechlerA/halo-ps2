@@ -18,6 +18,7 @@ typedef struct {
 	uint32_t key, last_used;
 	uint16_t first_page, pages, clut_slot;
 	uint8_t  valid;
+	uint8_t  pinned;                    /* never a victim (the HUD font: the overlay pass runs last, when no free run of its 8 pages is left) */
 } tc_entry;
 
 typedef struct {
@@ -27,6 +28,7 @@ typedef struct {
 	uint8_t  clut_used[256];
 	uint16_t total_pages, clut_slots, max_keys;
 	uint32_t frame;
+	uint8_t  pin_next;                  /* entries allocated while this is set are pinned */
 	uint32_t upload_bytes, budget_bytes;   /* this frame */
 	/* statistics for the profiler */
 	uint32_t hits, misses, evictions, deferred, failed;

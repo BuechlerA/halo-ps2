@@ -571,7 +571,7 @@ void obj_render_pass(void *user, render_ctx_t *rc)
 	}
 
 	o->want_hi = 0;
-	if (o->draw_fp && !o->hide_fp && o->fp && o->fp->active) {
+	if (o->draw_fp && !o->hide_fp && o->fp && o->fp->active && o->fp->weapon_model >= 0) {          /* empty hands show nothing: the Xbox's first person view without a weapon has no arms (a10 up to the bridge) */
 		const fpview_t *f = o->fp;
 		scen_light light;
 		uint16_t perm[OBJ_MAX_REGIONS];

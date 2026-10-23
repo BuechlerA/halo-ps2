@@ -93,6 +93,12 @@ static uint32_t   s_unit_hud;
 static fx_render_t s_fxr;
 static float cine_near_floor = CAMERA_NEAR_DEFAULT;     /* cfg cinenear: the lowest near plane of a cinematic camera */
 
+static void sky_pass(void *u, struct render_ctx *rc)
+{
+	obj_render_sky(u, rc);
+	hud_render_prefetch(&s_hudr);          /* before the world has taken the texture window */
+}
+
 static void overlay_pass(void *u, struct render_ctx *rc)
 {
 	(void)u;
@@ -212,7 +218,7 @@ static int load_bsp(int idx);
 static void do_checkpoint_save(void)
 {
 	if (mapp_active()) mapp_checkpoint_save(); else checkpoint_save(&s_ckpt, &s_game, &s_fp, s_fx.def ? &s_fx : NULL);
-	hud_message(&s_hs, "Checkpoint saved", 90);
+	hud_message(&s_hs, "Checkpoint... done", 150);        /* the tag data's own string */
 	printf("[game] checkpoint saved at tick %u\n", s_game.tick);
 }
 
@@ -559,7 +565,7 @@ int main(int argc, char *argv[])
 		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
 		s_objr.hires_key_base = bsp_render_reserve_keys(s_world.obj_tex.has ? s_world.obj_tex.tex.texture_count : 0);       /* the key range is reserved whether or not the staging ring fits */
 		s_bhires_key = bsp_render_reserve_keys((unsigned)s_world.source.texture_count); s_bhires_keyed = 1;     /* the BSP set's range (docs/37) */
-		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
+		bsp_render_set_sky_pass(sky_pass, &s_objr);
 		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
 	printf("[mem] level arena: %u KB used of %u KB\n", (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024));

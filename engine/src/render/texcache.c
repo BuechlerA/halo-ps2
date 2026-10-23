@@ -76,7 +76,7 @@ static int pick_victim(const tc_t *t)
 	unsigned i;
 	for (i = 0; i < TC_MAX_ENTRIES; i++) {
 		const tc_entry *x = &t->entry[i];
-		if (!x->valid || x->last_used + 1 >= t->frame) continue;
+		if (!x->valid || x->pinned || x->last_used + 1 >= t->frame) continue;
 		if (best < 0 || x->last_used < t->entry[best].last_used) best = (int)i;
 	}
 	return best;
@@ -109,7 +109,7 @@ tc_result tc_acquire(tc_t *t, uint32_t key, unsigned pages, uint32_t bytes, cons
 	{
 		tc_entry *x = &t->entry[i];
 		x->key = key; x->last_used = t->frame; x->first_page = (uint16_t)run;
-		x->pages = (uint16_t)pages; x->clut_slot = (uint16_t)clut; x->valid = 1;
+		x->pages = (uint16_t)pages; x->clut_slot = (uint16_t)clut; x->valid = 1; x->pinned = t->pin_next;
 		for (slot = 0; slot < (int)pages; slot++) t->owner[run + slot] = (uint16_t)(i + 1);
 		t->clut_used[clut] = 1;
 		t->map[key] = (uint16_t)(i + 1);

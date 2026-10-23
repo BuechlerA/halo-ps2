@@ -27,6 +27,7 @@ void rb_set_pending(u64 pair);
 u64  rb_object_tex0(unsigned index, const tex_image_t *img, u64 tfx);
 /* GS TEX0 of texture `index` of a reserved key range (bsp_render_reserve_keys), 0 if it cannot be drawn this frame. */
 u64  rb_extra_tex0(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx);
+u64  rb_extra_tex0_pinned(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx);
 /* Is texture `index` of that key range in the GS texture cache now (no touch)? */
 int  rb_extra_resident(unsigned key_base, unsigned index);
 /* Fog constants in the F16 form of bsp.vsm (abs 9 / model abs 4): k, b. */

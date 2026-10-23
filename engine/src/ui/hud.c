@@ -308,7 +308,7 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 	if (fonts && fonts->font_count) {
 		unsigned i;
 		for (i = 0; st && i < HUD_MSG_COUNT; i++)
-			if (st->ticks[i] && st->text[i][0]) hud_text(f, fonts, gl.font_sp, 24.0f, 372.0f + 22.0f * (float)i, st->text[i], 0x80808080u);
+			if (st->ticks[i] && st->text[i][0]) hud_text(f, fonts, gl.font_sp, 24.0f, 118.0f + 22.0f * (float)i, st->text[i], 0x80785646u);
 		if (g->nearby_weapon >= 0 && g->objects && g->ow.scen) {
 			char line[HUD_MSG_LEN];
 			scen_def d = scen_get_def(g->ow.scen, (uint32_t)g->objects->obj[g->nearby_weapon].def);

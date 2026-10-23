@@ -35,6 +35,10 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
    of the host domains (`hs_host_register_*`, the later one overrides).
 10. Compare the end of a cutscene with the bot off (`bot 0`): the bot steers the player the moment control returns, which hides where the hand-off really puts the camera.
 
+11. **The video continues after the pod** (it is 467 s long): the first minutes of gameplay are a reference too (empty hands, one help line and `Checkpoint... done`, the technician walking up). Compare the hand-off with
+    `scripts/cmp-intro.sh` at ticks 7300 .. 8700 (offset 1.41) with `bot 0` in the cfg (`sed 's/^bot 1/bot 0/'`).
+12. A HUD element that is "missing" may only have failed to get texture pages: the overlay pass runs after the world, the 8-page font needs a contiguous run, and scattered free pages do not count (ADR-085, pinned font).
+
 ## Open (see ADR-081 .. 085)
-The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's real blur filter (a veil stands in), the scorpions' colour, the ship hum, the title-safe
+The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's real blur filter (a veil stands in), the HUD layout against the video's (two bars top left / grey tracker vs shield and health top right and a blue tracker disc), the scorpions' colour, the ship hum, the title-safe
 margins of the Xbox view (we fill the whole buffer), the `camera_ticks` durations (the director divides ticks by 30 as an integer).
