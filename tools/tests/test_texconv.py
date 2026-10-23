@@ -212,6 +212,17 @@ def test_lightmap_curve() -> None:
     assert abs(quarter - 127 * 0.25 ** tc.LM_GAMMA) <= 1 and quarter > 127 // 4
 
 
+def test_bsp_tone() -> None:
+    # per BSP calibration (ADR-081): the table is keyed by the BSP tag path's last component, either slash, and a BSP without an entry keeps the default curve
+    assert tc.bsp_tone("levels\\a10\\x10hangar") == tc.BSP_TONE["x10hangar"] and tc.bsp_tone("levels/a10/a10a") == tc.BSP_TONE["a10a"]
+    assert tc.bsp_tone("levels\\a10\\a10b") is None and tc.bsp_tone("") is None
+    for gain, gamma, ogain, ogamma in tc.BSP_TONE.values():
+        assert 0.0 < gain <= 2.0 and 0.0 < ogain <= 4.0 and gamma in (0.5, 1.0) and ogamma in (0.5, 1.0)
+    # the hangar's linear curve keeps dark texels dark where the default lifts them (a texel of 13 -> index 10 against 38)
+    gain, gamma, _, _ = tc.BSP_TONE["x10hangar"]
+    assert tc.lightmap_curve(13, gain, gamma) < tc.lightmap_curve(13, 1.7) // 3 and tc.lightmap_curve(226, gain, gamma) > 150
+
+
 def test_vertex_chroma() -> None:
     full = lambda page, uv: tc.vertex_chroma(page, uv, 1.0)     # strength 1: the exact page chroma
     grey = tc.Rgba(4, 4, bytes([100, 100, 100, 255]) * 16)
@@ -548,6 +559,7 @@ def main() -> None:
     test_convert()
     test_lightmaps()
     test_lightmap_curve()
+    test_bsp_tone()
     test_vertex_chroma()
     test_sections()
     test_shaders()

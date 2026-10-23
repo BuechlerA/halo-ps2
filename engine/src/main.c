@@ -728,6 +728,9 @@ int main(int argc, char *argv[])
 						d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
 						printf("[near] #%u %s type %u model %d graph %d anim %u frame %.1f flags %02x at %.2f %.2f %.2f (d %.2f)\n", oi, d.name, ob->type, ob->model, ob->graph, (unsigned)ob->anim, (double)ob->frame, ob->flags,
 						       (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (double)sqrtf(dx * dx + dy * dy + dz * dz));
+						if (cfg_int(&s_cfg, "nearaxes", 0))
+							printf("[near]    root fwd %.2f %.2f %.2f  left %.2f %.2f %.2f  up %.2f %.2f %.2f\n", (double)ob->root.m[0][0], (double)ob->root.m[0][1], (double)ob->root.m[0][2],
+							       (double)ob->root.m[1][0], (double)ob->root.m[1][1], (double)ob->root.m[1][2], (double)ob->root.m[2][0], (double)ob->root.m[2][1], (double)ob->root.m[2][2]);
 						if (cfg_int(&s_cfg, "nearnodes", 0) && ob->type == 1) {
 							static object_nodes_t nn;
 							unsigned ni, nc = objects_pose(ob, &s_objr.world, &nn);
@@ -894,6 +897,13 @@ int main(int argc, char *argv[])
 				       (unsigned)rs->pages_free, (unsigned)bsp_render_cache_pages());
 			}
 			if (s_hires_open) printf("[hires] %u loads, %u KB read, %u refused (over the per frame budget)\n", (unsigned)s_hires.loads, (unsigned)(s_hires.bytes_read / 1024u), (unsigned)s_hires.refused);
+			if (s_stream_on) {
+				const stream_stats *ss = stream_get_stats(&s_sp);
+				printf("[stream] %u plays, %u steals, %u finished, %u loop passes; %u reads %u KB, %u read errors; underruns voice %u (%u frames) output %u; ee ms avg %.2f max %.2f per service call\n",
+				       (unsigned)ss->plays, (unsigned)ss->steals, (unsigned)ss->finished, (unsigned)ss->loop_passes, (unsigned)ss->reads, (unsigned)(ss->read_bytes / 1024u),
+				       (unsigned)ss->read_errors, (unsigned)ss->voice_underruns, (unsigned)ss->voice_underrun_frames, (unsigned)ss->out_underruns,
+				       (double)(ss->service_calls ? ss->ms_sum / (float)ss->service_calls : 0.0f), (double)ss->ms_max);
+			}
 			printf("[done] frames=%u dropped=%u (%.2f%%)\n", s_prof.frames, s_prof.dropped,
 			       100.0f * (float)s_prof.dropped / (float)(s_prof.frames ? s_prof.frames : 1));
 			if (cfg_int(&s_cfg, "hold", 0)) {

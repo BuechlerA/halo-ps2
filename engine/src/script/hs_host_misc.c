@@ -323,6 +323,10 @@ static float class_gain(const mission_t *m, unsigned group)
 }
 
 static unsigned kind_group(unsigned kind) { return kind == STRM_KIND_MUSIC ? MISC_GAIN_MUSIC : kind == STRM_KIND_AMBIENCE ? MISC_GAIN_AMBIENCE : MISC_GAIN_DIALOGUE; }
+/* A mono dialogue line against the stereo score, measured on the Xbox video: the lines sit 3 .. 4 dB under the player's unity (0.45 .. 0.6 in clear
+ * passages, 0.47 median over the windowed fits): equal-power centring, each channel at 1 / sqrt(2). */
+#define MONO_CENTRE_TRIM 0.70710678f
+
 static int kind_slot(unsigned kind) { return kind == STRM_KIND_MUSIC ? STREAM_SLOT_MUSIC : kind == STRM_KIND_AMBIENCE ? STREAM_SLOT_AMBIENCE : STREAM_SLOT_DIALOGUE; }
 
 /* Gain and pan of a mono dialogue or effect source `obj` heard by the player: linear distance attenuation between the sound's min and max
@@ -406,8 +410,13 @@ BI(sound_impulse_start)
 		take = variant;
 		float gain, pan, cg = class_gain(m, kind_group(ssn.kind));
 		slot = kind_slot(ssn.kind);
+		if (m->stream && stream_slot_busy(m->stream, slot)) {          /* impulses overlap (the marines' cheer, a line over the foley): a free layer takes it */
+			int f = stream_free_slot(m->stream, STREAM_SLOT_LAYER0, STREAM_LAYERS);
+			if (f >= 0) slot = f;
+		}
 		dur = ssn.max_play_ms ? (uint32_t)((uint64_t)ssn.max_play_ms * 30u / 1000u) : frames_to_ticks(st.frames, st.rate);   /* the Xbox: tag +0x84 ms * 30 / 1000 (0x2b9d0) */
 		spatial(m, obj, ssn.min_dist, ssn.max_dist, scale * cg, &gain, &pan);
+		if (st.channels == 1) gain *= MONO_CENTRE_TRIM;                /* the player's pan law is linear (centre = full level in both channels); the Xbox centres a mono source with equal power */
 		for (i = 0; i < MISC_IMPULSES; i++)                         /* the slot's previous sound is replaced: its time is over */
 			if (m->misc.imp[i].used && m->misc.imp[i].slot == slot && m->misc.imp[i].tag != tag) { m->misc.imp[i].slot = -1; m->misc.imp[i].end_tick = m->tick; }
 		if (m->stream && gain > 0.001f) stream_play_sound(m->stream, slot, tag, (int)variant, 0, gain, pan, -1.0f);
@@ -466,6 +475,15 @@ static misc_loop *loop_find(mission_t *m, uint32_t tag)
 	return NULL;
 }
 
+/* A cinematic's score and foley are sound_looping tags flagged "not a loop": each plays through once and the script never stops one, so every new
+ * start layers over the ones still running (x10: music01 for 114 s, foley1 from 72 s, music02 from 112 s, ...). */
+static int loop_once(const mission_t *m, uint32_t tag)
+{
+	const strm_section *ss = strm_of(m);
+	int li = ss ? strm_find_loop(ss, tag) : -1;
+	return li >= 0 && (strm_get_loop(ss, (uint32_t)li).flags & STRM_LOOP_NOT_A_LOOP) != 0;
+}
+
 /* The stream slot a sound_looping tag plays in, -1 when it has no streamed track (a resident loop: goes through the hook). */
 static int loop_route(const mission_t *m, uint32_t tag)
 {
@@ -515,14 +533,22 @@ BI(sound_looping_start)
 	slot = loop_route(m, tag);
 	if (slot >= 0) {
 		unsigned group = slot == STREAM_SLOT_MUSIC ? MISC_GAIN_MUSIC : MISC_GAIN_AMBIENCE;
+		int once = loop_once(m, tag);
+		if (once && m->stream && stream_slot_busy(m->stream, slot)) {          /* layered: the next free voice (the kind's own slot first) */
+			int f = stream_free_slot(m->stream, STREAM_SLOT_LAYER0, STREAM_LAYERS);
+			if (f >= 0) slot = f;
+		}
 		for (i = 0; i < MISC_LOOPS; i++)                             /* one voice per slot: its previous loop stops */
 			if (m->misc.loops[i].used && m->misc.loops[i].slot == slot && m->misc.loops[i].tag != tag) m->misc.loops[i].running = 0;
 		if (m->stream) {
-			if (stream_play_loop(m->stream, slot, tag, 0, scale * class_gain(m, group), 0.0f, -1.0f) != 0) slot = -1;
+			/* sound_class_set_gain "music" 0 at the start of the x10 cinematic mutes the level's music, not the cinematic's own score (audible from the
+			 * first second in the Xbox video): a play-once track takes the gain it is started with. */
+			if (stream_play_loop(m->stream, slot, tag, 0, once ? scale : scale * class_gain(m, group), 0.0f, -1.0f) != 0) slot = -1;
 			else if (lp->alt) stream_loop_alternate(m->stream, slot, 1);
 		}
 	}
 	if (slot < 0 && m->misc_env.loop_start) m->misc_env.loop_start(m->misc_env.user, tag, obj >= 0 ? pos : NULL, scale);
+	if (m->log) printf("[camset] t%u loop %08x slot %d scale %.2f\n", (unsigned)m->tick, (unsigned)tag, slot, scale);
 	lp->used = 1; lp->tag = tag; lp->slot = (int8_t)slot; lp->running = 1;
 	m->misc.loops_started++;
 	return 0;
@@ -534,7 +560,8 @@ BI(sound_looping_stop)
 	misc_loop *lp;
 	ENTER(sound_looping_stop);
 	if (!m || !(lp = loop_find(m, tag)) || !lp->running) return 0;
-	if (lp->slot >= 0) { if (m->stream) stream_stop(m->stream, lp->slot, -1.0f); }
+	if (m->log) printf("[camset] t%u loopstop %08x\n", (unsigned)m->tick, (unsigned)tag);
+	if (lp->slot >= 0) { if (m->stream && stream_slot_owner(m->stream, lp->slot) == tag) stream_stop(m->stream, lp->slot, -1.0f); }
 	else if (m->misc_env.loop_stop) m->misc_env.loop_stop(m->misc_env.user, tag);
 	lp->running = 0;
 	return 0;
@@ -556,7 +583,7 @@ BI(sound_looping_set_alternate)
 		lp->used = 1; lp->tag = tag; lp->slot = -1;
 	}
 	lp->alt = (uint8_t)argb(a, n, 1, 0);
-	if (lp->running && lp->slot >= 0 && m->stream) stream_loop_alternate(m->stream, lp->slot, lp->alt);
+	if (lp->running && lp->slot >= 0 && m->stream && stream_slot_owner(m->stream, lp->slot) == tag) stream_loop_alternate(m->stream, lp->slot, lp->alt);
 	return 0;
 }
 

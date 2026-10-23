@@ -8,7 +8,9 @@
  *  - the EE glue (`#ifdef _EE`, at the end of stream.c): a stream_io on top of an IO thread that makes blocking fio calls, the audsrv output
  *    (what blocks and what does not is documented there), and the entry points `stream_ee_tick` (30 Hz) and `stream_ee_pump` (in between).
  *
- * Voices: three slots, one per kind (STREAM_SLOT_*). A slot plays one sound at a time; starting another in a busy slot replaces it.
+ * Voices: six slots. The first three belong to a kind (STREAM_SLOT_*), the other three are layers (STREAM_SLOT_LAYER0..) the caller hands out
+ * to sounds that overlap (a cinematic's score, its foley and a spoken line play at once). A slot plays one sound at a time; starting another in
+ * a busy slot replaces it.
  * The tick (30 Hz) does the I/O, the decoding and the state machine; mixing is sample accurate and happens in stream_pump.
  *
  * Timeline of a looping sound (sound_looping track): start (once) -> loop (repeats; alt_loop replaces it from the next pass on after
@@ -20,8 +22,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define STREAM_VOICES 3
-enum { STREAM_SLOT_DIALOGUE = 0, STREAM_SLOT_MUSIC = 1, STREAM_SLOT_AMBIENCE = 2 };
+#define STREAM_VOICES 6
+enum { STREAM_SLOT_DIALOGUE = 0, STREAM_SLOT_MUSIC = 1, STREAM_SLOT_AMBIENCE = 2, STREAM_SLOT_LAYER0 = 3 };
+#define STREAM_LAYERS (STREAM_VOICES - STREAM_SLOT_LAYER0)
 
 #define STREAM_MIX_RATE 48000u            /* output rate; stereo, 16-bit */
 #define STREAM_CHUNK_BYTES 32760u         /* read size: 910 mono or 455 stereo blocks (a whole number of both), 31.99 KiB */
@@ -78,6 +81,8 @@ typedef struct {
 	uint8_t  plan;                        /* PLAN_* (stream.c) */
 	uint8_t  primed, stopping, starving, alt_on, has_format;
 	uint8_t  seg_open, seg_first;
+	uint8_t  once;                        /* a loop track that plays through once (strm_loop "not a loop") */
+	uint32_t owner;                       /* tag id the voice was started for (the sound_looping or sound tag), 0 none */
 	uint32_t channels;
 	uint32_t rate;
 	uint32_t step;                        /* source frames per output frame, Q16 */
@@ -130,6 +135,10 @@ void stream_loop_alternate(stream_player *p, int slot, int on);
 /* Ramps the slot's gain to `gain` (times the track gain) over `ramp_s` seconds (0: next frame). */
 void stream_set_gain(stream_player *p, int slot, float gain, float ramp_s);
 int  stream_slot_busy(const stream_player *p, int slot);
+/* Tag id the slot's voice was started for (the sound_looping tag for stream_play_loop, the sound tag for stream_play_sound), 0 when the slot is free. */
+uint32_t stream_slot_owner(const stream_player *p, int slot);
+/* First free slot of `first` .. `first + count - 1` (a caller that layers sounds), -1 when all of them are busy. */
+int  stream_free_slot(const stream_player *p, int first, int count);
 
 /* The 30 Hz tick: completes and starts reads, decodes into the voices' rings, advances the planner. Never blocks, bounded work. */
 void stream_tick(stream_player *p);

@@ -9,7 +9,7 @@
 #include "audio/strmdef.h"
 
 #define MISC_IMPULSES 16        /* sound_impulse_start records kept (for sound_impulse_time / _stop) */
-#define MISC_LOOPS 8            /* sound_looping_start records */
+#define MISC_LOOPS 16           /* sound_looping_start records */
 #define MISC_NAVPOINTS 16       /* active navigation points */
 #define MISC_SAVE_TICKS 60      /* game_saving reports true for at most this long after a save request that nobody served */
 

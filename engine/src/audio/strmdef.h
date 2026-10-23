@@ -80,6 +80,8 @@ typedef struct {
 	int32_t  snr10;                    /* encoder SNR in tenths of dB, 0x7FFFFFFF for a byte copy */
 } strm_stream;
 
+#define STRM_LOOP_NOT_A_LOOP 2u        /* strm_loop.flags: the sound_looping tag's "not a loop": its tracks play through once (cinematic score, foley) */
+
 typedef struct {
 	uint32_t tag_id, flags;
 	float    param;

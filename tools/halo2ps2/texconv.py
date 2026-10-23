@@ -105,6 +105,23 @@ LM_DEFAULT_GAIN = 1.0
 CHROMA_STRENGTH = 0.4                # how much of the lightmap colour reaches the vertices and the object lighting (1.0 = all of it)
 LM_GAMMA = 0.5                       # lightmap luminance tone curve exponent (1.0 = linear: index = luma x gain)
 LM_WHITE = 249.0                     # the brightest lightmap texel of the retail maps (a10: 249): the curve's 1.0
+# Per BSP calibration of the lightmap tone against the Xbox intro video (ADR-081): BSP tag path basename -> (lightmap gain, lightmap gamma, object gain,
+# object gamma). The bridge's curve (LM_GAMMA 0.5, gain 1.7) was fitted on a bimodal, amber BSP and lifts every shadow: the hangar and the cryo bay of the
+# Xbox are much darker and more contrasty (luminance percentiles of the aligned frames, hangar p5 .. p80: 3 8 13 20 30 40 51 66 81 against 15 23 39 53 66 73 84 99
+# 111 before). A linear gamma 1.0 with gain 0.8 fits the hangar's walls and floors, gain 1.0 the cryo bay's. The object probes (scenconv.cluster_lights) take the
+# last two numbers: on the bridge a character is lit 1.8 times as brightly as the walls around him; in the hangar (0.65 against 0.8 of the walls, percentile error
+# of the aligned frames 31 -> 3.5 .. 5.8) and the cryo bay (1.0, 22 -> 9) he is not. BSPs not listed keep the defaults.
+BSP_TONE: dict[str, tuple[float, float, float, float]] = {
+    "x10hangar": (0.8, 1.0, 0.65, 1.0),
+    "a10a": (1.0, 1.0, 1.0, 1.0),
+}
+
+
+def bsp_tone(path: str) -> tuple[float, float, float, float] | None:
+    """The BSP_TONE entry of a BSP tag path (``levels\\a10\\x10hangar``), None for the default curve."""
+    return BSP_TONE.get(path.replace("/", "\\").rsplit("\\", 1)[-1])
+
+
 PSMT4_MAX_RMS = 3.0                  # 16 colours are used when they reproduce the image within this RMS
 
 # ---- shader tag layout --------------------------------------------------------------------
@@ -1289,12 +1306,14 @@ def convert_map(path: Path, lightmaps: bool = True, lm_gain: float = LM_DEFAULT_
             rgba = lightmap_pages_rgba(m, b)
             shift = 0
             while True:
-                pages = [convert_lightmap_page(i, p, shift, lm_gain) for i, p in sorted(rgba.items())]
+                tone = bsp_tone(b.path)
+                gain, gamma = (tone[0], tone[1]) if tone else (lm_gain, LM_GAMMA)
+                pages = [convert_lightmap_page(i, p, shift, gain, gamma) for i, p in sorted(rgba.items())]
                 if sum(len(p.pixels) for p in pages) <= LM_BUDGET_BYTES or shift >= 3:
                     break
                 shift += 1
             lm_pages[b.index], lm_shift[b.index] = pages, shift
-            sections.append((f"LM{b.index}", build_lmap(pages, lm_gain)))
+            sections.append((f"LM{b.index}", build_lmap(pages, gain)))
     pack = hp2.build(path.stem, sections)
     return ConvertResult(pack, textures, shaders, infos, lm_pages, lm_shift, time.time() - t0,
                          untextured_mats, reasons)

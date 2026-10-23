@@ -719,7 +719,8 @@ def map_lights(m: texconv.MapData, indices: list[int] | None) -> list[list[Clust
             mats, _ = bspconv.read_materials(block, loc)
             st = bsp.read_structure(loc, block)
             pages = texconv.lightmap_pages_rgba(m, infos[i])
-            out.append(cluster_lights(mats, st, pages, suns, OBJECT_LM_GAIN, texconv.LM_GAMMA, texconv.CHROMA_STRENGTH))
+            tone = texconv.bsp_tone(infos[i].path)
+            out.append(cluster_lights(mats, st, pages, suns, tone[2] if tone else OBJECT_LM_GAIN, tone[3] if tone else texconv.LM_GAMMA, texconv.CHROMA_STRENGTH))
     return out
 
 

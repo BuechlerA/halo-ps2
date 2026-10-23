@@ -450,11 +450,20 @@ static void test_sound(void)
 			CHECK(stream_get_stats(&g_sp)->frames_decoded > 0 && stream_get_stats(&g_sp)->plays >= 1);
 			{
 				hs_value b[3];
+				int sl;
 				b[0] = hv(d2, 24); b[1] = a[1]; b[2] = a[2];
 				call("sound_impulse_start", b, 3, HS_VOID);
+				CHECK(stream_slot_busy(&g_sp, STREAM_SLOT_LAYER0));            /* a line over a line takes a free layer: the first one plays on */
+				CHECK(stream_get_stats(&g_sp)->steals == 0);
+				CHECK(call("sound_impulse_time", a, 1, HS_SHORT).v.i > 0 && call("sound_impulse_time", b, 1, HS_SHORT).v.i > 0);
+				call("sound_impulse_start", b, 3, HS_VOID);
+				call("sound_impulse_start", b, 3, HS_VOID);                    /* the other two layers */
+				CHECK(stream_get_stats(&g_sp)->steals == 0);
+				call("sound_impulse_start", b, 3, HS_VOID);                    /* every voice busy: the dialogue slot's line is replaced, its time is over */
 				CHECK(stream_get_stats(&g_sp)->steals >= 1);
 				CHECK(call("sound_impulse_time", a, 1, HS_SHORT).v.i == 0);
 				call("sound_impulse_stop", b, 1, HS_VOID);
+				for (sl = 0; sl < STREAM_VOICES; sl++) stream_kill(&g_sp, sl);
 			}
 			for (li = 0; li < X.strm.loop_count && !music_loop; li++) {
 				strm_loop lp = strm_get_loop(&X.strm, li);
