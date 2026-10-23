@@ -60,8 +60,12 @@ Controls: `throttle_fwd` / `throttle_left` (-1..1, fractions of the unit's speed
 (0.15 + 0.85 t) and a throttle of t gives exactly t of the speed. Nothing of the capsule physics is duplicated: slopes, stairs (step height 0.25 x height), gravity (globals), jump
 (biped), crouch (biped heights, 6/s smoothing) are the player's.
 
-**Speeds are the actor's, not the player's**: `pp.run_speed / back_speed / strafe_speed / crouch_speed` = the biped's root-motion `anim_speed[]` (UNIT section: stand run front / back /
-side, crouch front). Missing values (some bipeds have only a front speed) are derived (back 0.75, side 0.8, crouch 0.5 of the front speed; no speed at all: the globals' walk speed, so
+**Speeds are the actor's, not the player's**: `pp.run_speed / back_speed / strafe_speed / crouch_speed` start as the biped's root-motion `anim_speed[]` (UNIT section: stand run front / back /
+side, crouch front) and then follow the move animation the unit actually plays (`refresh_move_speeds`, ADR-084): the ground speed of its root motion over one cycle, per posture, weapon and
+graph (the marines' `stand rifle move-front` 2.10 wu/s, `alert rifle move-front` 0.42, `alert pistol move-front` 0.67). A direction whose animation has no root motion keeps the tag's speed; cfg
+`unitspeeds 1` restores the tag speeds. Recordings carry controls, not positions (docs/28), so this is what decides where a recorded walk ends.
+**Posture**: `UF_ALERT` (set by `unit_set_seat unit "alert"`) puts a unit in the graph's `alert` block, armed or not; unarmed non-player units are alert by default (ADR-080); a unit created anew
+has no `UF_ALERT`. The `FORCE_ALERT` bit of a recording is not a posture. Missing values (some bipeds have only a front speed) are derived (back 0.75, side 0.8, crouch 0.5 of the front speed; no speed at all: the globals' walk speed, so
 a recording can still move such a unit). `UC_WALK` uses the player's walk / run ratio of the globals. Measured on a10 (four walking species with weapons: run 1.9 .. 2.6 wu/s, turn 3.1 ..
 5.9 rad/s): every measured speed (front, back, left, right, crouch) is within 1 % of the tag, turn rates within 2 % (the test requires 10 %).
 

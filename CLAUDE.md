@@ -28,3 +28,14 @@ order (01 → 06) before changing architecture; `docs/06-decisions.md` is the AD
 - Every new decision gets an ADR entry. Milestones are gated on the PCSX2 interpreter; real-console checks are
   deferred to Phase 6 (ADR-022) — do not run or request hardware tests before then unless the user asks. PCSX2
   does not model GS fill/DMA: treat GS cost as unmeasured and keep EE budgets with margin.
+
+## Ground truth and tools (cutscene work, ADR-083 / ADR-084)
+- **The Xbox executable and the tag data are the ground truth; the reference video is only an approximation.** Read the executable with `tools/xbe` (flatten, Ghidra headless
+  `analyzeHeadless <abs project dir that exists> ...`, `fn.py` / `dis.py`; docs/36) and, when a behaviour is subtle, **run its own functions under the unicorn x86 emulator**
+  (`tools/xbe/observer_oracle.py`: `python3 -m venv`, `pip install unicorn`): the camera observer is tested against it (`engine/tests/test_cine_observer.c`). Do not reconstruct a convention from
+  pictures; do not drive xemu (docs/35: the menu cannot be driven reliably).
+- Cutscene parity workflow, debug keys and the findings so far: `docs/38-cutscene-parity.md`. Offsets for `scripts/cmp-intro.sh`: 1.18 s before tick ~1400, 1.41 s after.
+- Things that bit: recordings carry controls, not positions, so a unit's speed (the move animation's ground speed) decides where it ends; `unit_set_seat unit "alert"` sets the posture, not
+  the recording's flags; objects are drawn whole or not at all; `scripttrace 2` and `find /` are slow, run them in the background; worktree `assets/` are symlinks to the main checkout (do not overwrite
+  through them); `zsh` does not split string variables (use arrays).
+- Keep the user's request literal ("take the camera info from the reverse-engineered code" meant the executable, not an emulator session). When two sources disagree, say so and ask which wins.

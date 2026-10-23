@@ -126,7 +126,8 @@ find_title / get_string` (copies UTF-16 into a caller buffer), `cinedef_get_anim
 Pure C11, no heap, no `double`, host-tested; `cine_state` is 6.5 KB. All times are ticks of 1/30 s, advanced by `cine_tick` (last in
 the tick order of [23-phase4-plan.md](23-phase4-plan.md)). Conventions are `render/camera.h`'s: +z up, yaw counter-clockwise from +x,
 positive pitch looks up, +y left, a roll is positive when the camera banks right, `fov` is the horizontal field of view in radians
-(a cutscene camera point holds 1.2217 = 70 degrees by default; whether the Xbox value is horizontal or vertical is **U**).
+(a cutscene camera point holds 1.2217 = 70 degrees by default). The Xbox renders it as `vfov = 2 atan(0.6375 tan(fov / 2))` in a 544 x 408 window, i.e. a horizontal half tangent of `0.85 tan(fov / 2)`
+(62 degrees for 70): `main.c` does the same by default (ADR-084, docs/36).
 
 | Part | API | Script built-ins it serves (usage over the ten maps) |
 |---|---|---|
@@ -139,8 +140,9 @@ positive pitch looks up, +y left, a roll is positive when the camera banks right
 
 Camera transitions: `cine_cam_set` starts from the current camera (the pose it already holds, else the player pose the host
 refreshes with `cine_cam_set_player_pose` every tick) and arrives exactly on the target after `ticks` ticks, also when interrupted
-by another call; yaw and roll interpolate along the shortest arc, position, pitch and fov linearly; `CINE_EASE_SMOOTH` is `3u^2 -
-2u^3`. A relative camera composes its pose with an anchor frame `{position, yaw}` the host updates each tick (the object's own pitch and
+by another call. The motion is **Halo's observer, ported from the executable** (ADR-084, docs/36): a quintic refitted every tick from the velocity and acceleration the camera has at that
+instant (a retarget in mid flight continues the motion), orientation as forward / up vectors rotated by one rotation vector; `ease` is ignored. The Xbox executable's own observer, run under an
+x86 emulator (`tools/xbe/observer_oracle.py`), is the test oracle (`engine/tests/test_cine_observer.c`). A relative camera composes its pose with an anchor frame `{position, yaw}` the host updates each tick (the object's own pitch and
 roll are ignored: **U**). Fades start from the current alpha: `fade_out` runs it to 1 over the given ticks in the given colour,
 `fade_in` to 0; a zero time is instant. The bars are shown while a cinematic runs (`cinematic_start` .. `cinematic_stop`) and
 whenever `cine_letterbox` is on: the a10 scripts call `cinematic_show_letterbox` only for the title cards outside cinematics, so
