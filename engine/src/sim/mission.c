@@ -181,6 +181,7 @@ void mission_sync_player(mission_t *m)
 	object_t *o;
 	if (m->player_obj < 0 || !mission_object_live(m, m->player_obj)) return;
 	o = &m->objects->obj[m->player_obj];
+	if (m->hobj.stand_in) { o->flags &= ~OBJ_F_INACTIVE; return; }      /* the body is a unit that follows its seat or its animation (hs_host_obj.c), not the player */
 	o->pos[0] = m->game->player.pos[0]; o->pos[1] = m->game->player.pos[1]; o->pos[2] = m->game->player.pos[2];
 	mat4_from_ypr(&o->root, m->game->player.yaw, 0.0f, 0.0f, o->pos);
 	o->flags &= ~OBJ_F_INACTIVE;

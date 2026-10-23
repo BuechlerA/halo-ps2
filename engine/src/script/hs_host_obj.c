@@ -96,6 +96,10 @@ static void bit_set(uint32_t *b, int i, int v) { if (v) b[i >> 5] |= 1u << (i & 
 static object_t *obj_of(mission_t *M, int slot) { return mission_object_live(M, slot) ? &M->objects->obj[slot] : NULL; }
 static int unit_of(const mission_t *M, int slot) { return (M->units && slot >= 0) ? units_of_object(M->units, slot) : -1; }
 static int is_player(const mission_t *M, int slot) { return slot >= 0 && slot == M->player_obj; }
+static int player_unit(const mission_t *M);
+static void stand_in_begin(mission_t *M);
+static void stand_in_end(mission_t *M);
+static void stand_in_place(mission_t *M, const float pos[3], float yaw);
 
 static void ensure_unit(mission_t *M, int slot)
 {
@@ -126,7 +130,7 @@ static void obj_set_transform(mission_t *M, int slot, const float pos[3], float 
 	object_t *o = obj_of(M, slot);
 	int ui;
 	if (!o) return;
-	if (is_player(M, slot) && M->game) { game_teleport(M->game, pos, yaw); mission_sync_player(M); return; }
+	if (is_player(M, slot) && M->game) { stand_in_place(M, pos, yaw); game_teleport(M->game, pos, yaw); mission_sync_player(M); return; }
 	ui = unit_of(M, slot);
 	if (ui >= 0 && M->game) units_teleport(M->units, M->game, ui, pos, yaw);
 	o->pos[0] = pos[0]; o->pos[1] = pos[1]; o->pos[2] = pos[2];
@@ -397,7 +401,26 @@ BI(object_set_facing)
 	return 0;
 }
 
-BI(object_beautify) { ENTER(object_beautify); return 0; }
+/* object_beautify: the player's body is drawn for a cinematic (the Chief steps out of his cryo tube, ADR-085) and stops being drawn after it. */
+BI(object_beautify)
+{
+	int slot;
+	ENTER(object_beautify);
+	slot = obj_arg(M, A(0), 0);
+	if (M->log_anim) printf("[anim] t%u object_beautify %d %d (player %d) stand-in %d\n", (unsigned)M->tick, slot, argb(A(1)), M->player_obj, M->hobj.stand_in);
+	if (!is_player(M, slot)) return 0;
+	if (argb(A(1))) {
+		int ui;
+		stand_in_begin(M);
+		ui = player_unit(M);
+		if (ui >= 0) M->units->u[ui].flags &= (uint8_t)~UF_HIDE_BODY;      /* units.c hides a UF_HIDE_BODY unit every tick */
+		M->objects->obj[slot].flags &= ~OBJ_F_HIDDEN;
+	} else {
+		stand_in_end(M);
+		M->objects->obj[slot].flags |= OBJ_F_HIDDEN;
+	}
+	return 0;
+}
 
 /* ---- attachments ---------------------------------------------------------------------------------------------------------- */
 static int marker_index(const mission_t *M, const object_t *o, const char *name)
@@ -580,7 +603,10 @@ static void update_attachments(mission_t *M)
 			float pos[3] = { w.m[3][0], w.m[3][1], w.m[3][2] };
 			int ui = unit_of(M, at.child);
 			if (ui >= 0 && M->game) units_pin(M->units, M->game, ui, pos, atan2f(w.m[0][1], w.m[0][0]));      /* carried: no body integration, nothing to fall */
-			else if (is_player(M, at.child) && M->game) { game_teleport(M->game, pos, atan2f(w.m[0][1], w.m[0][0])); }
+			if (is_player(M, at.child) && M->game) {                       /* the player rides along but looks where he wants */
+				M->game->player.pos[0] = pos[0]; M->game->player.pos[1] = pos[1]; M->game->player.pos[2] = pos[2];
+				M->game->player.vel[0] = M->game->player.vel[1] = M->game->player.vel[2] = 0.0f;
+			}
 			co->pos[0] = pos[0]; co->pos[1] = pos[1]; co->pos[2] = pos[2];
 			co->root = w;
 		}
@@ -847,8 +873,53 @@ static void set_no_drop(mission_t *M, int slot, int on)
 BI(unit_doesnt_drop_items) { ENTER(unit_doesnt_drop_items); for_list(M, A(0), set_no_drop, 1); return 0; }
 
 BI(object_set_collideable) { ENTER(object_set_collideable); return 0; }
-BI(unit_open) { ENTER(unit_open); return 0; }
-BI(unit_close) { ENTER(unit_close); return 0; }
+/* unit_open / unit_close: a vehicle's "opening" animation (the cryo pod's doors) forwards or backwards; the frame is driven by pose_tick. */
+static void pose_play(mission_t *M, int slot, int dir)
+{
+	object_t *o = obj_of(M, slot);
+	mission_hostobj *h = &M->hobj;
+	anim_graph g;
+	anim_info info;
+	int idx;
+	uint32_t i;
+	if (!o || o->type != SCEN_VEHICLE || o->graph < 0 || !M->ow.anims) return;
+	g = anim_get_graph(M->ow.anims, (uint32_t)o->graph);
+	idx = anim_find_name(M->ow.anims, &g, "open");
+	if (idx < 0) { mission_note_missing(M, "unit_open animation"); return; }
+	info = anim_get(M->ow.anims, &g, (uint32_t)idx);
+	for (i = 0; i < h->pose_count; i++) if (h->pose[i].obj == slot) break;
+	if (i == h->pose_count) {
+		if (h->pose_count >= MISSION_POSE_MAX) { mission_note_missing(M, "unit_open"); return; }
+		h->pose_count++;
+		h->pose[i].obj = (int16_t)slot; h->pose[i].anim = (int16_t)idx; h->pose[i].frame = 0.0f;
+	}
+	h->pose[i].step = (dir < 0 ? -1.0f : 1.0f) * (info.fps > 0.0f ? info.fps / 30.0f : 1.0f);
+	o->anim = (uint16_t)idx; o->flags = (o->flags & ~OBJ_F_ANIMATED) | OBJ_F_POSED;
+	o->frame = h->pose[i].frame;
+}
+
+static void pose_tick(mission_t *M)
+{
+	mission_hostobj *h = &M->hobj;
+	uint32_t i;
+	for (i = 0; i < h->pose_count;) {
+		object_t *o = obj_of(M, h->pose[i].obj);
+		mission_pose *p = &h->pose[i];
+		anim_graph g;
+		float last;
+		if (!o || o->graph < 0 || !M->ow.anims) { h->pose[i] = h->pose[--h->pose_count]; continue; }
+		g = anim_get_graph(M->ow.anims, (uint32_t)o->graph);
+		last = (float)anim_get(M->ow.anims, &g, (uint32_t)p->anim).frame_count - 1.0f;
+		p->frame += p->step;
+		if (p->frame < 0.0f) { p->frame = 0.0f; p->step = 0.0f; }
+		if (p->frame > last) { p->frame = last > 0.0f ? last : 0.0f; p->step = 0.0f; }
+		o->anim = (uint16_t)p->anim; o->frame = p->frame;
+		i++;
+	}
+}
+
+BI(unit_open) { ENTER(unit_open); pose_play(M, obj_arg(M, A(0), 0), 1); return 0; }
+BI(unit_close) { ENTER(unit_close); pose_play(M, obj_arg(M, A(0), 0), -1); return 0; }
 /* A frame of the unit's "stand emotions" overlay (-1 = none, "other values depend on unit", XBE 0x220df0): its face's eyelids, brows and lips. */
 BI(unit_set_emotion)
 {
@@ -924,6 +995,147 @@ static void unseat_unit(mission_t *M, int unit_slot)
 	for (i = 0; i < h->attach_count; i++) if (h->attach[i].child == unit_slot) { h->attach[i] = h->attach[--h->attach_count]; break; }
 }
 
+/* ---- the player's body as a unit (ADR-085) ---------------------------------------------------------------------------------- */
+/* In first person the player's body object is hidden and follows the player. The cryo sequence needs it as a unit: the Chief stands in his pod playing
+ * `CT-driver unarmed idle`, steps out playing `CT-driver exit` while the cinematic camera watches (`object_beautify (player0) true`), and the player takes
+ * over where he ended up (`object_beautify (player0) false`). While the stand-in exists mission_sync_player leaves the object alone. */
+static int player_unit(const mission_t *M) { return M->hobj.stand_in ? unit_of(M, M->player_obj) : -1; }
+
+static int play_named(mission_t *M, int ui, const char *name)
+{
+	unit_t *u = &M->units->u[ui];
+	anim_graph g;
+	int idx;
+	if (u->base_graph < 0 || !M->ow.anims) return -1;
+	g = anim_get_graph(M->ow.anims, (uint32_t)u->base_graph);
+	idx = anim_find_name(M->ow.anims, &g, name);
+	if (idx < 0) { mission_note_missing(M, "stand-in animation"); return -1; }
+	(void)units_custom_animation(M->units, M->game, ui, -1, idx, 1.0f, 0);
+	return idx;
+}
+
+static void stand_in_begin(mission_t *M)
+{
+	game_unit_t *gu;
+	object_t *o;
+	int ui;
+	if (M->hobj.stand_in || M->player_obj < 0 || !M->units || !M->game || !mission_object_live(M, M->player_obj)) return;
+	mission_sync_player(M);
+	gu = &M->game->unit_state[M->player_obj];
+	M->hobj.stand_vitals = gu->has_vitals; M->hobj.stand_model = gu->model;
+	ui = units_attach(M->units, M->game, M->player_obj, 1, -1);
+	if (ui < 0) return;
+	M->units->u[ui].flags |= UF_NO_AI | UF_HIDE_BODY;
+	gu->has_vitals = 0; gu->model = -1;
+	o = &M->objects->obj[M->player_obj];
+	M->units->u[ui].body.yaw = M->game->player.yaw;
+	M->hobj.stand_in = 2; M->hobj.stand_anim = -1; M->hobj.stand_seat[0] = 0;
+	(void)o;
+}
+
+/* The player stops being a unit. He stands where his body is; a body in the middle of an animation stands where the animation has put the pelvis (the
+ * Xbox re-places a unit that leaves a seat at the end pose of the exit animation). */
+static void stand_in_end(mission_t *M)
+{
+	int ui = player_unit(M);
+	game_unit_t *gu;
+	if (!M->hobj.stand_in) return;
+	if (ui >= 0) {
+		unit_t *u = &M->units->u[ui];
+		float pos[3] = { u->body.pos[0], u->body.pos[1], u->body.pos[2] };
+		int veh = M->hobj.seat_vehicle[M->player_obj] - 1;
+		if (M->hobj.stand_anim >= 0 && M->ow.anims) {                 /* he stands where the exit animation has put his pelvis (its last frame when it has run out) */
+			static object_nodes_t nodes;
+			object_t tmp = M->objects->obj[M->player_obj];
+			if (u->action != UA_CUSTOM && tmp.graph >= 0) {
+				anim_graph g = anim_get_graph(M->ow.anims, (uint32_t)tmp.graph);
+				tmp.anim = (uint16_t)M->hobj.stand_anim;
+				tmp.frame = (float)anim_get(M->ow.anims, &g, (uint32_t)M->hobj.stand_anim).frame_count - 1.0f;
+			}
+			if (objects_pose_world(&tmp, &M->ow, &nodes) > 0) { pos[0] = nodes.world[0].m[3][0]; pos[1] = nodes.world[0].m[3][1]; }
+			if (veh >= 0 && mission_object_live(M, veh)) pos[2] = M->objects->obj[veh].pos[2] + 0.03f;
+		}
+		if (M->log_anim) printf("[anim] t%u player body released at %.2f %.2f %.2f yaw %.2f\n", (unsigned)M->tick, pos[0], pos[1], pos[2], u->body.yaw);
+		unseat_unit(M, M->player_obj);
+		units_stop_custom(M->units, M->game, ui);
+		units_detach(M->units, ui);
+		game_teleport(M->game, pos, u->body.yaw);
+		M->game->player.pitch = 0.0f;
+	}
+	gu = &M->game->unit_state[M->player_obj];
+	gu->has_vitals = M->hobj.stand_vitals; gu->model = M->hobj.stand_model;
+	M->hobj.stand_in = 0;
+	mission_sync_player(M);
+}
+
+/* A script moves the player (object_teleport): the stand-in goes with him and stops what it was doing. */
+static void stand_in_place(mission_t *M, const float pos[3], float yaw)
+{
+	int ui = player_unit(M);
+	if (ui < 0) return;
+	unseat_unit(M, M->player_obj);
+	units_stop_custom(M->units, M->game, ui);
+	units_teleport(M->units, M->game, ui, pos, yaw);
+	M->hobj.stand_in = 2; M->hobj.stand_anim = -1;
+}
+
+/* unit_enter_vehicle (player0) pod "ct-driver": the player's body stands on the seat's marker ("driver", the label after its last dash) in the seat's idle
+ * pose, the player's eyes with it; he can still look around but not walk away. */
+static void seat_player(mission_t *M, int veh, const char *seat)
+{
+	mission_hostobj *h = &M->hobj;
+	const char *dash = strrchr(seat, '-');
+	char name[48];
+	mission_attach *at;
+	object_t *vo;
+	uint32_t i;
+	int ui, mk;
+	mat4 w;
+	if (veh < 0 || veh == M->player_obj) return;
+	stand_in_begin(M);
+	ui = player_unit(M);
+	if (ui < 0) return;
+	vo = &M->objects->obj[veh];
+	mk = marker_index(M, vo, dash ? dash + 1 : seat);
+	if (mk < 0) mk = marker_index(M, vo, "seat");
+	h->seat_vehicle[M->player_obj] = (int16_t)(veh + 1);
+	h->seat_hash[M->player_obj] = seat[0] ? hash16(seat) : 0;
+	for (i = 0; i < h->attach_count; i++) if (h->attach[i].child == M->player_obj) break;
+	if (i == h->attach_count) {
+		if (h->attach_count >= MISSION_ATTACH_MAX) { mission_note_missing(M, "seat"); return; }
+		h->attach_count++;
+	}
+	at = &h->attach[i];
+	at->parent = (int16_t)veh; at->child = (int16_t)M->player_obj; at->marker = (int16_t)mk; at->pad = 0;
+	strncpy(h->stand_seat, seat, sizeof h->stand_seat - 1); h->stand_seat[sizeof h->stand_seat - 1] = 0;
+	h->stand_in = 1; h->stand_anim = -1;
+	if (marker_world(M, vo, mk, &w)) {
+		float pos[3] = { w.m[3][0], w.m[3][1], w.m[3][2] };
+		float yaw = atan2f(w.m[0][1], w.m[0][0]);
+		game_teleport(M->game, pos, yaw);
+		units_teleport(M->units, M->game, ui, pos, yaw);
+	}
+	snprintf(name, sizeof name, "%s unarmed idle", seat);
+	(void)play_named(M, ui, name);
+	if (M->log_anim) {
+		const unit_t *u = &M->units->u[ui];
+		printf("[anim] t%u player seated in vehicle %d marker %d at %.2f %.2f %.2f yaw %.2f, hidden %d; vehicle axes x %.2f %.2f %.2f z %.2f %.2f %.2f\n", (unsigned)M->tick, veh, mk, u->body.pos[0], u->body.pos[1], u->body.pos[2], u->body.yaw, (M->objects->obj[M->player_obj].flags & OBJ_F_HIDDEN) != 0,
+		       vo->root.m[0][0], vo->root.m[0][1], vo->root.m[0][2], vo->root.m[2][0], vo->root.m[2][1], vo->root.m[2][2]);
+	}
+}
+
+/* unit_exit_vehicle (player0): the seat's exit animation moves the body out (`CT-driver exit`: the Chief walks out of the pod). */
+static void unseat_player(mission_t *M)
+{
+	int ui = player_unit(M);
+	char name[48];
+	if (ui < 0 || M->hobj.stand_in != 1) return;
+	M->hobj.stand_in = 2;                       /* the body stays on the seat's marker (tilted with the pod) while the animation takes it out; stand_in_end re-places it */
+	snprintf(name, sizeof name, "%s exit", M->hobj.stand_seat);
+	M->hobj.stand_anim = (int16_t)play_named(M, ui, name);
+	if (M->log_anim) printf("[anim] t%u player leaves the seat, animation %d\n", (unsigned)M->tick, M->hobj.stand_anim);
+}
+
 /* Seat animations: the cinematic crew is placed at the origin of its chair (the biped and the "chair pod" vehicle share a position) and plays the seat's animations
  * (`pchair-driver ...`, `pilot_fidget..`), whose pelvis sits on the unit's origin: the Xbox puts the unit on the chair's "seat" marker (a marker of the pod's model, 0.38
  * behind its origin and 0.19 up). Without it the bridge pilot nearest the camera sat behind the lens (ticks 2057 .. 2177) and was not seen. A vehicle within 0.15 units
@@ -973,12 +1185,22 @@ BI(unit_set_seat)
 
 BI(unit_enter_vehicle)
 {
+	int u;
 	ENTER(unit_enter_vehicle);
-	seat_unit(M, obj_arg(M, A(0), 0), obj_arg(M, A(1), 0), str_arg(hm, A(2)));
+	u = obj_arg(M, A(0), 0);
+	if (is_player(M, u)) seat_player(M, obj_arg(M, A(1), 0), str_arg(hm, A(2)));
+	else seat_unit(M, u, obj_arg(M, A(1), 0), str_arg(hm, A(2)));
 	return 0;
 }
 
-BI(unit_exit_vehicle) { ENTER(unit_exit_vehicle); unseat_unit(M, obj_arg(M, A(0), 0)); return 0; }
+BI(unit_exit_vehicle)
+{
+	int u;
+	ENTER(unit_exit_vehicle);
+	u = obj_arg(M, A(0), 0);
+	if (is_player(M, u)) unseat_player(M); else unseat_unit(M, u);
+	return 0;
+}
 
 BI(vehicle_load_magic)
 {
@@ -1546,6 +1768,7 @@ void hs_host_obj_post(mission_t *M)
 	uint32_t i;
 	int slot;
 	update_attachments(M);
+	pose_tick(M);
 	update_object_fx(M);
 	for (i = 0; i < h->suspend_count; i++) {
 		object_t *o = obj_of(M, h->suspend[i].obj);

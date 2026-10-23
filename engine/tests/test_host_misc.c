@@ -744,7 +744,7 @@ static void test_player_effect(void)
 /* ---- 7. debug family: typed no-ops that change nothing ----------------------------------------------------------------------------------- */
 static void test_noops(void)
 {
-	static const char *const names[] = { "objects_predict", "object_beautify", "object_pvs_activate", "object_type_predict", "rasterizer_model_ambient_reflection_tint",
+	static const char *const names[] = { "objects_predict", "object_pvs_activate", "object_type_predict", "rasterizer_model_ambient_reflection_tint",
 		"garbage_collect_now", "object_pvs_set_camera", "breakable_surfaces_enable", "cls", "breakable_surfaces_reset", "object_pvs_clear", "object_pvs_set_object",
 		"render_lights", "rasterizer_lights_reset_for_new_map", "cinematic_screen_effect_set_convolution", "cinematic_screen_effect_set_filter",
 		"cinematic_screen_effect_set_filter_desaturation_tint", "cinematic_screen_effect_set_video", "sound_impulse_predict", "sound_looping_predict" };

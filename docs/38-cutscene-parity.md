@@ -28,6 +28,13 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
    frame, which the video does not show: unresolved, probably an input (view window, field of view) not yet found in the code.
 7. The display text of that shot is not the problem: the text quad (`hushed casket-on/off`, 0.208 x 0.068 wu) fits the console screen with margins when seen from above (`camlock`).
 
-## Open (see ADR-081 .. 084)
-The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), Chief stepping out of the pod (7020 .. 7200), the scorpions' colour, the ship hum, the title-safe
+8. **The cryo exit is the player's own body** (ADR-085): `fast_setup` / `tutorial_setup` seat the player in the pod (`unit_enter_vehicle (player0) <pod> "ct-driver"`), open it (`unit_open`),
+   `unit_exit_vehicle` plays `CT-driver exit` in the pod's frame, `object_beautify (player0)` shows the body, the player continues at the exit animation's last pelvis position. The pod itself stands up
+   through its animation (node 0 rotated 90 degrees), so the marker and the Chief must follow the animated pose, not the placement.
+9. Fades to white were grey (untextured GS quads take 255 as white, 128 is half) and `object_beautify` was registered twice with the later no-op winning: when a built-in "does nothing" check the registration order
+   of the host domains (`hs_host_register_*`, the later one overrides).
+10. Compare the end of a cutscene with the bot off (`bot 0`): the bot steers the player the moment control returns, which hides where the hand-off really puts the camera.
+
+## Open (see ADR-081 .. 085)
+The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's blur filter and the player's empty hands at the start (a10's profile 0 is unarmed, SCEN has no starting profiles), the scorpions' colour, the ship hum, the title-safe
 margins of the Xbox view (we fill the whole buffer), the `camera_ticks` durations (the director divides ticks by 30 as an integer).

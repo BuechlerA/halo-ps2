@@ -85,7 +85,7 @@ void hud_render_pass(void *user, render_ctx_t *rc)
 			unsigned a = (unsigned)(cs->screen.fade_alpha * 128.0f);
 			spr_state(&spr, 0, SPR_BLEND_ALPHA, 0);
 			spr_quad(&spr, 0.0f, 0.0f, (float)VIDEO_WIDTH, (float)VIDEO_HEIGHT, 0, 0, 0, 0, 0xFFFFFFu,
-			         (unsigned)(cs->screen.fade_rgb[0] * 128.0f) | (unsigned)(cs->screen.fade_rgb[1] * 128.0f) << 8 | (unsigned)(cs->screen.fade_rgb[2] * 128.0f) << 16 | (a > 128u ? 128u : a) << 24);
+			         (unsigned)(cs->screen.fade_rgb[0] * 255.0f) | (unsigned)(cs->screen.fade_rgb[1] * 255.0f) << 8 | (unsigned)(cs->screen.fade_rgb[2] * 255.0f) << 16 | (a > 128u ? 128u : a) << 24);   /* an untextured quad takes its colour as is (255 = white; 128 gave the grey of the first white fade-outs) */
 		}
 	}
 	spr_flush(&spr);

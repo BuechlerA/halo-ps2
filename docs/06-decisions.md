@@ -942,5 +942,28 @@ its panel now overflows the frame, so the 15 % mismatch against the video there 
 **Also verified**: `camera_ticks` (ADR-066) is untouched; the director's seconds are an integer division (`ticks / 30`), which explains `200 -> 180` of its table but not `300 -> 270`.
 **Consequences**: host test `cine` gains `test_cine_observer`; `test_cine` tolerances allow for the update at `camera_set`. No pack rebuild.
 
+## ADR-085 The player is a unit in the cryo pod: seat, idle, open, exit animation, hand-off at the pelvis
+**Decision**: `object_beautify (player0) true` turns the player's body object into a drawn unit (`hs_host_obj.c`, `stand_in`: a `units_attach` on `player_obj`, `UF_NO_AI`, `UF_HIDE_BODY` cleared, vitals
+and hit model parked), and `false` hands the player back: the unit is detached, hidden again and the player stands where the body is. `unit_enter_vehicle (player0) pod "ct-driver"` puts the body on the
+pod's `driver` marker (the label after the last dash of the seat), the player's feet and eyes with it (he can look around, not walk), plays `ct-driver unarmed idle`; `unit_exit_vehicle` plays
+`ct-driver exit` (250 frames) while the body **stays attached** to the marker, so the animation runs in the pod's frame (the pod's node 0 stands it up by a 90 degree rotation in `stand opening`, and the
+marker with it). `unit_open` / `unit_close` play the vehicle's `open` animation forwards / backwards (`mission_pose`, one frame per tick, the object is `OBJ_F_POSED`). While a stand-in exists
+`mission_sync_player` no longer copies the player over the body. `object_teleport (player0)` takes the stand-in along and ends its animation (the tutorial teleports to its exit flag in the white fade).
+**Why**: both a10 starts run through the pod: `fast_setup` (not normal difficulty and coop: enter, `cinematic_start`, `object_beautify`, `unit_open` at +15, `unit_exit_vehicle` at +60, fade to white at
++265, `object_beautify false` at +300, the player continues) and `tutorial_setup` (normal: the player sits in the pod in first person, `tutorial_introduction` opens it, `tutorial_action` runs the same
+exit cinematic for 170 ticks and teleports to flag 14). All of it was a no-op: the pod stayed shut and empty, and the game started in the corridor (the bot's flag 83) after a white screen.
+Compared with the Xbox video (ticks 6990 .. 7230): the Chief lies in the opening pod, sits up, stands and steps out beside the technician in the same poses and the same frames; with the bot off the first
+person view after the fade (grated floor, the long wall) is the video's.
+**Pelvis rule**: the exit animation has no frame info (no root motion): the Chief walks 0.92 wu out of the pod inside the node data. A unit that leaves a seat is placed at the animation's end pose,
+so `stand_in_end` puts the player at the pelvis node of the exit animation at the current frame (the last frame once it has run out), feet at the pod's floor.
+**Also changed**: `object_beautify` was registered twice (H1 and H2 no-ops, the later one won): H2's is gone. The white fade rect was drawn at 128 (half intensity: an untextured GS quad takes 255 as
+white), so every fade to white was grey. `hud_state_t.hidden` carries `show_hud` / `hud_show_crosshair|health|shield|motion_sensor` to `hud_build` (the tutorial starts with the HUD hidden; the bits
+were stored and never read).
+**Not done**: the tutorial's blur / desaturation filter (`cinematic_screen_effect_set_*` are no-ops), the pod's glass in first person, and the weapon: the a10 profile 0 (`player0_starting_profile`) is
+unarmed, the engine starts with the biped's default weapon (docs/33, `player_add_equipment` has nothing to hand out: starting profiles are not in SCEN), so the player holds a rifle where the Xbox
+shows empty hands.
+**Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
+exit and release of the player body.
+
 ## Open decisions
 None.

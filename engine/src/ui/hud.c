@@ -132,7 +132,7 @@ static void draw_number(hud_frame_t *f, const huddef_section *s, const huddef_gl
 	}
 }
 
-static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hud_tag, const game_t *g, uint32_t tick, int depth)
+static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hud_tag, const game_t *g, uint32_t tick, int depth, uint32_t hidden)
 {
 	int hi = huddef_find_hud(s, hud_tag);
 	huddef_hud h;
@@ -197,7 +197,7 @@ static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hu
 			draw_elem(f, s, &e, col, tick);
 		}
 	}
-	if (h.child_tag && h.child_tag != hud_tag) draw_weapon_hud(f, s, h.child_tag, g, tick, depth + 1);
+	if (h.child_tag && h.child_tag != hud_tag) draw_weapon_hud(f, s, h.child_tag, g, tick, depth + 1, hidden);
 }
 
 void hud_state_init(hud_state_t *s) { memset(s, 0, sizeof *s); }
@@ -245,13 +245,14 @@ int hud_text(hud_frame_t *f, const huddef_fonts *fonts, uint32_t font_tag, float
 
 void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *fonts, const game_t *g, uint32_t tick, const hud_state_t *st)
 {
-	uint32_t tag = 0;
+	uint32_t tag = 0, hidden = st ? st->hidden : 0u;
+	int all = (hidden & HUD_HIDE_ALL) != 0;
 	huddef_globals gl;
 	memset(f, 0, sizeof *f);
 	if (!s || !s->hud_count) return;
 	gl = huddef_get_globals(s);
-	/* unit HUD: backgrounds and the shield / health meters */
-	if (g->has_biped && huddef_find_link(s, HUDDEF_L_UNIT, g->biped.tag_id, 0, &tag)) {
+	/* unit HUD: backgrounds and the shield / health meters (the tutorial hides them until Cortana explains them) */
+	if (!all && g->has_biped && huddef_find_link(s, HUDDEF_L_UNIT, g->biped.tag_id, 0, &tag)) {
 		int hi = huddef_find_hud(s, tag);
 		if (hi >= 0) {
 			huddef_hud h = huddef_get_hud(s, (uint32_t)hi);
@@ -285,10 +286,10 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 		uint32_t wt = 0;
 		if (sl && sl->weapon >= 0 && !(huddef_find_link(s, HUDDEF_L_WEAPON, sl->def.tag_id, 0, &wt))) wt = sl->def.hud_tag;
 		if (!wt) wt = gl.default_weapon_hud;
-		if (wt) draw_weapon_hud(f, s, wt, g, tick, 0);
+		if (wt && !all) draw_weapon_hud(f, s, wt, g, tick, 0, hidden);
 	}
 	/* grenades */
-	if (huddef_find_link(s, HUDDEF_L_GRENADE, (uint32_t)g->grenade_type, 0, &tag)) {
+	if (!all && huddef_find_link(s, HUDDEF_L_GRENADE, (uint32_t)g->grenade_type, 0, &tag)) {
 		int hi = huddef_find_hud(s, tag);
 		if (hi >= 0) {
 			huddef_hud h = huddef_get_hud(s, (uint32_t)hi);

@@ -32,7 +32,7 @@
 	X(game_safe_to_speak) X(game_difficulty_get) X(game_difficulty_get_real) X(game_is_cooperative) X(game_won) X(game_lost) X(game_revert) \
 	X(game_reverted) X(game_time) X(game_speed) X(game_skip_ticks) X(switch_bsp) X(scenario_switch_bsp) X(structure_bsp_index) \
 	X(player_effect_set_max_translation) X(player_effect_set_max_rotation) X(player_effect_set_max_rumble) X(player_effect_start) X(player_effect_stop) \
-	X(objects_predict) X(object_beautify) X(object_pvs_activate) X(object_type_predict) X(rasterizer_model_ambient_reflection_tint) \
+	X(objects_predict) X(object_pvs_activate) X(object_type_predict) X(rasterizer_model_ambient_reflection_tint) \
 	X(garbage_collect_now) X(object_pvs_set_camera) X(breakable_surfaces_enable) X(cls) X(breakable_surfaces_reset) X(object_pvs_clear) \
 	X(object_pvs_set_object) X(render_lights) X(rasterizer_lights_reset_for_new_map)
 
@@ -683,7 +683,7 @@ BI(display_scenario_help)
 	return 0;
 }
 
-static void set_hud_bit(mission_t *m, uint32_t bit, int shown) { if (shown) m->misc.hud_hidden &= ~bit; else m->misc.hud_hidden |= bit; }
+static void set_hud_bit(mission_t *m, uint32_t bit, int shown) { if (shown) m->misc.hud_hidden &= ~bit; else m->misc.hud_hidden |= bit; if (m->hud) m->hud->hidden = m->misc.hud_hidden; }      /* MISC_HUD_* and HUD_HIDE_* are the same bits */
 static void set_blink_bit(mission_t *m, uint32_t bit, int on) { if (on) m->misc.hud_blink |= bit; else m->misc.hud_blink &= ~bit; }
 BI(show_hud) { ENTER(show_hud); if (m) set_hud_bit(m, MISC_HUD_ALL, argb(a, n, 0, 1)); return 0; }
 BI(hud_show_motion_sensor) { ENTER(hud_show_motion_sensor); if (m) set_hud_bit(m, MISC_HUD_MOTION, argb(a, n, 0, 1)); return 0; }
@@ -1000,7 +1000,6 @@ BI(player_effect_stop)
 
 /* ---- debug / hints: explicit no-ops (void results) ---------------------------------------------------------------------------------------- */
 NOOP(objects_predict)
-NOOP(object_beautify)
 NOOP(object_pvs_activate)
 NOOP(object_type_predict)
 NOOP(rasterizer_model_ambient_reflection_tint)
