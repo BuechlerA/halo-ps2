@@ -991,9 +991,9 @@ Still different: the tracker (a grey ring where the Xbox has a blue glowing disc
 (53, 67, 80) for the centre, so the executable adds them (modulate x2, full alpha) instead of blending with the tag's alpha: now `hud.c` does the same for the two sprites. Comparing our corridor frame (tick 9000, a different place, its
 floor shows through the additive disc) with the video's: disc size 3895 against 4142 blue-dominant pixels, hue the same, 28 .. 31 levels brighter because of the floor behind it.
 **Lightmap tone of the first BSP (measured)**: luminance percentiles (p5 .. p95 of the middle 64 % of the frame) of the aligned frames: ours was 1.6 .. 2.1 times as bright as the video at the hand-off (ticks 7330 / 7380, p40 86 against 41,
-p60 110 against 64, p80 128 against 80) and 1.1 .. 1.8 times in the pod shots; `BSP_TONE` of `a10a` goes from gain 1.0 to 0.65 (object gain too, so characters keep their ratio to the walls): the hand-off frames now read p40 54
-against 41, p60 71 against 64, p80 83 against 80, the pod shots (7170 / 7200) are about 20 .. 35 % darker than the video (p60 24 against 37, p80 62 against 78): one gain cannot fit both, the longer gameplay was weighted. Needs
-`texconv.py` and `objpack.py` (or `scripts/build-world.sh a10`) to take effect.
+p60 110 against 64, p80 128 against 80) and 1.1 .. 1.8 times in the pod shots. `BSP_TONE` of `a10a` goes from lightmap gain 1.0 to 0.65 and keeps the object gain 1.0 (scaling the objects too left the pod shots 20 .. 35 % dark:
+p60 24 against 37; with the walls alone they read p60 30 .. 32 against 37 .. 38, p80 83 against 78, p95 about 195 against 156, so the bright pod and armour are a little too bright, the walls right): the hand-off frames now read p40 54
+against 41, p60 71 against 64, p80 83 against 80. Needs `texconv.py` and `objpack.py` (or `scripts/build-world.sh a10`) to take effect.
 **Tutorial blur (third pass)**: while the filter's veil is up the overlay pass also draws four copies of the picture offset by 1 .. 6 pixels (alpha 0.5, 0.33, 0.25, 0.2), reading the colour buffer back as a PSMCT16S 512 x 512 texture
 (`bsp_render_set_blur_target`: the frame being built is drawn into `fb[back ^ 1]`, because the kick comes after the flip). The offset follows the filter pair, `1 + 5 x veil`, so the pod's first sight starts blurred and washed out and
 is sharp after 5 s (ticks 6700 .. 6860 of a normal difficulty run). It is an approximation of the executable's convolution (10 -> 0.001 over the same 5 s) built from sprites, checked on PCSX2 only (ADR-022): reading the buffer being
