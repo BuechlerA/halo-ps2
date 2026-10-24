@@ -18,8 +18,8 @@ static const struct { uint8_t s0, s1; int16_t x, y; int8_t cam; } k_items[MENU_M
 #define DIFF_PANEL_Y 78
 #define DIFF_EMBLEM_X 333
 #define DIFF_EMBLEM_Y 88
-#define DIFF_TEXT_X 285
-#define DIFF_TEXT_Y 292
+#define DIFF_TEXT_X 287                /* the description box (275, 78) plus its text offset (12, 220), DeLa +0x130 */
+#define DIFF_TEXT_Y 298
 #define HEADER_X 35
 #define HEADER_Y 11
 #define KEY_Y 414
@@ -301,17 +301,15 @@ static void build_difficulty(const menu_t *m, hud_frame_t *f)
 {
 	unsigned i;
 	char t[200];
-	huddef_font fd;
-	int fi = m->fonts && m->fonts->font_count ? huddef_find_font(m->fonts, menudef_font_tag(m->def, MF_LARGE)) : -1;
 	sprite_stretch(f, m->def, MS_GRADIENT, 0.0f, 0.0f, (float)MENUDEF_VIRT_W, (float)MENUDEF_VIRT_H, COL_FULL);
 	sprite(f, m->def, MS_HDR_DIFF, (float)HEADER_X, (float)HEADER_Y, COL_FULL);
 	for (i = 0; i < 4; i++) {
 		float y = (float)(DIFF_ITEM_Y + (int)i * DIFF_ITEM_PITCH), ty = y;
 		int sel = (int)i == m->sel_diff;
 		sprite(f, m->def, i == 0 ? (sel ? MS_ITEMTOP1 : MS_ITEMTOP0) : (sel ? MS_ITEM1 : MS_ITEM0), (float)DIFF_ITEM_X, y, COL_FULL);
-		if (fi >= 0) { fd = huddef_get_font(m->fonts, (uint32_t)fi); ty += (32.0f - (float)(fd.ascent + fd.descent)) * 0.5f; }
+		ty += 5.0f;                                              /* the item widget's text offset (13, 5), DeLa +0x130 */
 		menu_string(m, ML_DIFF_OPTIONS, i, t, sizeof t);
-		hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), (float)DIFF_ITEM_X + 12.0f, ty, t, sel ? COL_SELECTED : COL_DIM);
+		hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), (float)DIFF_ITEM_X + 13.0f, ty, t, sel ? COL_SELECTED : COL_DIM);
 	}
 	sprite(f, m->def, MS_LISTFIELD, (float)DIFF_PANEL_X, (float)DIFF_PANEL_Y, COL_FULL);
 	sprite(f, m->def, MS_EMBLEM0 + (unsigned)m->sel_diff, (float)DIFF_EMBLEM_X, (float)DIFF_EMBLEM_Y, COL_FULL);
@@ -335,7 +333,7 @@ static void build_levels(const menu_t *m, hud_frame_t *f)
 		sprite(f, m->def, slot == 1 ? MS_CARD1 : MS_CARD0, x, (float)CARD_Y, COL_FULL);
 		sprite_part(f, m->def, MS_LEVEL0 + (unsigned)(open ? li : 10), x + (float)CARD_PIC_DX, (float)CARD_PIC_Y, (float)CARD_PIC_W, (float)CARD_PIC_H, slot == 1 ? COL_FULL : 0x80585858u);
 		menu_string(m, ML_MAP_LIST, (unsigned)(open ? li : 10), t, sizeof t);
-		text_block(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), x + (float)CARD_TEXT_DX, (float)CARD_NAME_Y, (float)CARD_TEXT_W, t, slot == 1 ? COL_SELECTED : COL_TEXT);
+		text_block(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), x + (float)CARD_TEXT_DX, (float)CARD_NAME_Y, 0.0f, t, slot == 1 ? COL_SELECTED : COL_TEXT);
 		menu_string(m, ML_MAP_DATA, (unsigned)(open ? li : 10), t, sizeof t);
 		text_block(f, m->fonts, menudef_font_tag(m->def, MF_SMALL), x + (float)CARD_TEXT_DX, (float)CARD_DATA_Y, 0.0f, t, COL_TEXT);
 	}
