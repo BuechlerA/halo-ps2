@@ -7,6 +7,7 @@
 #include "platform/timer.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static units_t        s_units;
@@ -203,6 +204,15 @@ void mapp_tick(const game_input_t *in)
 		if (at > 0 && gn && s_m.tick == (uint32_t)at && s_m.hs && s_m.scripts) {
 			int gi = hs_find_global(s_m.scripts, gn);
 			printf("[mission] t%u debug: global %s %s\n", (unsigned)s_m.tick, gn, gi >= 0 && hs_global_set(s_m.hs, (unsigned)gi, hs_make_bool(1)) == 0 ? "set true" : "not found");
+		}
+	}
+	{                                                       /* debug (cfg fxspawn <tick>, fxtag <effect tag id, hex>, fxat x y z): spawns an effect once, to look at it from a known distance */
+		int at = (int)cfg_int(s_env.cfg, "fxspawn", 0);
+		float pos[3], dir[3] = { 0.0f, 0.0f, 1.0f };
+		if (at > 0 && s_m.tick == (uint32_t)at && s_m.fx && cfg_floats(s_env.cfg, "fxat", pos, 3) == 3) {
+			uint32_t tag = (uint32_t)strtoul(cfg_str(s_env.cfg, "fxtag", "0"), NULL, 16);
+			fx_spawn(s_m.fx, tag, pos, dir, 0);
+			printf("[mission] t%u debug: effect %08x at %.1f %.1f %.1f\n", (unsigned)s_m.tick, (unsigned)tag, (double)pos[0], (double)pos[1], (double)pos[2]);
 		}
 	}
 	mission_tick(&s_m, in);

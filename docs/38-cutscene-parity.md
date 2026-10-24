@@ -49,6 +49,10 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
     after the bot's revert) and a second kind (`ed2a0bb6`) at 7620 / 7665 / 7829 / 8401. Rendered (ticks 7604 .. 7670) ours shows two small orange flames and grey smoke puffs at the crates and a body on the floor where the video
     has a large fireball with a silhouetted body thrown through it: the video's fireball looks larger, but the two views are not comparable (the bot stands about 6 wu from the crates, the video's player about 4 and in front of the body), so "much smaller" is a first impression, not a measurement: to settle it render the same effect (`effect_new e92707b3`) from the same distance (open: fx particle fidelity, not the hand-off).
 
+15. Debug `fxspawn <tick>` + `fxtag <effect tag id hex>` + `fxat x y z` spawns one effect in a mission run (to look at it from a known distance). Tried with the explosion tags of the corridor scene (`e92707b3`, `ed2a0bb6`, `e92b07b7`) 3.5 wu in front of the
+    player at the hand-off (bot off): nothing shows up (the effect spawned straight up at 0.4 wu above the floor sits over the black floor grate of that view, which is itself drawn black where the video shows a metal grating:
+    two things to look at before any claim about explosion size).
+
 ## Open (see ADR-081 .. 085)
 The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's exact convolution kernel (a sprite blur and a veil stand in, ADR-085), the scorpions' colour, the ship hum, the title-safe
 margins of the Xbox view (we fill the whole buffer), the `camera_ticks` durations (the director divides ticks by 30 as an integer).
