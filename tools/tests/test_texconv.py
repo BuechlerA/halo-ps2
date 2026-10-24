@@ -240,8 +240,11 @@ def test_vertex_chroma() -> None:
     assert all(abs(a - b) <= 1 for a, b in zip(full(dark, (0.5, 0.5)), (r, g, b)))
     # saturated colours clamp to 255, black is neutral
     assert full(tc.Rgba(1, 1, bytes([200, 50, 50, 255])), (0.5, 0.5))[0] == 255
-    blue = tc.Rgba(2, 2, bytes([0, 0, 255, 255]) * 4)
-    assert full(blue, (0.5, 0.5)) == (0, 0, 255)
+    blue = tc.Rgba(2, 2, bytes([0, 60, 255, 255]) * 4)
+    assert full(blue, (0.5, 0.5))[0] == 0 and full(blue, (0.5, 0.5))[2] == 255
+    # a shadow texel's colour tints nothing: (0, 4, 0) is a full saturation green once divided by its luminance, the exterior bridge floor came out lime (ADR-087)
+    shadow = full(tc.Rgba(2, 2, bytes([0, 4, 0, 255]) * 4), (0.5, 0.5))
+    assert all(abs(c - 128) <= 12 for c in shadow), shadow
     assert full(tc.Rgba(2, 2, bytes(16)), (0.5, 0.5)) == (128, 128, 128)
     # bilinear between a black-free pair of texels, and uv outside 0..1 clamps to the edge texel
     two = tc.Rgba(2, 1, bytes([200, 100, 100, 255, 100, 100, 200, 255]))
