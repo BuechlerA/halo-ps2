@@ -44,6 +44,5 @@ layout), `menu_skiptitle 1`. `engine/tests/test_menu.c` (flow, quads on screen a
   own clock (`s_input_tick`) so a paused run can still be driven. Checked in PCSX2 on the a10 gameplay scenario (pause, down, X -> `[menu] quit to the main menu`).
 
 ## Not done
-MULTIPLAYER (shows a notice box: the port has no multiplayer), GAME DEMOS, the attract-mode movies (`bink\attract*.bik`, `intro.bik`: Bink is not decoded here), the widget runtime itself (the screens are laid out in code from the
-tag data), text colours and description positions were matched to the tag data by eye (there is no Xbox menu capture to compare against), `LoadExecPS2` and the memory card were only exercised in PCSX2 (card writes fail in the
-headless runs: the virtual card is unformatted) and are a Phase 6 check (ADR-022), the other campaign levels' packs (`scripts/build-world.sh a30 ...`).
+MULTIPLAYER and GAME DEMOS (both show a notice box: the port has no multiplayer and the demo discs' content is not part of the game data), the attract-mode movies (`bink\attract*.bik`, `intro.bik`: Bink is not decoded here), the widget runtime itself (the screens are laid out in code from the
+tag data), text colours and description positions were matched to the tag data by eye (there is no Xbox menu capture to compare against), `LoadExecPS2` and the memory card were only exercised in PCSX2 (with `mcformat 1 settingsverify 1` the record is written and read back identical; PCSX2's headless card is blank and new every run, so persistence across runs is not testable there) and are a Phase 6 check (ADR-022), the other campaign levels' packs (`scripts/build-world.sh a30 ...`).

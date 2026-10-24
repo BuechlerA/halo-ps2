@@ -145,7 +145,13 @@ static void settings_store(void)
 	uint8_t buf[SETTINGS_BYTES];
 	if (!cfg_int(&s_cfg, "memcard", 1)) return;
 	settings_pack(&s_set, buf);
-	if (memcard_save(SETTINGS_SLOT, buf, sizeof buf) != 0) printf("[settings] could not write the memory card\n");
+	if (memcard_save(SETTINGS_SLOT, buf, sizeof buf) != 0) { printf("[settings] could not write the memory card\n"); return; }
+	if (cfg_int(&s_cfg, "settingsverify", 0)) {                        /* debug: read the record back from the card */
+		uint8_t back[SETTINGS_BYTES];
+		settings_t chk;
+		long n = memcard_load(SETTINGS_SLOT, back, sizeof back);
+		printf("[settings] stored; read back %ld bytes, %s\n", n, (n == (long)SETTINGS_BYTES && settings_unpack(&chk, back, (size_t)n) && memcmp(back, buf, sizeof buf) == 0) ? "identical" : "MISMATCH");
+	}
 }
 #define MENU_THEME_TAG 0xe54903d3u            /* sound\music\title1\title1, the menu's looping score */
 
