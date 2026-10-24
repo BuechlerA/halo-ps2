@@ -342,6 +342,7 @@ static u64 resident_tex0(unsigned key, const tex_image_t *img, u64 tfx)
 	if (t4 && (s_opt.debug & 16)) { clut_w = 16; clut_h = 1; }
 	if ((px_bytes & 15) || img->clut_bytes < clut_bytes || img->pixel_bytes < px_bytes) return 0;
 	pages = pages_for(img->w, img->h, img->psm);
+	if (t4 && img->w >= 512) pages += 1;                /* a 512 wide PSMT4 texture reaches one page past its 16 (two of them side by side drew white boxes over Keyes, the hologram atlas, ticks 2500 .. 2580): cause not found, one spare page is enough */
 	r = tc_acquire(&s_tc, key, pages, px_bytes + clut_bytes, &e);
 	if (r != TC_HIT && r != TC_UPLOAD) return 0;
 	tbw = (img->w + 63) / 64;
@@ -805,7 +806,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		}
 		ad[n].data = mb->add ? GS_ALPHA(0, 2, 2, 1, 0xFF) : GS_ALPHA(0, 1, 0, 1, 0); ad[n++].addr = GS_A_ALPHA_1;   /* glow materials add, doubled: the Xbox exhaust is white-hot, its map a 104 grey */
 		ad[n].data = GS_TEST(atest && tex0 ? 1 : 0, 6, 0x40, 0, 0, 0, 1, 2); ad[n++].addr = GS_A_TEST_1;
-		ad[n].data = GS_ZBUF(s_zbuf_page, GS_PSMZ24, 0); ad[n++].addr = GS_A_ZBUF_1;
+		ad[n].data = GS_ZBUF(s_zbuf_page, GS_PSMZ24, blend && !atest ? 1 : 0); ad[n++].addr = GS_A_ZBUF_1;     /* a blended material (glass, additive lights, the cube map layers drawn as nothing) never writes Z: the crew and consoles behind the bridge window were rejected by it */
 		emit_state(c, ad, n, scale * mb->uv_scale[0], scale * mb->uv_scale[1],
 		           GS_PRIM(GSX_PRIM_TRIANGLE, 1, tex0 ? 1 : 0, fog, blend, 0, 0, 0, 0));
 		if (!(s_opt.debug & 1)) emit_batches(c, s_sorted + s_mat_start[m], s_mat_count[m], entry_lit);

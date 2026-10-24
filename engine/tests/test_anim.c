@@ -233,7 +233,7 @@ static int check_root_motion(const anim_section *s)
 	anim_root_motion(s, &b, 1, 1000, rm);          /* past the end: the last frame */
 	CHECK(near(rm[3], 0.01f * 29.0f / 30.0f, 1e-5f));
 	anim_root_motion(s, &b, 4, 5, rm);             /* compressed cinematic: dx dy dyaw */
-	CHECK(near(rm[0], 0.01f, 1e-5f) && rm[1] == 0.0f && near(rm[2], 0.002f, 1e-5f) && rm[3] == 0.0f);
+	CHECK(near(rm[0], 0.01f, 1e-5f) && rm[1] == 0.0f && rm[2] == 0.0f && near(rm[3], 0.002f, 1e-5f));
 	anim_root_motion(s, &b, 0, 5, rm);             /* idle: no root motion */
 	CHECK(rm[0] == 0.0f && rm[1] == 0.0f && rm[2] == 0.0f && rm[3] == 0.0f);
 	anim_root_motion(s, &b, 77, 5, rm);

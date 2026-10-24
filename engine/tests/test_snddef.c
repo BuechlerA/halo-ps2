@@ -129,7 +129,7 @@ static int real_pack(const char *path)
 	snd_section s;
 	if (load_pack(path, &img, &raw, &rawn, &sndd, &dn)) return 1;
 	CHECK(snd_open(&s, raw, rawn, (uint32_t)dn) == SND_OK);
-	CHECK(s.sound_count > 100 && s.perm_count > 100 && s.sndd_size % 64u == 0);
+	CHECK(s.sound_count > (strstr(path, "/ui.snd") ? 20u : 100u) && s.perm_count > (strstr(path, "/ui.snd") ? 20u : 100u) && s.sndd_size % 64u == 0);     /* the ui scenario's pack is small: its effects and the menu clicks */
 	walk(&s);
 	CHECK(snd_check_vag(&s, sndd, dn) == 0);
 	uint32_t spu = 0;

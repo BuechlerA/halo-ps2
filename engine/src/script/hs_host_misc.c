@@ -169,6 +169,7 @@ BI(camera_set)
 {
 	cine_pose p;
 	ENTER(camera_set);
+	if (m && m->misc.cam_hold && !m->misc.cam_override) return 0;
 	if (!m || !m->cine || !cam_point_pose(m, argh(a, n, 0), &p)) { if (m) mission_note_missing(m, "camera_set"); return 0; }
 	refresh_player_pose(m);
 	m->misc.cam_anchor_obj1 = 0;
@@ -309,7 +310,7 @@ BI(cinematic_screen_effect_set_filter)
 		cine_screen *sc = &m->cine->screen;
 		float secs = argf(a, n, 5, 0.0f);
 		sc->filter = 1; sc->filter_from = argf(a, n, 0, 1.0f); sc->filter_to = argf(a, n, 1, 0.0f);
-		sc->filter_ticks = secs > 0.0f ? (uint32_t)(secs * 30.0f + 0.5f) : 0u; sc->filter_elapsed = 0;
+		sc->filter_ticks = secs > 0.0f ? (uint32_t)((secs > 3600.0f ? 3600.0f : secs) * 30.0f + 0.5f) : 0u; sc->filter_elapsed = 0;
 	}
 	return 0;
 }
@@ -577,6 +578,56 @@ BI(sound_looping_stop)
 	else if (m->misc_env.loop_stop) m->misc_env.loop_stop(m->misc_env.user, tag);
 	lp->running = 0;
 	return 0;
+}
+
+int mission_menu_camera(mission_t *m, int point, uint32_t ticks)
+{
+	hs_value a[2];
+	cine_pose p;
+	if (!m || !m->cine || !cam_point_pose(m, (int64_t)point, &p)) return 0;
+	memset(a, 0, sizeof a);
+	a[0].v.h = (uint32_t)point; a[1].v.i = (int32_t)ticks; a[1].type = HS_LONG;
+	m->misc.cam_override = 1;
+	bi_camera_set(NULL, m, a, 2, &a[1]);
+	m->misc.cam_override = 0;
+	return 1;
+}
+
+void mission_menu_begin(mission_t *m)
+{
+	mission_hostobj *h;
+	uint32_t i;
+	if (!m || !m->cine) return;
+	refresh_player_pose(m);
+	cine_cam_control(&m->cine->cam, 1);
+	h = &m->hobj;
+	if (m->player_obj < 0 || !m->objects) return;
+	for (i = 0; i < h->suspend_count; i++) if (h->suspend[i].obj == m->player_obj) break;
+	if (i == h->suspend_count) { if (h->suspend_count >= MISSION_SUSPEND_MAX) return; h->suspend_count++; }
+	h->suspend[i].obj = (int16_t)m->player_obj;
+	h->suspend[i].pos[0] = m->objects->obj[m->player_obj].pos[0]; h->suspend[i].pos[1] = m->objects->obj[m->player_obj].pos[1]; h->suspend[i].pos[2] = m->objects->obj[m->player_obj].pos[2];
+}
+
+void mission_menu_sound(mission_t *m, uint32_t tag)
+{
+	hs_value a[3];
+	hs_value r;
+	if (!m) return;
+	memset(a, 0, sizeof a); memset(&r, 0, sizeof r);
+	a[0].v.h = tag; a[1].v.h = HS_HANDLE_NONE; a[2].type = HS_REAL; a[2].v.f = 1.0f;
+	bi_sound_impulse_start(NULL, m, a, 3, &r);
+}
+
+void mission_menu_camera_hold(mission_t *m, int hold) { if (m) m->misc.cam_hold = (uint8_t)(hold != 0); }
+
+void mission_menu_loop(mission_t *m, uint32_t tag, int on)
+{
+	hs_value a[3];
+	hs_value r;
+	if (!m) return;
+	memset(a, 0, sizeof a); memset(&r, 0, sizeof r);
+	a[0].v.h = tag; a[1].v.h = HS_HANDLE_NONE; a[2].type = HS_REAL; a[2].v.f = 1.0f;
+	if (on) bi_sound_looping_start(NULL, m, a, 3, &r); else bi_sound_looping_stop(NULL, m, a, 1, &r);
 }
 
 BI(sound_looping_set_alternate)

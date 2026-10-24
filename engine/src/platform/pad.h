@@ -3,6 +3,10 @@
 #include "render/flycam.h"
 #include "sim/input.h"
 
+#define PAD_BTN_UP       0x0010
+#define PAD_BTN_RIGHT    0x0020
+#define PAD_BTN_DOWN     0x0040
+#define PAD_BTN_LEFT     0x0080
 #define PAD_BTN_START    0x0008
 #define PAD_BTN_SELECT   0x0001
 #define PAD_BTN_TRIANGLE 0x1000

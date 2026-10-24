@@ -648,6 +648,9 @@ def test_face_overlay_encoding():
         return ac.Anim(name, typ, 1, 0, 0, 0, 3, 0, -1, 0, 0, 0, 0, b"", b"", b"")
     assert ac.is_face_overlay(anim("stand emotions", 1)) and ac.is_face_overlay(anim("Stand Talk ", 1))
     assert not ac.is_face_overlay(anim("stand talk", 0)) and not ac.is_face_overlay(anim("stand look", 1)) and not ac.is_face_overlay(anim("device position", 1))
+    nine = lambda name, typ: ac.Anim(name, typ, 9, 0, 0, 0, 3, 0, -1, 0, 0, 0, 0, b"", b"", b"")
+    assert ac.is_aim_overlay(nine("stand look", 1)) and ac.is_aim_overlay(nine("alert unarmed aim-still", 1)) and ac.is_aim_overlay(nine("crouch rifle aim-move", 1))
+    assert not ac.is_aim_overlay(nine("stand look", 0)) and not ac.is_aim_overlay(anim("stand look", 1)) and not ac.is_aim_overlay(nine("stand rifle idle", 1))
 
 
 def main() -> None:

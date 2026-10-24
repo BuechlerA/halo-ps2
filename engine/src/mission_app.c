@@ -153,6 +153,9 @@ int mapp_init(const mapp_env *env)
 	g_hs_trace = (int)cfg_int(env->cfg, "scripttrace", 0); g_hs_trace_all = g_hs_trace > 1;
 	s_units.lod_distance = (float)cfg_int(env->cfg, "unitlod", 0);    /* ADR-063 option, off by default (it changes the simulation): bodies farther than this (wu) from the player integrate every other tick */
 	s_units.tag_speeds = (uint8_t)cfg_int(env->cfg, "unitspeeds", 0);   /* debug: 1 = every unit moves at the speeds of its biped tag whatever animation it plays (the behaviour before ADR-083), to compare shots */
+	g_units_turn_gate = (int)cfg_int(env->cfg, "turngate", 1);          /* debug: 0 = scripted units turn the body to every aim change (before ADR-086) */
+	g_units_look = (int)cfg_int(env->cfg, "lookoverlay", 1);           /* debug: 0 = no head overlay */
+	g_look_flip_yaw = (int)cfg_int(env->cfg, "lookflipyaw", 0); g_look_flip_pitch = (int)cfg_int(env->cfg, "lookflippitch", 0); g_look_swap = (int)cfg_int(env->cfg, "lookswap", 0);   /* debug: the look grid's orientation */
 	s_units.lod_cine = (uint8_t)cfg_int(env->cfg, "cinelod", 0);    /* ADR-063 option, off by default: bodies integrate every other tick during a cinematic */
 	if (s_m.log) { s_m.clock = clock_now; s_m.clock_ms = clock_ms; }
 	if (s_use_bot) bot_init(&s_bot);

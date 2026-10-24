@@ -40,6 +40,17 @@ int cfg_parse(cfg_t *c, const char *text, size_t len)
 	return bad;
 }
 
+int cfg_set(cfg_t *c, const char *key, const char *arg)
+{
+	int i;
+	if (strlen(key) >= CFG_KEY_LEN || strlen(arg) >= CFG_ARG_LEN) return -1;
+	for (i = 0; i < c->count; i++)
+		if (strcmp(c->entry[i].key, key) == 0) { strcpy(c->entry[i].arg, arg); return 0; }
+	if (c->count >= CFG_MAX_ENTRIES) return -1;
+	strcpy(c->entry[c->count].key, key); strcpy(c->entry[c->count].arg, arg); c->count++;
+	return 0;
+}
+
 const char *cfg_nth(const cfg_t *c, const char *key, int n)
 {
 	int i;

@@ -3,7 +3,7 @@
 HOST_TMP ?= $(or $(TMPDIR),/tmp)
 CFLAGS   ?= -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I../src
 PYTESTS  = ../../tools/tests
-STRM_REAL = $(wildcard ../../assets/hp2/*.strm.hp2)
+STRM_REAL = $(filter-out ../../assets/hp2/ui.%,$(wildcard ../../assets/hp2/*.strm.hp2))
 STRM_ARGS = $(foreach p,$(STRM_REAL),$(p)=$(HOST_TMP)/$(notdir $(p)).crc)
 
 test: $(HOST_TMP)/halo-test.hp2 $(HOST_TMP)/halo-bsp.hp2
@@ -44,14 +44,15 @@ test: $(HOST_TMP)/halo-test.hp2 $(HOST_TMP)/halo-bsp.hp2
 	ANSM_FIXTURE=$(HOST_TMP)/halo-ansm.hp2 python3 -I $(PYTESTS)/test_ansmconv.py && cc $(CFLAGS) test_ansm.c ../src/world/ansm.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_ansm && $(HOST_TMP)/test_ansm $(HOST_TMP)/halo-ansm.hp2
 	UNIT_FIXTURE=$(HOST_TMP)/halo-unit.hp2 python3 -I $(PYTESTS)/test_unitconv.py && cc $(CFLAGS) test_unitdef.c ../src/sim/unitdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_unitdef && $(HOST_TMP)/test_unitdef $(HOST_TMP)/halo-unit.hp2 $(wildcard ../../assets/hp2/a10.unit.hp2)
 	CMOD_FIXTURE=$(HOST_TMP)/halo-cmod.hp2 python3 -I $(PYTESTS)/test_cmodconv.py && cc $(CFLAGS) test_cmod.c ../src/world/cmod.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_cmod && $(HOST_TMP)/test_cmod $(HOST_TMP)/halo-cmod.hp2
-	SND_FIXTURE=$(HOST_TMP)/halo-snd.hp2 python3 -I $(PYTESTS)/test_soundconv.py && cc $(CFLAGS) test_snddef.c ../src/audio/snddef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_snddef && $(HOST_TMP)/test_snddef $(HOST_TMP)/halo-snd.hp2 $(wildcard ../../assets/hp2/*.snd.hp2)
+	SND_FIXTURE=$(HOST_TMP)/halo-snd.hp2 python3 -I $(PYTESTS)/test_soundconv.py && cc $(CFLAGS) test_snddef.c ../src/audio/snddef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_snddef && $(HOST_TMP)/test_snddef $(HOST_TMP)/halo-snd.hp2 $(filter-out ../../assets/hp2/ui.%,$(wildcard ../../assets/hp2/*.snd.hp2))
 	STRM_FIXTURE=$(HOST_TMP)/halo-strm.hp2 python3 -I $(PYTESTS)/test_streamconv.py && cc $(CFLAGS) test_strmdef.c ../src/audio/strmdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_strmdef && for p in $(STRM_REAL); do python3 -I ../../tools/halo2ps2/streamconv.py --verify $$p --samples 60 --crc-out $(HOST_TMP)/$$(basename $$p).crc > /dev/null || exit 1; done && $(HOST_TMP)/test_strmdef $(HOST_TMP)/halo-strm.hp2 $(STRM_ARGS)
 	cc $(CFLAGS) test_stream.c ../src/audio/stream.c ../src/audio/strmdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_stream && $(HOST_TMP)/test_stream $(HOST_TMP)/halo-strm.hp2 $(STRM_REAL)
-	WEAP_FIXTURE=$(HOST_TMP)/halo-weap.hp2 python3 -I $(PYTESTS)/test_weapconv.py && cc $(CFLAGS) test_weapdef.c ../src/sim/weapdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_weapdef && $(HOST_TMP)/test_weapdef $(HOST_TMP)/halo-weap.hp2 $(wildcard ../../assets/hp2/*.weap.hp2)
+	WEAP_FIXTURE=$(HOST_TMP)/halo-weap.hp2 python3 -I $(PYTESTS)/test_weapconv.py && cc $(CFLAGS) test_weapdef.c ../src/sim/weapdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_weapdef && $(HOST_TMP)/test_weapdef $(HOST_TMP)/halo-weap.hp2 $(filter-out ../../assets/hp2/ui.%,$(wildcard ../../assets/hp2/*.weap.hp2))
 	HUD_FIXTURE=$(HOST_TMP)/halo-hud.hp2 python3 -I $(PYTESTS)/test_hudconv.py && cc $(CFLAGS) test_huddef.c ../src/ui/huddef.c ../src/world/tex.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_huddef && $(HOST_TMP)/test_huddef $(HOST_TMP)/halo-hud.hp2
-	AI_FIXTURE=$(HOST_TMP)/halo-ai.hp2 python3 -I $(PYTESTS)/test_aiconv.py && cc $(CFLAGS) test_aidef.c ../src/ai/aidef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_aidef && $(HOST_TMP)/test_aidef $(HOST_TMP)/halo-ai.hp2 $(wildcard ../../assets/hp2/*.ai.hp2)
-	DEVS_FIXTURE=$(HOST_TMP)/halo-devs.hp2 python3 -I $(PYTESTS)/test_devconv.py && cc $(CFLAGS) test_devdef.c ../src/world/devdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_devdef && $(HOST_TMP)/test_devdef $(HOST_TMP)/halo-devs.hp2 $(wildcard ../../assets/hp2/*.dev.hp2)
-	cc $(CFLAGS) test_devices.c ../src/sim/devices.c ../src/world/devdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_devices && $(HOST_TMP)/test_devices $(HOST_TMP)/halo-devs.hp2 $(wildcard ../../assets/hp2/*.dev.hp2)
+	cc $(CFLAGS) test_menu.c ../src/ui/menu.c ../src/ui/menudef.c ../src/sim/settings.c ../src/ui/hud.c ../src/ui/huddef.c ../src/sim/game.c ../src/sim/save.c ../src/sim/fx.c ../src/sim/playerdef.c ../src/sim/player.c ../src/sim/phys.c ../src/sim/vitals.c ../src/sim/unitdef.c ../src/sim/weapdef.c ../src/sim/objects.c ../src/sim/skeleton.c ../src/sim/fpview.c ../src/core/mat.c ../src/render/camera.c ../src/world/anim.c ../src/world/model.c ../src/world/scen.c ../src/world/ansm.c ../src/world/cmod.c ../src/world/coll.c ../src/world/fxdef.c ../src/world/tex.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_menu && $(HOST_TMP)/test_menu ../../assets/hp2/ui.menu.hp2
+	AI_FIXTURE=$(HOST_TMP)/halo-ai.hp2 python3 -I $(PYTESTS)/test_aiconv.py && cc $(CFLAGS) test_aidef.c ../src/ai/aidef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_aidef && $(HOST_TMP)/test_aidef $(HOST_TMP)/halo-ai.hp2 $(filter-out ../../assets/hp2/ui.%,$(wildcard ../../assets/hp2/*.ai.hp2))
+	DEVS_FIXTURE=$(HOST_TMP)/halo-devs.hp2 python3 -I $(PYTESTS)/test_devconv.py && cc $(CFLAGS) test_devdef.c ../src/world/devdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_devdef && $(HOST_TMP)/test_devdef $(HOST_TMP)/halo-devs.hp2 $(filter-out ../../assets/hp2/ui.%,$(wildcard ../../assets/hp2/*.dev.hp2))
+	cc $(CFLAGS) test_devices.c ../src/sim/devices.c ../src/world/devdef.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_devices && $(HOST_TMP)/test_devices $(HOST_TMP)/halo-devs.hp2 $(filter-out ../../assets/hp2/ui.%,$(wildcard ../../assets/hp2/*.dev.hp2))
 	cc $(CFLAGS) test_vitals.c ../src/sim/vitals.c -lm -o $(HOST_TMP)/test_vitals
 	$(HOST_TMP)/test_vitals
 	cc $(CFLAGS) test_player.c ../src/sim/player.c ../src/sim/phys.c -lm -o $(HOST_TMP)/test_player
@@ -111,8 +112,8 @@ $(HOST_TMP)/halo-path-coll-%.hp2: ../../assets/decompressed/%.map ../../tools/ha
 hs: $(PYTESTS)/test_scriptconv.py ../../tools/halo2ps2/scriptconv.py
 	HS_FIXTURE=$(HOST_TMP)/halo-script.hp2 python3 -I $(PYTESTS)/test_scriptconv.py
 	cc $(CFLAGS) test_hs.c ../src/script/hs.c ../src/script/hs_core.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_hs
-	$(HOST_TMP)/test_hs $(HOST_TMP)/halo-script.hp2 $(wildcard ../../assets/hp2/*.script.hp2)
-	@if [ -n "$(wildcard ../../assets/hp2/a10.script.hp2)" ]; then cc -std=c11 -O2 -Wall -Wextra -Werror -I../src test_hs.c ../src/script/hs.c ../src/script/hs_core.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_hs_bench && HS_BENCH=1 $(HOST_TMP)/test_hs_bench $(HOST_TMP)/halo-script.hp2 $(wildcard ../../assets/hp2/*.script.hp2) > $(HOST_TMP)/hs-bench.txt && grep -E "a10 |a50 |c20 " $(HOST_TMP)/hs-bench.txt; fi
+	$(HOST_TMP)/test_hs $(HOST_TMP)/halo-script.hp2 $(filter-out ../../assets/hp2/ui.%,$(wildcard ../../assets/hp2/*.script.hp2))
+	@if [ -n "$(wildcard ../../assets/hp2/a10.script.hp2)" ]; then cc -std=c11 -O2 -Wall -Wextra -Werror -I../src test_hs.c ../src/script/hs.c ../src/script/hs_core.c ../src/stream/hp2.c -lm -o $(HOST_TMP)/test_hs_bench && HS_BENCH=1 $(HOST_TMP)/test_hs_bench $(HOST_TMP)/halo-script.hp2 $(filter-out ../../assets/hp2/ui.%,$(wildcard ../../assets/hp2/*.script.hp2)) > $(HOST_TMP)/hs-bench.txt && grep -E "a10 |a50 |c20 " $(HOST_TMP)/hs-bench.txt; fi
 
 # Cinematics and camera (docs/28-cine-section.md): the synthetic fixture always; with assets/decompressed/<map>.map every campaign map is converted
 # (cinconv.py) and every recording of it is played tick by tick against the Python reference player's per tick hashes ("golden") and fuzzed.

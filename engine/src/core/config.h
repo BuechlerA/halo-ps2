@@ -21,6 +21,8 @@ typedef struct {
 
 /* Returns the number of lines ignored (too long / table full / key too long). */
 int cfg_parse(cfg_t *c, const char *text, size_t len);
+/* Sets `key` to `arg`: replaces the first entry of that key (the one every lookup reads) or appends one. Returns 0, or -1 when the table is full or a string is too long. */
+int cfg_set(cfg_t *c, const char *key, const char *arg);
 /* n-th (0-based) value of `key`, or NULL. */
 const char *cfg_nth(const cfg_t *c, const char *key, int n);
 const char *cfg_str(const cfg_t *c, const char *key, const char *def);

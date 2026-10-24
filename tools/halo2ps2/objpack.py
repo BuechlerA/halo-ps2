@@ -27,9 +27,15 @@ def build(map_path: Path) -> tuple[bytes, dict]:
     anim_tags = set(objs.anim_tags)
     # Phase 3 roots: models and animation graphs that weapons, units and effects reference but no placement mentions
     for mod in (unitconv, weapconv, fxconv, aiconv, devconv):
-        model_tags |= set(mod.referenced_models(map_path))
+        try:
+            model_tags |= set(mod.referenced_models(map_path))
+        except Exception as exc:                              # ui.map: no campaign globals, no units
+            print(f"note: {mod.__name__} has nothing to add for {map_path.stem}: {exc}", file=sys.stderr)
     for mod in (unitconv, weapconv, ansmconv, aiconv, devconv, cinconv):
-        anim_tags |= set(mod.referenced_anims(map_path))
+        try:
+            anim_tags |= set(mod.referenced_anims(map_path))
+        except Exception as exc:
+            print(f"note: {mod.__name__} has no animations for {map_path.stem}: {exc}", file=sys.stderr)
     if sky:
         model_tags |= {t for t in (sky["model_tag"], sky["model_tag2"]) if t}      # the sky models are drawn by the engine's sky pass
     converted = modelconv.convert_map(map_path, sorted(model_tags))

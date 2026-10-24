@@ -446,8 +446,11 @@ def closure(t: Tags, roots: list[tagindex.TagEntry]) -> dict[int, tagindex.TagEn
     return seen
 
 
+UI_SOUND_PREFIX = "sound\\sfx\\ui\\"            # the main menu's clicks (cursor, forward, back, flag_failure) are played by the menu code, nothing in the tags references them
+
+
 def default_roots(m: texconv.MapData) -> list[tagindex.TagEntry]:
-    return [e for e in m.index.entries if e.group in ROOT_GROUPS and e.data_address]
+    return [e for e in m.index.entries if (e.group in ROOT_GROUPS or (e.group == "snd!" and e.path.startswith(UI_SOUND_PREFIX))) and e.data_address]
 
 
 def resolve_roots(m: texconv.MapData, specs: list[str]) -> list[tagindex.TagEntry]:

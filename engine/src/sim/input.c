@@ -16,6 +16,14 @@
 #define B_CROSS  0x4000u
 #define B_SQUARE 0x8000u
 
+static int s_invert;
+static float s_look_scale = 1.0f;
+void input_set_look(int invert, int sens)
+{
+	s_invert = invert != 0;
+	s_look_scale = (float)(sens < 1 ? 1 : sens > 10 ? 10 : sens) / 3.0f;
+}
+
 void input_map(game_input_t *out, const raw_input_t *raw, unsigned prev_held)
 {
 	unsigned b = raw->buttons, h = 0;
@@ -35,7 +43,7 @@ void input_map(game_input_t *out, const raw_input_t *raw, unsigned prev_held)
 	out->held = h;
 	out->pressed = h & ~prev_held;
 	out->move.move_x = raw->lx; out->move.move_y = raw->ly;
-	out->move.look_x = raw->rx; out->move.look_y = raw->ry;
+	out->move.look_x = raw->rx * s_look_scale; out->move.look_y = (s_invert ? -raw->ry : raw->ry) * s_look_scale;
 	out->move.jump = (h & IN_JUMP) != 0;
 	out->move.crouch = (h & IN_CROUCH) != 0;
 	out->move.walk = 0;

@@ -43,6 +43,7 @@ EE_OBJS = src/main.o \
           src/sim/player.o \
           src/sim/playerdef.o \
           src/sim/save.o \
+          src/sim/settings.o \
           src/sim/unitdef.o \
           src/ai/units.o \
           src/sim/vitals.o \
@@ -68,6 +69,8 @@ EE_OBJS = src/main.o \
           src/stream/file.o \
           src/stream/hp2.o \
           src/vu1/world.o \
+          src/ui/menudef.o \
+          src/ui/menu.o \
           src/ui/hud.o \
           src/ui/huddef.o \
           src/world/anim.o \

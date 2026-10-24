@@ -323,6 +323,10 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 			snprintf(line, sizeof line, "Press TRIANGLE to pick up the %s", d.name);
 			hud_text(f, fonts, gl.font_sp, 140.0f, 330.0f, line, 0x80808080u);
 		}
-		if (st && st->paused) hud_text(f, fonts, gl.font_sp, 270.0f, 220.0f, "PAUSED", 0x80808080u);
+		if (st && st->paused) {
+			hud_text(f, fonts, gl.font_sp, 270.0f, 190.0f, "PAUSED", 0x80808080u);
+			hud_text(f, fonts, gl.font_sp, 248.0f, 226.0f, "RESUME", st->pause_sel == 0 ? 0x80808080u : 0x80684c30u);
+			if (st->can_quit) hud_text(f, fonts, gl.font_sp, 248.0f, 250.0f, "QUIT TO MAIN MENU", st->pause_sel == 1 ? 0x80808080u : 0x80684c30u);
+		}
 	}
 }

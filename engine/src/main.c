@@ -39,6 +39,9 @@
 #include "sim/save.h"
 #include "world/gamedata.h"
 #include "sim/objects.h"
+#include "ui/menu.h"
+#include "sim/settings.h"
+#include <kernel.h>
 #include "render/selftest.h"
 #include "world/world.h"
 #include "world/hires.h"
@@ -76,6 +79,7 @@ static game_t     s_game;
 static input_script s_script;
 static int        s_game_on;
 static unsigned   s_tick;
+static unsigned   s_input_tick;                  /* the scripted input's clock: runs while the game is paused (s_tick does not) */
 static const char *s_pack, *s_tex;
 static size_t     s_bsp_mark;
 static int        s_gpu_idle;
@@ -105,6 +109,188 @@ static void overlay_pass(void *u, struct render_ctx *rc)
 	fx_render_pass(&s_fxr, rc);          /* particles and decals are depth tested: before the HUD */
 	hud_render_pass(&s_hudr, rc);
 }
+/* ---- the main menu (docs/39-main-menu.md) ------------------------------------------------------------------------------------------------------------ */
+static const char *const k_campaign[MENU_LEVELS] = { "a10", "a30", "a50", "b30", "b40", "c10", "c20", "c40", "d20", "d40" };
+static menu_t        s_menu;
+static menudef_t     s_menud;
+static huddef_fonts  s_menu_fonts;
+static huddef_strings s_menu_strs;
+static texset_t      s_menu_tex;
+static tex_source_t  s_menu_source;
+static hud_frame_t   s_menu_frame;
+static int           s_menu_on;
+static const char   *s_argv0 = "host:engine/halo-ps2.elf";
+static settings_t     s_set;                    /* player settings and campaign progress (memory card slot SETTINGS_SLOT) */
+static int           s_play_level;             /* the campaign level this run plays (play:<level>:<difficulty>) */
+static unsigned      s_prev_btn;               /* the held pad bits of the previous tick (edges for the pause menu, scripted input included) */
+static int           s_can_return;             /* the pause menu offers "quit to main menu" (the boot config has a menu) */
+
+static void settings_apply(void)
+{
+	input_set_look(s_set.invert, s_set.sens);
+	if (audio_ready()) audio_set_master((float)s_set.volume * 0.1f);
+}
+
+static void settings_load(void)
+{
+	uint8_t buf[SETTINGS_BYTES];
+	long n = cfg_int(&s_cfg, "memcard", 1) ? memcard_load(SETTINGS_SLOT, buf, sizeof buf) : 0;
+	if (n < (long)SETTINGS_BYTES || !settings_unpack(&s_set, buf, (size_t)n)) settings_default(&s_set);
+	printf("[settings] invert %d sensitivity %d volume %d finished levels %03x last difficulty %d (%s)\n", s_set.invert, s_set.sens, s_set.volume, (unsigned)s_set.completed, s_set.last_diff, n >= (long)SETTINGS_BYTES ? "card" : "defaults");
+	settings_apply();
+}
+
+static void settings_store(void)
+{
+	uint8_t buf[SETTINGS_BYTES];
+	if (!cfg_int(&s_cfg, "memcard", 1)) return;
+	settings_pack(&s_set, buf);
+	if (memcard_save(SETTINGS_SLOT, buf, sizeof buf) != 0) { printf("[settings] could not write the memory card\n"); return; }
+	if (cfg_int(&s_cfg, "settingsverify", 0)) {                        /* debug: read the record back from the card */
+		uint8_t back[SETTINGS_BYTES];
+		settings_t chk;
+		long n = memcard_load(SETTINGS_SLOT, back, sizeof back);
+		printf("[settings] stored; read back %ld bytes, %s\n", n, (n == (long)SETTINGS_BYTES && settings_unpack(&chk, back, (size_t)n) && memcmp(back, buf, sizeof buf) == 0) ? "identical" : "MISMATCH");
+	}
+}
+#define MENU_THEME_TAG 0xe54903d3u            /* sound\music\title1\title1, the menu's looping score */
+
+/* "play:<level>:<difficulty>" (argv[1] of a restart from the menu): the campaign level's packs and the difficulty replace the menu's. */
+static void apply_play_args(int argc, char **argv)
+{
+	int level = -1, diff = -1;
+	char v[CFG_ARG_LEN];
+	const char *a = NULL;
+	int ai;
+	for (ai = 1; ai < argc; ai++) if (argv[ai] && strncmp(argv[ai], "play:", 5) == 0) { a = argv[ai]; break; }      /* LoadExecPS2 puts the ELF's path first */
+	if (!a) return;
+	if (sscanf(a + 5, "%d:%d", &level, &diff) != 2 || level < 0 || level >= MENU_LEVELS || diff < 0 || diff > 3) return;
+	cfg_set(&s_cfg, "menu", "0");
+	snprintf(v, sizeof v, "assets/hp2/%s.hp2", k_campaign[level]); cfg_set(&s_cfg, "pack", v);
+	snprintf(v, sizeof v, "assets/hp2/%s.tex.hp2", k_campaign[level]); cfg_set(&s_cfg, "tex", v);
+	snprintf(v, sizeof v, "assets/hp2/%s.obj.hp2", k_campaign[level]); cfg_set(&s_cfg, "obj", v);
+	snprintf(v, sizeof v, "assets/hp2/%s", k_campaign[level]); cfg_set(&s_cfg, "game", v);
+	snprintf(v, sizeof v, "%d", diff); cfg_set(&s_cfg, "difficulty", v);
+	cfg_set(&s_cfg, "mission", "1");
+	s_play_level = level;
+	printf("[menu] playing level %d (%s) on difficulty %d\n", level, k_campaign[level], diff);
+}
+
+/* The menu's own packs replace the game's for this run: the ui scenario is the background. */
+static void apply_menu_cfg(void)
+{
+	if (!cfg_int(&s_cfg, "menu", 0)) return;
+	cfg_set(&s_cfg, "pack", cfg_str(&s_cfg, "menu_pack", "assets/hp2/ui.hp2"));
+	cfg_set(&s_cfg, "tex", cfg_str(&s_cfg, "menu_tex", "assets/hp2/ui.tex.hp2"));
+	cfg_set(&s_cfg, "obj", cfg_str(&s_cfg, "menu_obj", "assets/hp2/ui.obj.hp2"));
+	cfg_set(&s_cfg, "game", cfg_str(&s_cfg, "menu_game", "assets/hp2/ui"));
+	cfg_set(&s_cfg, "mission", "1");
+	cfg_set(&s_cfg, "skyyaw", "0"); cfg_set(&s_cfg, "skyplanet", "1");        /* the a10 intro tunes its space sky: the ui scenario's ring sky keeps the tag's own look */
+}
+
+static uint16_t menu_level_mask(void)
+{
+	uint16_t mask = 0;
+	unsigned i;
+	for (i = 0; i < MENU_LEVELS; i++) {
+		char p[96];
+		snprintf(p, sizeof p, "assets/hp2/%s.hp2", k_campaign[i]);
+		if (file_size_of(p) < 0) continue;
+		snprintf(p, sizeof p, "assets/hp2/%s.obj.hp2", k_campaign[i]);
+		if (file_size_of(p) < 0) continue;
+		mask |= (uint16_t)(1u << i);
+	}
+	return settings_unlocked(&s_set, mask);
+}
+
+static int menu_load(const char *prefix)
+{
+	char path[160];
+	size_t n;
+	uint8_t *p;
+	menudef_status st;
+	snprintf(path, sizeof path, "%s.menu.hp2", prefix);
+	if (file_size_of(path) < 0) { printf("[menu] no %s\n", path); return -1; }
+	if (!(p = world_load_section(&s_arena, path, "MENU", &n, 1))) { printf("[menu] no MENU section in %s\n", path); return -1; }
+	if ((st = menudef_open(&s_menud, p, n)) != MENUDEF_OK) { printf("[menu] bad MENU section in %s: status %d, %u bytes\n", path, (int)st, (unsigned)n); return -1; }
+	if (!(p = world_load_section(&s_arena, path, "FONT", &n, 1)) || huddef_fonts_open(&s_menu_fonts, p, n) != HUDDEF_OK) return -1;
+	if (!(p = world_load_section(&s_arena, path, "STRS", &n, 1)) || huddef_strings_open(&s_menu_strs, p, n) != HUDDEF_OK) return -1;
+	if (!(p = world_load_section(&s_arena, path, "HUDT", &n, 1)) || tex_open(&s_menu_tex.tex, p, n) != TEX_OK) return -1;
+	s_menu_tex.has = 1;
+	world_texset_source(&s_menu_source, &s_menu_tex);
+	printf("[menu] %s: %u sprites, %u textures\n", path, (unsigned)s_menud.sprite_count, (unsigned)s_menu_tex.tex.texture_count);
+	return 0;
+}
+
+static unsigned menu_keys_of(unsigned down)
+{
+	unsigned k = 0;
+	if (down & PAD_BTN_UP) k |= MENU_KEY_UP;
+	if (down & PAD_BTN_DOWN) k |= MENU_KEY_DOWN;
+	if (down & PAD_BTN_LEFT) k |= MENU_KEY_LEFT;
+	if (down & PAD_BTN_RIGHT) k |= MENU_KEY_RIGHT;
+	if (down & PAD_BTN_CROSS) k |= MENU_KEY_ACCEPT;
+	if (down & (PAD_BTN_CIRCLE | PAD_BTN_TRIANGLE)) k |= MENU_KEY_BACK;
+	if (down & PAD_BTN_START) k |= MENU_KEY_START;
+	return k;
+}
+
+/* cfg `menukey <tick> <up|down|left|right|accept|back|start>` lines: scripted menu input for runs without a pad. */
+static unsigned menu_scripted_keys(unsigned tick)
+{
+	unsigned k = 0;
+	int i;
+	const char *v;
+	for (i = 0; (v = cfg_nth(&s_cfg, "menukey", i)) != NULL; i++) {
+		unsigned t = (unsigned)strtoul(v, NULL, 10);
+		const char *name = strchr(v, ' ');
+		if (t != tick || !name) continue;
+		while (*name == ' ') name++;
+		if (!strncmp(name, "up", 2)) k |= MENU_KEY_UP; else if (!strncmp(name, "down", 4)) k |= MENU_KEY_DOWN;
+		else if (!strncmp(name, "left", 4)) k |= MENU_KEY_LEFT; else if (!strncmp(name, "right", 5)) k |= MENU_KEY_RIGHT;
+		else if (!strncmp(name, "accept", 6)) k |= MENU_KEY_ACCEPT; else if (!strncmp(name, "back", 4)) k |= MENU_KEY_BACK;
+		else if (!strncmp(name, "start", 5)) k |= MENU_KEY_START;
+	}
+	return k;
+}
+
+/* One menu tick: keys in, camera and music requests to the mission host, the launch (a restart of the engine on the chosen level) out. */
+static void menu_step(unsigned down)
+{
+	mission_t *mm = mapp_mission();
+	int point, hold, level, diff;
+	unsigned ticks;
+	menu_key(&s_menu, menu_keys_of(down) | menu_scripted_keys(s_tick));
+	menu_tick(&s_menu);
+	{
+		settings_t ns;
+		if (menu_take_settings(&s_menu, &ns)) { s_set = ns; settings_apply(); settings_store(); }
+	}
+	{
+		unsigned sd = menu_take_sounds(&s_menu);
+		if (sd & MENU_SND_CURSOR) mission_menu_sound(mm, 0xe54703d1u);
+		if (sd & MENU_SND_FORWARD) mission_menu_sound(mm, 0xe4f3037du);
+		if (sd & MENU_SND_BACK) mission_menu_sound(mm, 0xe4f2037cu);
+		if (sd & MENU_SND_FAIL) mission_menu_sound(mm, 0xe54803d2u);
+	}
+	if (menu_take_camera(&s_menu, &point, &ticks, &hold)) {
+		mission_menu_camera_hold(mm, hold);
+		if (point >= 0) mission_menu_camera(mm, point, ticks);
+	}
+	menu_build(&s_menu, &s_menu_frame);
+	if (menu_launch(&s_menu, &level, &diff) && !s_mission_done) {
+		char arg[24];
+		char *args[1];
+		s_mission_done = 1;
+		printf("[menu] launch level %d (%s) difficulty %d at tick %u\n", level, k_campaign[level], diff, s_tick);
+		if (cfg_int(&s_cfg, "menuexit", 0)) return;                    /* test runs end here */
+		snprintf(arg, sizeof arg, "play:%d:%d", level, diff);
+		args[0] = arg;
+		LoadExecPS2(s_argv0, 1, args);
+		printf("[menu] LoadExecPS2 failed\n");
+	}
+}
+
 static int        s_vblanks = 2;                /* vblanks per frame: 2 = 30 fps (default), 1 = 60 fps */
 #define VBLANK_S (1.0f / 59.94f)
 #define VBLANK_MS (1000.0f / 59.94f)
@@ -271,7 +457,10 @@ static void serve_mission(void)
 	}
 	if (mm->save_requested) { mm->save_requested = 0; do_checkpoint_save(); }
 	if (mm->misc.revert_requested) { mm->misc.revert_requested = 0; do_revert(); }
-	if (mm->won && !s_mission_done) { s_mission_done = 1; printf("[mission] WON at tick %u (%.1f minutes)\n", mm->tick, (double)mm->tick / 1800.0); mapp_log_status(); }
+	if (mm->won && !s_mission_done) {
+		s_mission_done = 1; printf("[mission] WON at tick %u (%.1f minutes)\n", mm->tick, (double)mm->tick / 1800.0); mapp_log_status();
+		if (!s_menu_on && s_play_level >= 0 && s_play_level < MENU_LEVELS) { s_set.completed |= (uint16_t)(1u << s_play_level); settings_store(); printf("[settings] level %d finished\n", s_play_level); }
+	}
 	if (mm->lost && !s_mission_done) { s_mission_done = 2; printf("[mission] LOST at tick %u\n", mm->tick); mapp_log_status(); }
 }
 
@@ -414,6 +603,10 @@ int main(int argc, char *argv[])
 	setbuf(stdout, NULL);   /* ps2sdk stdout is not a tty: unbuffered so TTY logs appear immediately */
 	printf("halo-ps2 phase 1 boot\n");
 	load_config();
+	if (argc > 0 && argv[0] && argv[0][0]) s_argv0 = argv[0];
+	{ int ai; printf("[boot] argc %d:", argc); for (ai = 0; ai < argc && ai < 4; ai++) printf(" '%s'", argv[ai] ? argv[ai] : "(null)"); printf("\n"); }
+	apply_play_args(argc, argv);
+	apply_menu_cfg();
 
 	arena_bytes = (size_t)cfg_int(&s_cfg, "arena_mb", 25) * 1024u * 1024u;
 	heap = malloc(arena_bytes);                         /* the one boot-time allocation (ADR-006) */
@@ -423,6 +616,8 @@ int main(int argc, char *argv[])
 	pad_init();
 	if (cfg_int(&s_cfg, "memcard", 1)) memcard_init((int)cfg_int(&s_cfg, "mcformat", 0));
 	if (cfg_int(&s_cfg, "audio", 1)) audio_init();
+	s_can_return = cfg_str(&s_cfg, "menu_pack", NULL) != NULL;
+	settings_load();
 	{
 		const char *at = cfg_str(&s_cfg, "audiotest", NULL);     /* an APCM file: load and play it once (bring-up check) */
 		if (at && audio_ready()) {
@@ -511,6 +706,7 @@ int main(int argc, char *argv[])
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
 			{ float tr[3]; s_objr.trace_lo = s_objr.trace_hi = 0; s_objr.trace_step = 1; if (cfg_floats(&s_cfg, "objtrace", tr, 3) == 3 && tr[2] >= 1.0f) { s_objr.trace_lo = (unsigned)tr[0]; s_objr.trace_hi = (unsigned)tr[1]; s_objr.trace_step = (unsigned)tr[2]; } }
 			s_objr.unlit_add = (int)cfg_int(&s_cfg, "unlitadd", 1);
+			{ extern int g_hires_skip; g_hires_skip = (int)cfg_int(&s_cfg, "hiresskip", -1); }
 			{
 				float v[3] = { 1.0f, 1.0f, 1.0f };
 				s_objr.dl_gain = 1.0f; cfg_floats(&s_cfg, "dlobj", &s_objr.dl_gain, 1);
@@ -649,6 +845,17 @@ int main(int argc, char *argv[])
 			me.gd = &s_gd; me.game = &s_game; me.objects = &s_objects; me.ow = s_objr.world; me.fx = s_fx.def ? &s_fx : NULL; me.hud = &s_hs;
 			me.ga = &s_ga; me.sp = s_stream_on ? &s_sp : NULL; me.cfg = &s_cfg; me.arena = &s_arena; me.bsp = s_world.bsp_index;
 			if (mapp_init(&me) == 0) { s_hudr.cine = mapp_mission()->cine; mapp_set_bsp(s_world.bsp_index); mapp_checkpoint_save(); }
+			if (s_hudr.cine && cfg_int(&s_cfg, "menu", 0) && menu_load(cfg_str(&s_cfg, "game", "assets/hp2/ui")) == 0) {
+				mission_t *mm = mapp_mission();
+				s_hudr.hud = NULL; s_hudr.tex = &s_menu_source; s_hudr.fonts = &s_menu_fonts; s_hudr.overlay = &s_menu_frame;
+				s_hudr.key_base = bsp_render_reserve_keys(s_menu_tex.tex.texture_count);
+				s_hudr.enabled = 1;
+				menu_init(&s_menu, &s_menud, &s_menu_fonts, &s_menu_strs, (uint16_t)((menu_level_mask() | (uint16_t)cfg_int(&s_cfg, "menu_levels_or", 0)) & (uint16_t)cfg_int(&s_cfg, "menu_levels", 0xFFFF)), (int)cfg_int(&s_cfg, "menu_skiptitle", 0), &s_set);
+				mission_menu_begin(mm);
+				mission_menu_loop(mm, MENU_THEME_TAG, 1);
+				s_menu_on = 1;
+				printf("[menu] ready: levels %04x, screen %d\n", (unsigned)s_menu.level_mask, (int)s_menu.screen);
+			}
 		}
 		input_script_parse(&s_script, &s_cfg);
 		if (s_script.count) printf("[game] scripted input: %d keys\n", s_script.count);
@@ -666,15 +873,15 @@ int main(int argc, char *argv[])
 		fly_input in;
 		unsigned down = pad_poll(&in);
 
-		if (down & PAD_BTN_START) s_prof.overlay ^= 1;
+		if ((down & PAD_BTN_START) && !s_menu_on) s_prof.overlay ^= 1;
 		if (s_game_on) {
 			if (s_vblanks == 2 || (frame & 1) == 0) {            /* the 30 Hz simulation tick */
 				raw_input_t raw;
 				game_input_t gin;
-				if (s_script.count) input_script_eval(&s_script, (float)s_tick * (1.0f / 30.0f), &raw);
+				if (s_script.count) input_script_eval(&s_script, (float)s_input_tick++ * (1.0f / 30.0f), &raw);
 				else if (!pad_read_raw(&raw)) memset(&raw, 0, sizeof raw);
 				input_map(&gin, &raw, s_game.prev_held);
-				if (gin.pressed & IN_PAUSE) { s_paused ^= 1; s_hs.paused = s_paused; }
+				if (gin.pressed & IN_PAUSE) { s_paused ^= 1; s_hs.paused = s_paused; s_hs.pause_sel = 0; }
 				if (gin.pressed & IN_SAVE) { do_checkpoint_save(); if (cfg_int(&s_cfg, "savetest", 0)) card_save(0, 1); }
 				if ((gin.pressed & IN_REVERT) || s_game.dead_ticks > 90) {
 					if (s_game.dead_ticks > 90) printf("[game] dead for 3 s at %.1f %.1f %.1f (bsp %d, hp %.0f/%.0f): reverting\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_game.vitals.health, (double)s_game.vitals.shield);
@@ -685,9 +892,28 @@ int main(int argc, char *argv[])
 					printf("[game] fell out of the world at %.1f %.1f %.1f (bsp %d, floor of the map %.1f): killed\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_world.bsp.bounds[2]);
 					vitals_damage(&s_game.vitals, 1.0e6f, 1.0f, 1.0f, 1.0f);
 				}
+				if (s_paused) {                                     /* the pause menu: RESUME / QUIT TO MAIN MENU */
+					s_hs.can_quit = (uint8_t)s_can_return;
+					unsigned edge = raw.buttons & ~s_prev_btn;
+					if ((edge & PAD_BTN_UP) && s_hs.pause_sel > 0) s_hs.pause_sel--;
+					if ((edge & PAD_BTN_DOWN) && s_hs.pause_sel < (s_can_return ? 1 : 0)) s_hs.pause_sel++;
+					if (edge & PAD_BTN_CROSS) {
+						if (s_hs.pause_sel == 0) { s_paused = 0; s_hs.paused = 0; }
+						else if (s_can_return) {
+							char *none[1] = { NULL };
+							printf("[menu] quit to the main menu\n");
+							if (cfg_int(&s_cfg, "menuexit", 0)) { s_mission_done = 1; goto sim_done; }
+							settings_store();
+							LoadExecPS2(s_argv0, 0, none);
+							printf("[menu] LoadExecPS2 failed\n");
+						}
+					}
+				}
+				s_prev_btn = raw.buttons;
 				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
 				tp = timer_cycles();
 				if (mapp_active()) { mapp_tick(&gin); p2_add(P2_MAPP, tp); tp = timer_cycles(); serve_mission(); p2_add(P2_SERVE, tp); } else { game_tick(&s_game, &gin); p2_add(P2_MAPP, tp); }
+				if (s_menu_on) menu_step(down);
 				tp = timer_cycles();
 				check_bsp_switch();
 				s_tick++;
@@ -849,6 +1075,25 @@ int main(int argc, char *argv[])
 					const object_t *to = &s_objects.obj[ti];
 					if (to->model < 0 || (to->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)) || (int)to->perm[0] != (int)cfg_int(&s_cfg, "trackperm", -1) || to->type != 1) continue;
 					printf("[track] t%u #%u at %.2f %.2f %.2f yaw %.2f anim %u frame %.1f flags %02x\n", (unsigned)s_tick, ti, (double)to->pos[0], (double)to->pos[1], (double)to->pos[2], (double)atan2f(to->root.m[0][1], to->root.m[0][0]), (unsigned)to->anim, (double)to->frame, to->flags);
+				}
+			}
+			if (s_have_objects) {                              /* debug (cfg trackall "first last step"): every live biped's pose, to see which animation a unit plays while its yaw changes */
+				float ta[3];
+				if (cfg_floats(&s_cfg, "trackall", ta, 3) == 3 && ta[2] >= 1.0f && s_tick >= (unsigned)ta[0] && s_tick <= (unsigned)ta[1] && ((s_tick - (unsigned)ta[0]) % (unsigned)ta[2]) == 0) {
+					unsigned ti;
+					for (ti = 0; ti < s_objects.count; ti++) {
+						const object_t *to = &s_objects.obj[ti];
+						if (to->model < 0 || (to->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)) || to->graph < 0) continue;
+						printf("[trackall] t%u #%u ty%d m%d p%d at %.2f %.2f %.2f yaw %.1f anim %u g%d frame %.1f\n", (unsigned)s_tick, ti, (int)to->type, to->model, (int)to->perm[0], (double)to->pos[0], (double)to->pos[1], (double)to->pos[2],
+						       (double)(atan2f(to->root.m[0][1], to->root.m[0][0]) * 57.29578f), (unsigned)to->anim, (int)to->graph, (double)to->frame);
+					}
+				}
+			}
+			{                                                  /* debug (cfg forcelook "object yaw pitch"): turn the head of one object through its look overlay (-1 .. 1 of the aiming screen) every frame */
+				float fl[3];
+				if (s_have_objects && cfg_floats(&s_cfg, "forcelook", fl, 3) == 3 && fl[0] >= 0.0f && (unsigned)fl[0] < s_objects.count) {
+					object_face *ff = &s_objects.obj[(unsigned)fl[0]].face;
+					ff->look_yaw = (int8_t)(fl[1] * 127.0f); ff->look_pitch = (int8_t)(fl[2] * 127.0f);
 				}
 			}
 			{                                                  /* debug (cfg forcemodel "model anim frame"): pose every object of this model with that animation of its graph every frame (compare candidates for a whole crowd) */

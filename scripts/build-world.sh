@@ -6,6 +6,7 @@
 #
 #   scripts/build-world.sh a10 a30 b40 c10
 #   LM_GAIN=2.0 scripts/build-world.sh a10     # lightmap luminance gain (tunable at M1; default 1.7, with the tone curve of texconv.LM_GAMMA)
+#   scripts/build-world.sh ui                  # the main menu's scenario (a Halo ring, ten camera points) and ui.menu.hp2; the boot config is scripts/paths/halo.cfg
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [ $# -ge 1 ] || { echo "usage: $0 map [map...]" >&2; exit 2; }
@@ -20,4 +21,5 @@ for m in "$@"; do
 	done
 	python3 -I "$ROOT/tools/halo2ps2/streamconv.py" "$src" -o "$ROOT/assets/hp2/$m.strm.hp2" --cache "$ROOT/assets/hp2/.strmcache" || echo "(no strm pack for $m)" >&2
 	python3 -I "$ROOT/tools/halo2ps2/texconv.py" "$src" -o "$ROOT/assets/hp2/$m.tex.hp2" --lm-gain "${LM_GAIN:-1.7}"
+	if [ "$m" = ui ]; then python3 -I "$ROOT/tools/halo2ps2/menuconv.py" "$src" -o "$ROOT/assets/hp2/$m.menu.hp2"; fi     # the main menu (docs/39-main-menu.md)
 done

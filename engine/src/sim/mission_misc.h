@@ -78,6 +78,7 @@ typedef struct {
 	/* navigation points */
 	misc_nav     nav[MISC_NAVPOINTS];
 	uint32_t     nav_serial;
+	uint8_t      cam_hold, cam_override;      /* the main menu owns the camera: script camera_set calls are ignored while cam_hold is set (cam_override lets the menu's own move through) */
 	int16_t      cam_anchor_obj1;            /* camera_set_relative: object slot + 1 the camera hangs on (0 none); misc_tick refreshes its frame */
 	/* game flow */
 	uint32_t     save_tick;                  /* tick of the last save request */

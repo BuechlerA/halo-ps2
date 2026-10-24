@@ -477,6 +477,40 @@ static void test_turn(void)
 	}
 }
 
+/* a scripted (UF_NO_AI) unit that stands still keeps its body for an aim inside the biped's stationary turning threshold (the head looks, ADR-086) and turns by
+ * its turn animation (90 degrees per play) for one beyond it; a unit the AI drives keeps turning to every aim */
+static void test_turn_threshold(void)
+{
+	unsigned i;
+	float p[3] = { 0, 0, 0 };
+	first_floor(p);
+	for (i = 0; i < g_nsp; i++) {
+		int u, t;
+		unit_control_t c;
+		float thr = g_sp[i].b.turn_threshold, small = thr * 0.6f, big = thr * 1.5f;
+		if (thr <= 0.0f || thr > 2.0f) continue;
+		new_scene(4, 3);
+		u = spawn_unit(g_sp[i].def, p, 0.0f, 0, -1);
+		CHECK(u >= 0);
+		if (u < 0) continue;
+		g_units.u[u].flags |= UF_NO_AI;
+		step(10);
+		c = ctl0(small);
+		units_set_control(&g_units, u, &c);
+		step(60);
+		CHECK(fabsf(g_units.u[u].body.yaw) < 0.01f);                       /* the aim inside the threshold: the body stays */
+		c = ctl0(big);
+		units_set_control(&g_units, u, &c);
+		for (t = 0; t < 120; t++) step(1);
+		printf("  turn threshold (team %u): threshold %.2f, aim %.2f -> body yaw %.2f after the turn animation\n", g_sp[i].b.default_team, (double)thr, (double)big, (double)g_units.u[u].body.yaw);
+		CHECK(g_units.u[u].body.yaw > 1.4f);                                 /* a turn happened: one 90 degree play of the turn animation */
+		if (big > 1.75f) CHECK(g_units.u[u].body.yaw < big - 0.04f);          /* ... not all the way to the aim when it is further off than that */
+		g_units.u[u].flags &= (uint8_t)~UF_NO_AI;
+		step(60);
+		CHECK(fabsf(g_units.u[u].body.yaw - big) < 0.01f);   /* the AI's unit follows the aim */
+	}
+}
+
 /* ---- 3. scripted walks through BSP 0 ------------------------------------------------------------------------------------------------ */
 static void script_controls(unsigned unit, uint32_t tick, unit_control_t *c)
 {
@@ -1557,6 +1591,7 @@ int main(int argc, char **argv)
 	test_speeds();
 	test_speeds_lod();
 	test_turn();
+	test_turn_threshold();
 	test_walk();
 	test_animations();
 	test_combat();

@@ -169,6 +169,12 @@ void mission_destroy_object(mission_t *m, int obj);
 void mission_tick(mission_t *m, const game_input_t *in);
 
 void mission_note_missing(mission_t *m, const char *what);
+/* ---- the main menu (ui/menu.c) drives the scenario's camera and music through the script built-ins' own code ---- */
+int  mission_menu_camera(mission_t *m, int point, uint32_t ticks);       /* camera_set point, ticks (even while held); 1 when the point exists */
+void mission_menu_begin(mission_t *m);                                   /* the scenario camera takes over and the player's body is held where it is (the ui scenario has no floor) */
+void mission_menu_camera_hold(mission_t *m, int hold);                   /* while held, camera_set calls of the scripts (ring_loop's tour) do nothing */
+void mission_menu_loop(mission_t *m, uint32_t sound_looping_tag, int on);
+void mission_menu_sound(mission_t *m, uint32_t sound_tag);                 /* sound_impulse_start with the scenario's own tag id (cursor, forward, back clicks)*/ /* sound_looping_start / sound_looping_stop with the scenario's own tag id */
 /* The volume tests of the script built-ins report here (player_inside = the player's body was in the tested list and inside the volume). */
 void mission_note_awaited_volume(mission_t *m, unsigned volume, int player_inside);
 /* Position of the most recently activated active navpoint (HUD navigation), 0 if none. Provided by the hud built-ins (H2). */
