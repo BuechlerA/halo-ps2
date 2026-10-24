@@ -38,8 +38,13 @@ static const int16_t k_card_x[3] = { 72, 239, 406 };
 
 #define COL_FULL 0x80808080u
 #define COL_SELECTED 0x80808080u
-#define COL_DIM 0x80684c30u          /* R low byte: a blue-grey for the unselected rows */
-#define COL_BLUE 0x80d09050u
+/* Text colours are the ARGB floats of the DeLa text boxes (+0x10C: alpha, red, green, blue), as GS vertex colours (0x80 = 1.0, ABGR):
+ * the list items (difficulty rows) 0, 0.5, 1.0; the descriptions, level names / data, the button key and the settings labels 0.157, 0.588, 1.0; the warning text 1, 1, 1.
+ * The tags carry one colour per widget, so the white of the selected row is the focus state the widget runtime applied (inferred, not in the tags). */
+#define COL_ITEM 0x80804000u
+#define COL_TEXT 0x80804b14u
+#define COL_DIM COL_ITEM
+#define COL_BLUE COL_TEXT
 #define COL_ALERT_TEXT 0x80f0e0c0u
 
 static const char *const k_notice[3][MENU_NOTICE_LINES] = {
@@ -311,7 +316,7 @@ static void build_difficulty(const menu_t *m, hud_frame_t *f)
 	sprite(f, m->def, MS_LISTFIELD, (float)DIFF_PANEL_X, (float)DIFF_PANEL_Y, COL_FULL);
 	sprite(f, m->def, MS_EMBLEM0 + (unsigned)m->sel_diff, (float)DIFF_EMBLEM_X, (float)DIFF_EMBLEM_Y, COL_FULL);
 	menu_string(m, ML_DIFF_DESC, (unsigned)m->sel_diff, t, sizeof t);
-	text_block(f, m->fonts, menudef_font_tag(m->def, MF_SMALL), (float)DIFF_TEXT_X, (float)DIFF_TEXT_Y, 0.0f, t, COL_FULL);
+	text_block(f, m->fonts, menudef_font_tag(m->def, MF_SMALL), (float)DIFF_TEXT_X, (float)DIFF_TEXT_Y, 0.0f, t, COL_TEXT);
 	button_key(f, m, MK_ACCEPT);
 }
 
@@ -330,9 +335,9 @@ static void build_levels(const menu_t *m, hud_frame_t *f)
 		sprite(f, m->def, slot == 1 ? MS_CARD1 : MS_CARD0, x, (float)CARD_Y, COL_FULL);
 		sprite_part(f, m->def, MS_LEVEL0 + (unsigned)(open ? li : 10), x + (float)CARD_PIC_DX, (float)CARD_PIC_Y, (float)CARD_PIC_W, (float)CARD_PIC_H, slot == 1 ? COL_FULL : 0x80585858u);
 		menu_string(m, ML_MAP_LIST, (unsigned)(open ? li : 10), t, sizeof t);
-		text_block(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), x + (float)CARD_TEXT_DX, (float)CARD_NAME_Y, (float)CARD_TEXT_W, t, slot == 1 ? COL_SELECTED : COL_DIM);
+		text_block(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), x + (float)CARD_TEXT_DX, (float)CARD_NAME_Y, (float)CARD_TEXT_W, t, slot == 1 ? COL_SELECTED : COL_TEXT);
 		menu_string(m, ML_MAP_DATA, (unsigned)(open ? li : 10), t, sizeof t);
-		text_block(f, m->fonts, menudef_font_tag(m->def, MF_SMALL), x + (float)CARD_TEXT_DX, (float)CARD_DATA_Y, 0.0f, t, slot == 1 ? COL_FULL : COL_DIM);
+		text_block(f, m->fonts, menudef_font_tag(m->def, MF_SMALL), x + (float)CARD_TEXT_DX, (float)CARD_DATA_Y, 0.0f, t, COL_TEXT);
 	}
 	button_key(f, m, MK_ACCEPT);
 }
@@ -353,8 +358,8 @@ static void build_settings(const menu_t *m, hud_frame_t *f)
 		if (i == 0) { menu_string(m, ML_SET_LABELS, 0, lab, sizeof lab); menu_string(m, ML_SET_INVERT, m->set.invert ? 0u : 1u, val, sizeof val); }
 		else if (i == 1) { menu_string(m, ML_SET_LABELS, 1, lab, sizeof lab); menu_string(m, ML_SET_SENS, (unsigned)m->set.sens - 1u, val, sizeof val); }
 		else { strcpy(lab, "VOLUME:"); { unsigned v = m->set.volume; val[0] = (char)('0' + v / 10u); val[1] = (char)('0' + v % 10u); val[2] = 0; if (v < 10u) { val[0] = val[1]; val[1] = 0; } } }
-		hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), 63.0f, ty, lab, sel ? COL_SELECTED : COL_DIM);
-		hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), 363.0f, ty, val, sel ? COL_SELECTED : COL_DIM);
+		hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), 63.0f, ty, lab, sel ? COL_SELECTED : COL_TEXT);
+		hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), 363.0f, ty, val, sel ? COL_SELECTED : COL_TEXT);
 	}
 	button_key(f, m, MK_ACCEPT);
 }
