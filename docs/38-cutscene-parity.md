@@ -47,7 +47,7 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
 
 14. **Explosions** (`animlog 1` prints `effect_new` with tick and place): the corridor explosion of the video (7697) corresponds to our `effect_new e92707b3` x3 at 7600 .. 7620 near (-50, -13) (and again at 7746 .. 7766
     after the bot's revert) and a second kind (`ed2a0bb6`) at 7620 / 7665 / 7829 / 8401. Rendered (ticks 7604 .. 7670) ours shows two small orange flames and grey smoke puffs at the crates and a body on the floor where the video
-    has a large fireball with a silhouetted body thrown through it: the particle effect is much smaller than the Xbox's (open: the fx particle fidelity, not the hand-off).
+    has a large fireball with a silhouetted body thrown through it: the video's fireball looks larger, but the two views are not comparable (the bot stands about 6 wu from the crates, the video's player about 4 and in front of the body), so "much smaller" is a first impression, not a measurement: to settle it render the same effect (`effect_new e92707b3`) from the same distance (open: fx particle fidelity, not the hand-off).
 
 ## Open (see ADR-081 .. 085)
 The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's exact convolution kernel (a sprite blur and a veil stand in, ADR-085), the scorpions' colour, the ship hum, the title-safe
