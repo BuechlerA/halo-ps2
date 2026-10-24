@@ -628,9 +628,9 @@ def convert_block(block: bytes, loc: bsp.BspLocation) -> bytes:
 
 def convert_map(path: Path, bsp_indices: list[int] | None = None, chroma: bool = True) -> bytes:
     global CHROMA_PAGES, CHROMA_STRENGTH_BSP
+    from halo2ps2 import texconv
     tmap = tinfos = None
     if chroma:
-        from halo2ps2 import texconv
         tmap = texconv.MapData.open(path)
         tinfos = {b.index: b for b in texconv.scan_map(tmap)}
     hdr = mapinfo.read_header(path)

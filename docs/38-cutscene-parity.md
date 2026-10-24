@@ -57,8 +57,9 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
     shader `levels\a10\shaders\alpha test` (a grating, alpha tested) over a recessed floor panel; the lightmap multiply pass has no alpha test of its own, so it darkened the grating's holes and bars with a dark lightmap
     page. Alpha tested materials now skip the lightmap pass (`LM_SKIP` in `bsp_render.c`, they keep their vertex lighting): the hand-off frame shows the video's dark grating with lighter bars.
 
-17. The hand-off view's colour cast (video: neutral grey-green walls, R/G 0.94; ours: warm, R/G 1.25 on the wall, 1.0 .. 1.1 elsewhere) does **not** come from the vertex chroma: a per-BSP strength (`BSP_TONE`'s optional fifth number,
-    `texconv.bsp_chroma`; tried 0.15 against 0.4 on `a10a`) left it where it was (1.25), so it lives in the base textures / shader tints (open, the hangar colour grade of ADR-081). The plumbing stays, `a10a` keeps the default.
+17. **Fixed: the hand-off view's warm cast** (video: neutral grey-green walls, R/G 0.94; ours 1.25 on the wall) came from the fixtures' dynamic lights: the alert lights of the cryo bay lit the room red while the Xbox keeps them
+    unpowered until the alarm (debug `dynlights 0` took the wall to R/G 1.00; neutral vertex colours and a per-BSP chroma strength changed nothing, the plumbing `BSP_TONE`'s optional fifth number / `texconv.bsp_chroma` stays, `a10a`
+    uses the default). A fixture's light attachment now follows its device's power (`object_device_power` in `hs_host_obj.c`: power 0, no light); the red alarm of the later fight (ticks 7700 .. 7820) is unchanged.
 
 ## Open (see ADR-081 .. 085)
 The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's exact convolution kernel (a sprite blur and a veil stand in, ADR-085), the scorpions' colour, the ship hum, the title-safe

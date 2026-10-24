@@ -556,6 +556,19 @@ static void update_held_weapons(mission_t *M)
 
 /* Particle systems and looping effects attached to objects (scenery steam jets, smoke and fire emitters): the FXAT rows of the object's tag, at the row's marker
  * (the object's origin when the marker name is empty or unknown), along the marker's forward axis. */
+/* The power of the device an object is the model of (a machine placed in the scenario), -1 when it is no device. A fixture's light follows it: the alert lights of the cryo bay are
+ * unpowered until the alarm (the Xbox video shows the bay neutral at the hand-off, ours was red). */
+static float object_device_power(const mission_t *M, int slot)
+{
+	uint32_t i;
+	if (!M->devices || !M->dev) return -1.0f;
+	for (i = 0; i < M->devices->count && i < DEV_MAX_DEVICES; i++) {
+		devdef_device pd = devdef_get_device(M->dev, i);
+		if (pd.scen_index != DEVDEF_NONE && pd.scen_index < OBJ_MAX_PLACEMENTS && M->objects->by_placement[pd.scen_index] == slot) return devices_power(M->devices, i);
+	}
+	return -1.0f;
+}
+
 static void update_object_fx(mission_t *M)
 {
 	unsigned i;
@@ -570,6 +583,7 @@ static void update_object_fx(mission_t *M)
 		for (k = 0; k < n && k < 8; k++) {
 			fx_attach_row r = fx_attachment(M->fx, first + k);
 			float pos[3] = { o->pos[0], o->pos[1], o->pos[2] }, dir[3] = { o->root.m[0][0], o->root.m[0][1], o->root.m[0][2] };
+			if (r.kind == FX_ATT_LIGH && object_device_power(M, (int)i) == 0.0f) continue;          /* an unpowered fixture gives no light */
 			int mk = r.marker[0] ? marker_index(M, o, r.marker) : -1;
 			mat4 w;
 			if (mk >= 0 && marker_world(M, o, mk, &w)) {
