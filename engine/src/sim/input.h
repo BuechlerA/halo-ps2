@@ -38,6 +38,8 @@ typedef struct {
 typedef struct { float t, lx, ly, rx, ry; unsigned buttons; } input_key;
 typedef struct { input_key key[INPUT_SCRIPT_MAX]; int count; } input_script;
 
+/* Look controls from the settings (docs/39): invert the vertical look, sensitivity 1 .. 10 (3 = the engine's own rates). */
+void input_set_look(int invert, int sens);
 /* Maps raw pad state to game input; `prev_held` is the previous tick's `held`. */
 void input_map(game_input_t *out, const raw_input_t *raw, unsigned prev_held);
 /* Returns the number of keys parsed. Keys must be time-ordered; out-of-order ones are dropped. */

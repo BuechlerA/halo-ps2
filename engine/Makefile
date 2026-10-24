@@ -43,6 +43,7 @@ EE_OBJS = src/main.o \
           src/sim/player.o \
           src/sim/playerdef.o \
           src/sim/save.o \
+          src/sim/settings.o \
           src/sim/unitdef.o \
           src/ai/units.o \
           src/sim/vitals.o \

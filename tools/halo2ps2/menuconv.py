@@ -51,18 +51,21 @@ SPRITES: list[tuple[str, str, int, int]] = [
     ("emblem0", MM + "difficulty_select\\difficulty_options", 0, 256), ("emblem1", MM + "difficulty_select\\difficulty_options", 1, 256),
     ("emblem2", MM + "difficulty_select\\difficulty_options", 2, 256), ("emblem3", MM + "difficulty_select\\difficulty_options", 3, 256),
     ("listfield", SH + "bitmaps\\list_field", 0, 256),
-    ("a_butn", SH + "bitmaps\\a_butn", 0, 32), ("b_butn", SH + "bitmaps\\b_butn", 0, 32),
+    ("x_butn", "@x_butn", 0, 32), ("o_butn", "@o_butn", 0, 32),
     ("hdr_level", MM + "solo_level_select\\header_load_level", 0, 512),
     ("alert", SH + "bitmaps\\alert_bkd", 0, 256),
     ("white", SH + "bitmaps\\white", 0, 8),
     ("arrow_l", SH + "bitmaps\\arrow_big_left", 0, 32), ("arrow_r", SH + "bitmaps\\arrow_big_right", 0, 32),
+    ("option0", SH + "bitmaps\\option_bkds", 0, 512), ("option1", SH + "bitmaps\\option_bkds", 1, 512),
     ("card0", SH + "bitmaps\\spinner_list_3_wide_item_background", 0, 256), ("card1", SH + "bitmaps\\spinner_list_3_wide_item_background", 1, 256),
 ] + [(f"ind{i}", MM + "difficulty_select\\difficulty_options_small", i, 64) for i in range(4)] + [(f"level{i}", SH + "bitmaps\\sp_levels", i, 256) for i in range(11)]
 
 # String lists the screens read (ENUM order of menudef.h) and the fonts (small_ui, large_ui).
 LISTS = [MM + "main_menu_options", MM + "button_key", MM + "difficulty_select\\difficulty_options",
          MM + "difficulty_select\\difficulty_descriptions", MM + "difficulty_select\\warning_message", MM + "map_list",
-         MM + "solo_level_select\\map_data"]
+         MM + "solo_level_select\\map_data", SH + "main_menu\\settings_select\\player_setup\\player_profile_edit\\advanced_controls\\advanced_controller_labels",
+         SH + "main_menu\\settings_select\\player_setup\\player_profile_edit\\advanced_controls\\var_invert_joystick",
+         SH + "main_menu\\settings_select\\player_setup\\player_profile_edit\\advanced_controls\\var_look_sensitivity"]
 FONTS = ["ui\\small_ui", "ui\\large_ui"]
 
 
@@ -93,6 +96,46 @@ def add_image(tex: hudconv.Textures, m: texconv.MapData, tid: int, idx: int, cap
     return hudconv.TexInfo(tex.add_raw(t), tw, th, w, h, tw / pw, th / ph, padded)
 
 
+def ps2_button(kind: str, size: int = 32) -> bytes:
+    """A PlayStation face button as RGBA (the menus show the DualShock's Cross and Circle where the Xbox shows A and B): a dark disc with a light rim and the coloured symbol, antialiased."""
+    import math
+    out = bytearray(size * size * 4)
+    c = (size - 1) / 2.0
+    rad = size / 2.0 - 1.0
+    col = (120, 160, 235) if kind == "x" else (235, 80, 80)
+    for y in range(size):
+        for x in range(size):
+            dx, dy = x - c, y - c
+            d = math.hypot(dx, dy)
+            cover = max(0.0, min(1.0, rad + 0.5 - d))
+            if cover <= 0.0:
+                continue
+            r, g, b = 36, 38, 48                                      # the disc
+            if d > rad - 1.6:
+                r, g, b = 150, 154, 170                               # the rim
+            elif dy < -c * 0.2:                                       # a faint gloss on the upper half
+                r, g, b = 52, 55, 68
+            sym = 0.0
+            if kind == "x":                                           # two crossing strokes
+                a1 = abs(dx - dy) / math.sqrt(2.0)
+                a2 = abs(dx + dy) / math.sqrt(2.0)
+                if abs(dx) < size * 0.27 and abs(dy) < size * 0.27:
+                    sym = max(0.0, min(1.0, 2.0 - min(a1, a2) * 1.15))
+            else:                                                     # a ring
+                sym = max(0.0, min(1.0, 1.9 - abs(d - size * 0.25) * 1.15))
+            r, g, b = (round(r + (col[0] - r) * sym), round(g + (col[1] - g) * sym), round(b + (col[2] - b) * sym))
+            i = (y * size + x) * 4
+            out[i:i + 4] = bytes((r, g, b, round(255 * cover)))
+    return bytes(out)
+
+
+def add_generated(tex: hudconv.Textures, tid: int, rgba: bytes, size: int) -> hudconv.TexInfo:
+    found = texconv.alpha_class(rgba)
+    klass = texconv.CLASS_BLEND if found != texconv.CLASS_OPAQUE else texconv.CLASS_OPAQUE
+    t = texconv.convert_rgba(tid, rgba, size, size, klass)
+    return hudconv.TexInfo(tex.add_raw(t), size, size, size, size, 1.0, 1.0, False)
+
+
 def build(map_path: Path):
     m = texconv.MapData.open(map_path)
     c = hudconv.Collector(m)
@@ -101,10 +144,15 @@ def build(map_path: Path):
     shown: list[tuple[str, int, int, int, int, int, int, int]] = []
     cache: dict[tuple[int, int, int], hudconv.TexInfo] = {}
     for name, path, idx, cap in SPRITES:
-        tid = find(m, "bitm", path).tag_id
-        key = (tid, idx, cap)
-        if key not in cache:
-            cache[key] = add_image(tex, m, tid, idx, cap)
+        if path.startswith("@"):
+            tid = 0xFB000000 | len(cache)
+            key = (tid, idx, cap)
+            cache[key] = add_generated(tex, tid, ps2_button(path[1]), cap)
+        else:
+            tid = find(m, "bitm", path).tag_id
+            key = (tid, idx, cap)
+            if key not in cache:
+                cache[key] = add_image(tex, m, tid, idx, cap)
         ti = cache[key]
         u1, v1 = min(ti.tw, round(ti.sw * ti.kx)), min(ti.th, round(ti.sh * ti.ky))
         flags = (hudconv.SF_PADDED if ti.padded else 0) | (hudconv.SF_SCALED if ti.kx != 1 or ti.ky != 1 else 0)

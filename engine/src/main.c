@@ -40,6 +40,7 @@
 #include "world/gamedata.h"
 #include "sim/objects.h"
 #include "ui/menu.h"
+#include "sim/settings.h"
 #include <kernel.h>
 #include "render/selftest.h"
 #include "world/world.h"
@@ -78,6 +79,7 @@ static game_t     s_game;
 static input_script s_script;
 static int        s_game_on;
 static unsigned   s_tick;
+static unsigned   s_input_tick;                  /* the scripted input's clock: runs while the game is paused (s_tick does not) */
 static const char *s_pack, *s_tex;
 static size_t     s_bsp_mark;
 static int        s_gpu_idle;
@@ -118,6 +120,33 @@ static tex_source_t  s_menu_source;
 static hud_frame_t   s_menu_frame;
 static int           s_menu_on;
 static const char   *s_argv0 = "host:engine/halo-ps2.elf";
+static settings_t     s_set;                    /* player settings and campaign progress (memory card slot SETTINGS_SLOT) */
+static int           s_play_level;             /* the campaign level this run plays (play:<level>:<difficulty>) */
+static unsigned      s_prev_btn;               /* the held pad bits of the previous tick (edges for the pause menu, scripted input included) */
+static int           s_can_return;             /* the pause menu offers "quit to main menu" (the boot config has a menu) */
+
+static void settings_apply(void)
+{
+	input_set_look(s_set.invert, s_set.sens);
+	if (audio_ready()) audio_set_master((float)s_set.volume * 0.1f);
+}
+
+static void settings_load(void)
+{
+	uint8_t buf[SETTINGS_BYTES];
+	long n = cfg_int(&s_cfg, "memcard", 1) ? memcard_load(SETTINGS_SLOT, buf, sizeof buf) : 0;
+	if (n < (long)SETTINGS_BYTES || !settings_unpack(&s_set, buf, (size_t)n)) settings_default(&s_set);
+	printf("[settings] invert %d sensitivity %d volume %d finished levels %03x last difficulty %d (%s)\n", s_set.invert, s_set.sens, s_set.volume, (unsigned)s_set.completed, s_set.last_diff, n >= (long)SETTINGS_BYTES ? "card" : "defaults");
+	settings_apply();
+}
+
+static void settings_store(void)
+{
+	uint8_t buf[SETTINGS_BYTES];
+	if (!cfg_int(&s_cfg, "memcard", 1)) return;
+	settings_pack(&s_set, buf);
+	if (memcard_save(SETTINGS_SLOT, buf, sizeof buf) != 0) printf("[settings] could not write the memory card\n");
+}
 #define MENU_THEME_TAG 0xe54903d3u            /* sound\music\title1\title1, the menu's looping score */
 
 /* "play:<level>:<difficulty>" (argv[1] of a restart from the menu): the campaign level's packs and the difficulty replace the menu's. */
@@ -137,6 +166,7 @@ static void apply_play_args(int argc, char **argv)
 	snprintf(v, sizeof v, "assets/hp2/%s", k_campaign[level]); cfg_set(&s_cfg, "game", v);
 	snprintf(v, sizeof v, "%d", diff); cfg_set(&s_cfg, "difficulty", v);
 	cfg_set(&s_cfg, "mission", "1");
+	s_play_level = level;
 	printf("[menu] playing level %d (%s) on difficulty %d\n", level, k_campaign[level], diff);
 }
 
@@ -164,7 +194,7 @@ static uint16_t menu_level_mask(void)
 		if (file_size_of(p) < 0) continue;
 		mask |= (uint16_t)(1u << i);
 	}
-	return mask;
+	return settings_unlocked(&s_set, mask);
 }
 
 static int menu_load(const char *prefix)
@@ -226,6 +256,10 @@ static void menu_step(unsigned down)
 	unsigned ticks;
 	menu_key(&s_menu, menu_keys_of(down) | menu_scripted_keys(s_tick));
 	menu_tick(&s_menu);
+	{
+		settings_t ns;
+		if (menu_take_settings(&s_menu, &ns)) { s_set = ns; settings_apply(); settings_store(); }
+	}
 	{
 		unsigned sd = menu_take_sounds(&s_menu);
 		if (sd & MENU_SND_CURSOR) mission_menu_sound(mm, 0xe54703d1u);
@@ -417,7 +451,10 @@ static void serve_mission(void)
 	}
 	if (mm->save_requested) { mm->save_requested = 0; do_checkpoint_save(); }
 	if (mm->misc.revert_requested) { mm->misc.revert_requested = 0; do_revert(); }
-	if (mm->won && !s_mission_done) { s_mission_done = 1; printf("[mission] WON at tick %u (%.1f minutes)\n", mm->tick, (double)mm->tick / 1800.0); mapp_log_status(); }
+	if (mm->won && !s_mission_done) {
+		s_mission_done = 1; printf("[mission] WON at tick %u (%.1f minutes)\n", mm->tick, (double)mm->tick / 1800.0); mapp_log_status();
+		if (!s_menu_on && s_play_level >= 0 && s_play_level < MENU_LEVELS) { s_set.completed |= (uint16_t)(1u << s_play_level); settings_store(); printf("[settings] level %d finished\n", s_play_level); }
+	}
 	if (mm->lost && !s_mission_done) { s_mission_done = 2; printf("[mission] LOST at tick %u\n", mm->tick); mapp_log_status(); }
 }
 
@@ -573,6 +610,8 @@ int main(int argc, char *argv[])
 	pad_init();
 	if (cfg_int(&s_cfg, "memcard", 1)) memcard_init((int)cfg_int(&s_cfg, "mcformat", 0));
 	if (cfg_int(&s_cfg, "audio", 1)) audio_init();
+	s_can_return = cfg_str(&s_cfg, "menu_pack", NULL) != NULL;
+	settings_load();
 	{
 		const char *at = cfg_str(&s_cfg, "audiotest", NULL);     /* an APCM file: load and play it once (bring-up check) */
 		if (at && audio_ready()) {
@@ -805,7 +844,7 @@ int main(int argc, char *argv[])
 				s_hudr.hud = NULL; s_hudr.tex = &s_menu_source; s_hudr.fonts = &s_menu_fonts; s_hudr.overlay = &s_menu_frame;
 				s_hudr.key_base = bsp_render_reserve_keys(s_menu_tex.tex.texture_count);
 				s_hudr.enabled = 1;
-				menu_init(&s_menu, &s_menud, &s_menu_fonts, &s_menu_strs, (uint16_t)((menu_level_mask() | (uint16_t)cfg_int(&s_cfg, "menu_levels_or", 0)) & (uint16_t)cfg_int(&s_cfg, "menu_levels", 0xFFFF)), (int)cfg_int(&s_cfg, "menu_skiptitle", 0));
+				menu_init(&s_menu, &s_menud, &s_menu_fonts, &s_menu_strs, (uint16_t)((menu_level_mask() | (uint16_t)cfg_int(&s_cfg, "menu_levels_or", 0)) & (uint16_t)cfg_int(&s_cfg, "menu_levels", 0xFFFF)), (int)cfg_int(&s_cfg, "menu_skiptitle", 0), &s_set);
 				mission_menu_begin(mm);
 				mission_menu_loop(mm, MENU_THEME_TAG, 1);
 				s_menu_on = 1;
@@ -833,10 +872,10 @@ int main(int argc, char *argv[])
 			if (s_vblanks == 2 || (frame & 1) == 0) {            /* the 30 Hz simulation tick */
 				raw_input_t raw;
 				game_input_t gin;
-				if (s_script.count) input_script_eval(&s_script, (float)s_tick * (1.0f / 30.0f), &raw);
+				if (s_script.count) input_script_eval(&s_script, (float)s_input_tick++ * (1.0f / 30.0f), &raw);
 				else if (!pad_read_raw(&raw)) memset(&raw, 0, sizeof raw);
 				input_map(&gin, &raw, s_game.prev_held);
-				if (gin.pressed & IN_PAUSE) { s_paused ^= 1; s_hs.paused = s_paused; }
+				if (gin.pressed & IN_PAUSE) { s_paused ^= 1; s_hs.paused = s_paused; s_hs.pause_sel = 0; }
 				if (gin.pressed & IN_SAVE) { do_checkpoint_save(); if (cfg_int(&s_cfg, "savetest", 0)) card_save(0, 1); }
 				if ((gin.pressed & IN_REVERT) || s_game.dead_ticks > 90) {
 					if (s_game.dead_ticks > 90) printf("[game] dead for 3 s at %.1f %.1f %.1f (bsp %d, hp %.0f/%.0f): reverting\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_game.vitals.health, (double)s_game.vitals.shield);
@@ -847,6 +886,24 @@ int main(int argc, char *argv[])
 					printf("[game] fell out of the world at %.1f %.1f %.1f (bsp %d, floor of the map %.1f): killed\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_world.bsp.bounds[2]);
 					vitals_damage(&s_game.vitals, 1.0e6f, 1.0f, 1.0f, 1.0f);
 				}
+				if (s_paused) {                                     /* the pause menu: RESUME / QUIT TO MAIN MENU */
+					s_hs.can_quit = (uint8_t)s_can_return;
+					unsigned edge = raw.buttons & ~s_prev_btn;
+					if ((edge & PAD_BTN_UP) && s_hs.pause_sel > 0) s_hs.pause_sel--;
+					if ((edge & PAD_BTN_DOWN) && s_hs.pause_sel < (s_can_return ? 1 : 0)) s_hs.pause_sel++;
+					if (edge & PAD_BTN_CROSS) {
+						if (s_hs.pause_sel == 0) { s_paused = 0; s_hs.paused = 0; }
+						else if (s_can_return) {
+							char *none[1] = { NULL };
+							printf("[menu] quit to the main menu\n");
+							if (cfg_int(&s_cfg, "menuexit", 0)) { s_mission_done = 1; goto sim_done; }
+							settings_store();
+							LoadExecPS2(s_argv0, 0, none);
+							printf("[menu] LoadExecPS2 failed\n");
+						}
+					}
+				}
+				s_prev_btn = raw.buttons;
 				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
 				tp = timer_cycles();
 				if (mapp_active()) { mapp_tick(&gin); p2_add(P2_MAPP, tp); tp = timer_cycles(); serve_mission(); p2_add(P2_SERVE, tp); } else { game_tick(&s_game, &gin); p2_add(P2_MAPP, tp); }

@@ -146,12 +146,12 @@ static void button_key(hud_frame_t *f, const menu_t *m, int accept_text)
 	int fi = m->fonts && m->fonts->font_count ? huddef_find_font(m->fonts, menudef_font_tag(m->def, MF_LARGE)) : -1;
 	float ty = (float)KEY_Y;
 	if (fi >= 0) { fd = huddef_get_font(m->fonts, (uint32_t)fi); ty += (26.0f - (float)(fd.ascent + fd.descent)) * 0.5f; }
-	sprite(f, m->def, MS_B_BUTN, (float)KEY_B_X, (float)KEY_Y, COL_FULL);
+	sprite(f, m->def, MS_O_BUTN, (float)KEY_B_X, (float)KEY_Y, COL_FULL);
 	menu_string(m, ML_BUTTON_KEY, MK_BACK, t, sizeof t);
-	hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), (float)KEY_B_X + 21.0f, ty, t[0] == '=' ? t + 1 : t, COL_BLUE);
-	sprite(f, m->def, MS_A_BUTN, (float)KEY_A_X, (float)KEY_Y, COL_FULL);
+	hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), (float)KEY_B_X + 38.0f, ty, t[0] == '=' ? t + 1 : t, COL_BLUE);
+	sprite(f, m->def, MS_X_BUTN, (float)KEY_A_X, (float)KEY_Y, COL_FULL);
 	menu_string(m, ML_BUTTON_KEY, accept_text, t, sizeof t);
-	hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), (float)KEY_A_X + 21.0f, ty, t[0] == '=' ? t + 1 : t, COL_BLUE);
+	hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), (float)KEY_A_X + 38.0f, ty, t[0] == '=' ? t + 1 : t, COL_BLUE);
 }
 
 /* ---- state ------------------------------------------------------------------------------------------------------------------------------------------- */
@@ -167,7 +167,7 @@ static unsigned level_count_playable(const menu_t *m)
 	return n;
 }
 
-void menu_init(menu_t *m, const menudef_t *def, const huddef_fonts *fonts, const huddef_strings *strs, uint16_t level_mask, int skip_title)
+void menu_init(menu_t *m, const menudef_t *def, const huddef_fonts *fonts, const huddef_strings *strs, uint16_t level_mask, int skip_title, const settings_t *set)
 {
 	memset(m, 0, sizeof *m);
 	m->def = def; m->fonts = fonts; m->strs = strs; m->level_mask = level_mask;
@@ -176,6 +176,9 @@ void menu_init(menu_t *m, const menudef_t *def, const huddef_fonts *fonts, const
 	m->cam_point = -1; m->fade_in = 45;
 	m->sel_diff = 1;                                           /* NORMAL is the default highlight */
 	m->sel_level = 0;
+	if (set) m->set = *set; else settings_default(&m->set);
+	settings_clamp(&m->set);
+	m->sel_diff = (int8_t)(m->set.last_diff > 3u ? 1 : m->set.last_diff);
 }
 
 static void enter_main(menu_t *m)
@@ -202,7 +205,8 @@ void menu_key(menu_t *m, unsigned keys)
 				m->from = MENU_SCREEN_MAIN;
 				if (level_count_playable(m) > 1u) { m->screen = MENU_SCREEN_LEVELS; want_camera(m, MENU_CAM_NEW_CAMPAIGN, 1); }
 				else { m->sel_level = 0; m->screen = MENU_SCREEN_DIFFICULTY; want_camera(m, MENU_CAM_NEW_CAMPAIGN, 1); }
-			} else { m->snd = MENU_SND_FAIL; m->from = MENU_SCREEN_MAIN; m->notice = (uint8_t)(m->sel_main - 1); m->screen = MENU_SCREEN_NOTICE; }
+			} else if (m->sel_main == 2) { m->from = MENU_SCREEN_MAIN; m->screen = MENU_SCREEN_SETTINGS; m->sel_set = 0; }
+			else { m->snd = MENU_SND_FAIL; m->from = MENU_SCREEN_MAIN; m->notice = (uint8_t)(m->sel_main - 1); m->screen = MENU_SCREEN_NOTICE; }
 		} else if (keys & MENU_KEY_BACK) { m->snd |= MENU_SND_BACK; m->screen = MENU_SCREEN_TITLE; want_camera(m, -1, 0); }
 		break;
 	case MENU_SCREEN_LEVELS:
@@ -214,9 +218,23 @@ void menu_key(menu_t *m, unsigned keys)
 	case MENU_SCREEN_DIFFICULTY:
 		if (keys & MENU_KEY_UP) { if (m->sel_diff > 0) { m->sel_diff--; m->snd |= MENU_SND_CURSOR; } }
 		else if (keys & MENU_KEY_DOWN) { if (m->sel_diff < 3) { m->sel_diff++; m->snd |= MENU_SND_CURSOR; } }
-		else if (keys & (MENU_KEY_ACCEPT | MENU_KEY_START)) { m->launch_level = m->sel_level; m->launch_diff = m->sel_diff; m->snd |= MENU_SND_FORWARD; }
+		else if (keys & (MENU_KEY_ACCEPT | MENU_KEY_START)) { m->launch_level = m->sel_level; m->launch_diff = m->sel_diff; m->set.last_diff = (uint8_t)m->sel_diff; m->set_dirty = 1; m->snd |= MENU_SND_FORWARD; }
 		else if (keys & MENU_KEY_BACK) { if (m->from == MENU_SCREEN_LEVELS) { m->screen = MENU_SCREEN_LEVELS; m->snd |= MENU_SND_BACK; } else enter_main(m); }
 		break;
+	case MENU_SCREEN_SETTINGS: {
+		int d = (keys & MENU_KEY_RIGHT) ? 1 : (keys & MENU_KEY_LEFT) ? -1 : 0;
+		if (keys & MENU_KEY_UP) { if (m->sel_set > 0) { m->sel_set--; m->snd |= MENU_SND_CURSOR; } }
+		else if (keys & MENU_KEY_DOWN) { if (m->sel_set < MENU_SET_ROWS - 1) { m->sel_set++; m->snd |= MENU_SND_CURSOR; } }
+		else if (keys & MENU_KEY_BACK) { m->screen = MENU_SCREEN_MAIN; m->snd |= MENU_SND_BACK; }
+		else if (d || (keys & MENU_KEY_ACCEPT)) {
+			settings_t before = m->set;
+			if (m->sel_set == 0) m->set.invert = (uint8_t)!m->set.invert;
+			else if (m->sel_set == 1) m->set.sens = (uint8_t)(d >= 0 ? (m->set.sens < 10 ? m->set.sens + 1 : 10) : (m->set.sens > 1 ? m->set.sens - 1 : 1));
+			else m->set.volume = (uint8_t)(d >= 0 ? (m->set.volume < 10 ? m->set.volume + 1 : 10) : (m->set.volume > 0 ? m->set.volume - 1 : 0));
+			if (memcmp(&before, &m->set, sizeof before)) { m->set_dirty = 1; m->snd |= MENU_SND_CURSOR; }
+		}
+		break;
+	}
 	case MENU_SCREEN_NOTICE:
 		if (keys & (MENU_KEY_ACCEPT | MENU_KEY_BACK | MENU_KEY_START)) { m->screen = MENU_SCREEN_MAIN; m->snd |= MENU_SND_BACK; }
 		break;
@@ -237,6 +255,13 @@ int menu_take_camera(menu_t *m, int *point, unsigned *ticks, int *hold)
 	if (!m->cam_dirty) return 0;
 	m->cam_dirty = 0;
 	*point = m->cam_point; *ticks = MENU_CAM_MOVE_TICKS; *hold = m->cam_hold;
+	return 1;
+}
+
+int menu_take_settings(menu_t *m, settings_t *out)
+{
+	if (!m->set_dirty) return 0;
+	m->set_dirty = 0; *out = m->set;
 	return 1;
 }
 
@@ -312,6 +337,28 @@ static void build_levels(const menu_t *m, hud_frame_t *f)
 	button_key(f, m, MK_ACCEPT);
 }
 
+static void build_settings(const menu_t *m, hud_frame_t *f)
+{
+	unsigned i;
+	char lab[48], val[24];
+	huddef_font fd;
+	int fi = m->fonts && m->fonts->font_count ? huddef_find_font(m->fonts, menudef_font_tag(m->def, MF_LARGE)) : -1;
+	sprite_stretch(f, m->def, MS_GRADIENT, 0.0f, 0.0f, (float)MENUDEF_VIRT_W, (float)MENUDEF_VIRT_H, COL_FULL);
+	sprite(f, m->def, MS_SETTINGS1, (float)HEADER_X, 4.0f, COL_FULL);
+	for (i = 0; i < MENU_SET_ROWS; i++) {
+		float y = 78.0f + 36.0f * (float)i, ty = y;
+		int sel = (int)i == m->sel_set;
+		sprite(f, m->def, sel ? MS_OPTION1 : MS_OPTION0, 51.0f, y, COL_FULL);
+		if (fi >= 0) { fd = huddef_get_font(m->fonts, (uint32_t)fi); ty += (32.0f - (float)(fd.ascent + fd.descent)) * 0.5f; }
+		if (i == 0) { menu_string(m, ML_SET_LABELS, 0, lab, sizeof lab); menu_string(m, ML_SET_INVERT, m->set.invert ? 0u : 1u, val, sizeof val); }
+		else if (i == 1) { menu_string(m, ML_SET_LABELS, 1, lab, sizeof lab); menu_string(m, ML_SET_SENS, (unsigned)m->set.sens - 1u, val, sizeof val); }
+		else { strcpy(lab, "VOLUME:"); { unsigned v = m->set.volume; val[0] = (char)('0' + v / 10u); val[1] = (char)('0' + v % 10u); val[2] = 0; if (v < 10u) { val[0] = val[1]; val[1] = 0; } } }
+		hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), 63.0f, ty, lab, sel ? COL_SELECTED : COL_DIM);
+		hud_text(f, m->fonts, menudef_font_tag(m->def, MF_LARGE), 363.0f, ty, val, sel ? COL_SELECTED : COL_DIM);
+	}
+	button_key(f, m, MK_ACCEPT);
+}
+
 static void build_notice(const menu_t *m, hud_frame_t *f)
 {
 	unsigned i;
@@ -331,6 +378,7 @@ void menu_build(const menu_t *m, hud_frame_t *f)
 	case MENU_SCREEN_DIFFICULTY: build_difficulty(m, f); break;
 	case MENU_SCREEN_LEVELS: build_levels(m, f); break;
 	case MENU_SCREEN_NOTICE: build_notice(m, f); break;
+	case MENU_SCREEN_SETTINGS: build_settings(m, f); break;
 	default: break;
 	}
 	if (m->fade_in) sprite_stretch(f, m->def, MS_WHITE, 0.0f, 0.0f, (float)MENUDEF_VIRT_W, (float)MENUDEF_VIRT_H, (uint32_t)(m->fade_in * 128u / 45u) << 24);      /* from black at the start */

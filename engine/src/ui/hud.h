@@ -40,6 +40,7 @@ typedef struct {
 	char     text[HUD_MSG_COUNT][HUD_MSG_LEN];
 	uint16_t ticks[HUD_MSG_COUNT];
 	int      paused;
+	uint8_t  pause_sel, can_quit;            /* the pause menu: 0 RESUME, 1 QUIT TO MAIN MENU (offered when can_quit) */
 	uint32_t hidden;                         /* HUD_HIDE_* bits a script set (show_hud, hud_show_crosshair / health / shield / motion_sensor false) */
 } hud_state_t;
 #define HUD_HIDE_ALL 1u

@@ -1049,3 +1049,8 @@ are by eye (no Xbox screenshot of the menu exists in the repo).
 
 ## Open decisions
 None.
+
+### ADR-090 addendum: PlayStation icons, SETTINGS, progress and the pause menu
+The button key uses generated PlayStation X / O icons instead of the Xbox A / B bitmaps. SETTINGS is implemented (invert thumbstick, look sensitivity, volume), persisted with the campaign progress (levels finished, last
+difficulty) in a 16 byte checksummed record on memory card slot 15 (`sim/settings.c`). The in-game START menu offers RESUME / QUIT TO MAIN MENU, the latter restarting into the menu. MULTIPLAYER and the Bink attract movies stay
+out of scope (no multiplayer in the port; no Bink decoder). Card and `LoadExecPS2` behaviour on a console is deferred to Phase 6 (ADR-022).

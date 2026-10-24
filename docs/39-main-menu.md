@@ -35,6 +35,15 @@ that is a Phase 6 check (ADR-022).
 `menukey <tick> <up|down|left|right|accept|back|start>` scripts keys for runs without a pad; `menuexit 1` ends the run at the launch instead of restarting; `menu_levels_or <mask>` pretends levels are installed (the level select
 layout), `menu_skiptitle 1`. `engine/tests/test_menu.c` (flow, quads on screen and inside their textures, corrupt sections), `tools/tests/test_menuconv.py` (the sprite table against `menudef.c`).
 
+## Follow-up: PlayStation icons, SETTINGS, progress, pause menu (ADR-090 addendum)
+- The A / B button glyphs of the key bar are replaced by PlayStation X / O icons drawn by `menuconv.ps2_button()` (sprites `MS_X_BUTN`, `MS_O_BUTN`); the labels are ACCEPT / BACK as on the Xbox.
+- SETTINGS is a real screen (`MENU_SCREEN_SETTINGS`): INVERT THUMBSTICK, LOOK SENSITIVITY (1..5), VOLUME (0..8). Left / right change a row, BACK returns. `settings_t` (`sim/settings.c`) is
+  stored in 16 bytes with a checksum on memory card slot 15 (`settings_store`, `settings_load` at boot) and applied through `input_set_look` and the master volume.
+- Progress: the campaign levels finished and the last difficulty are in the same record; a won mission stores them, and the level select unlocks the next level (`settings_unlocked`), the difficulty select starts on the last difficulty.
+- Pause menu: START in the game shows PAUSED / RESUME / QUIT TO MAIN MENU (when the engine booted with a menu pack). Up / down / X select; QUIT restarts into the menu (`LoadExecPS2`). The scripted input has its
+  own clock (`s_input_tick`) so a paused run can still be driven. Checked in PCSX2 on the a10 gameplay scenario (pause, down, X -> `[menu] quit to the main menu`).
+
 ## Not done
-The pause menu ("quit to the main menu"), profiles and saved campaigns (LOAD CAMPAIGN is the level select), SETTINGS (controls, audio), MULTIPLAYER, the attract-mode movies (`bink\attract*.bik`, `intro.bik`: Bink is not decoded here), the
-fade from black when the menu starts, the widget runtime itself (the screens are laid out in code from the tag data), the other campaign levels' packs (`scripts/build-world.sh a30 ...`).
+MULTIPLAYER (shows a notice box: the port has no multiplayer), GAME DEMOS, the attract-mode movies (`bink\attract*.bik`, `intro.bik`: Bink is not decoded here), the widget runtime itself (the screens are laid out in code from the
+tag data), text colours and description positions were matched to the tag data by eye (there is no Xbox menu capture to compare against), `LoadExecPS2` and the memory card were only exercised in PCSX2 (card writes fail in the
+headless runs: the virtual card is unformatted) and are a Phase 6 check (ADR-022), the other campaign levels' packs (`scripts/build-world.sh a30 ...`).

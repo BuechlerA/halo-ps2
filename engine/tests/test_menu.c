@@ -60,7 +60,7 @@ static void flow(void)
 	int pt, hold, level, diff;
 	unsigned ticks, i;
 	char t[64];
-	menu_init(&m, &g_def, &g_fonts, &g_strs, 0x0001u, 0);
+	menu_init(&m, &g_def, &g_fonts, &g_strs, 0x0001u, 0, NULL);
 	CHECK(m.screen == MENU_SCREEN_TITLE);
 	check_frame(&m, 2);
 	menu_key(&m, MENU_KEY_DOWN);
@@ -102,7 +102,7 @@ static void flow(void)
 	CHECK(menu_string(&m, ML_MAIN_OPTIONS, 0, t, sizeof t) > 0);
 	CHECK(menu_string(&m, ML_COUNT, 0, t, sizeof t) == 0);
 	/* idle: the tour of the ring resumes */
-	menu_init(&m, &g_def, &g_fonts, &g_strs, 0x0001u, 1);
+	menu_init(&m, &g_def, &g_fonts, &g_strs, 0x0001u, 1, NULL);
 	menu_key(&m, MENU_KEY_DOWN);
 	(void)menu_take_camera(&m, &pt, &ticks, &hold);
 	for (i = 0; i < MENU_IDLE_TICKS + 2; i++) menu_tick(&m);
@@ -114,7 +114,7 @@ static void levels(void)
 	menu_t m;
 	int level, diff, pt, hold;
 	unsigned ticks;
-	menu_init(&m, &g_def, &g_fonts, &g_strs, 0x0007u, 1);
+	menu_init(&m, &g_def, &g_fonts, &g_strs, 0x0007u, 1, NULL);
 	menu_key(&m, MENU_KEY_ACCEPT);                           /* CAMPAIGN with three playable levels: the level select first */
 	CHECK(m.screen == MENU_SCREEN_LEVELS);
 	check_frame(&m, 30);
@@ -141,6 +141,38 @@ static void levels(void)
 		m.sel_level = (int8_t)level; m.screen = MENU_SCREEN_LEVELS;
 		check_frame(&m, 20);
 	}
+}
+
+static void settings(void)
+{
+	menu_t m;
+	settings_t out, in;
+	uint8_t buf[SETTINGS_BYTES];
+	menu_init(&m, &g_def, &g_fonts, &g_strs, 0x0001u, 1, NULL);
+	CHECK(m.set.sens == SETTINGS_SENS_DEFAULT && !m.set.invert);
+	menu_key(&m, MENU_KEY_DOWN); menu_key(&m, MENU_KEY_DOWN);          /* SETTINGS */
+	menu_key(&m, MENU_KEY_ACCEPT);
+	CHECK(m.screen == MENU_SCREEN_SETTINGS && !menu_take_settings(&m, &out));
+	check_frame(&m, 20);
+	menu_key(&m, MENU_KEY_ACCEPT);                                       /* INVERT: toggles */
+	CHECK(menu_take_settings(&m, &out) && out.invert == 1 && !menu_take_settings(&m, &out));
+	menu_key(&m, MENU_KEY_DOWN); menu_key(&m, MENU_KEY_RIGHT); menu_key(&m, MENU_KEY_RIGHT);
+	CHECK(menu_take_settings(&m, &out) && out.sens == SETTINGS_SENS_DEFAULT + 2);
+	menu_key(&m, MENU_KEY_DOWN); menu_key(&m, MENU_KEY_DOWN);            /* the last row stays the last */
+	CHECK(m.sel_set == MENU_SET_ROWS - 1);
+	for (int i = 0; i < 20; i++) menu_key(&m, MENU_KEY_RIGHT);
+	CHECK(menu_take_settings(&m, &out) && out.volume == 10);
+	check_frame(&m, 20);
+	menu_key(&m, MENU_KEY_BACK);
+	CHECK(m.screen == MENU_SCREEN_MAIN);
+	/* the stored form: round trip, checksum, bounds */
+	in = out; in.completed = 0x0005u; in.last_diff = 2;
+	CHECK(settings_pack(&in, buf) == SETTINGS_BYTES && settings_unpack(&out, buf, sizeof buf) && out.sens == in.sens && out.completed == 5 && out.last_diff == 2);
+	buf[4] ^= 1;
+	CHECK(!settings_unpack(&out, buf, sizeof buf) && out.sens == SETTINGS_SENS_DEFAULT);
+	CHECK(!settings_unpack(&out, buf, 3));
+	in.completed = 3;                                                    /* levels 0 and 1 finished: 0, 1 and 2 can be played, 3 .. 9 not */
+	CHECK(settings_unlocked(&in, 0x00FFu) == 0x0007u && settings_unlocked(&in, 0x0001u) == 0x0001u && settings_unlocked(&in, 0x0010u) == 0u);
 }
 
 static void bad_data(void)
@@ -181,6 +213,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < ML_COUNT; i++) CHECK(huddef_find_list(&g_strs, menudef_list_tag(&g_def, i)) >= 0);
 	flow();
 	levels();
+	settings();
 	bad_data();
 	printf("%s\n", failures ? "FAILED" : "ok");
 	return failures ? 1 : 0;

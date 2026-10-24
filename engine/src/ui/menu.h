@@ -6,8 +6,9 @@
 #include "ui/hud.h"
 #include "ui/huddef.h"
 #include "ui/menudef.h"
+#include "sim/settings.h"
 
-typedef enum { MENU_SCREEN_TITLE = 0, MENU_SCREEN_MAIN, MENU_SCREEN_DIFFICULTY, MENU_SCREEN_LEVELS, MENU_SCREEN_NOTICE } menu_screen;
+typedef enum { MENU_SCREEN_TITLE = 0, MENU_SCREEN_MAIN, MENU_SCREEN_DIFFICULTY, MENU_SCREEN_LEVELS, MENU_SCREEN_NOTICE, MENU_SCREEN_SETTINGS } menu_screen;
 
 /* Keys the platform layer maps its pad onto. */
 #define MENU_KEY_UP 1u
@@ -35,13 +36,16 @@ typedef enum { MENU_SCREEN_TITLE = 0, MENU_SCREEN_MAIN, MENU_SCREEN_DIFFICULTY, 
 #define MENU_MAIN_ITEMS 4
 #define MENU_LEVELS 10
 #define MENU_NOTICE_LINES 4
+#define MENU_SET_ROWS 3                       /* invert thumbstick, look sensitivity, volume */
 
 typedef struct {
 	const menudef_t     *def;
 	const huddef_fonts  *fonts;
 	const huddef_strings *strs;
 	uint8_t  screen, from;               /* current screen; the one a BACK returns to */
-	int8_t   sel_main, sel_diff, sel_level;
+	int8_t   sel_main, sel_diff, sel_level, sel_set;
+	settings_t set;                      /* the player settings the SETTINGS screen edits (a copy: the host stores it when set_dirty) */
+	uint8_t  set_dirty;
 	uint8_t  notice;                     /* which notice box */
 	uint16_t level_mask;                 /* bit n: campaign level n can be played (its packs exist) */
 	uint32_t tick, since_key;
@@ -55,12 +59,14 @@ typedef struct {
 } menu_t;
 
 /* `level_mask`: playable campaign levels (bit 0 the Pillar of Autumn). `skip_title` starts at the main menu. */
-void menu_init(menu_t *m, const menudef_t *def, const huddef_fonts *fonts, const huddef_strings *strs, uint16_t level_mask, int skip_title);
+void menu_init(menu_t *m, const menudef_t *def, const huddef_fonts *fonts, const huddef_strings *strs, uint16_t level_mask, int skip_title, const settings_t *set);
 void menu_key(menu_t *m, unsigned keys);                 /* edge triggered MENU_KEY_* bits since the last call */
 void menu_tick(menu_t *m);                               /* once per 30 Hz tick */
 void menu_build(const menu_t *m, hud_frame_t *f);        /* the quads of this tick, 640 x 480 virtual pixels */
 /* The camera move the menu wants now: returns 1 and fills *point / *ticks / *hold once per request. */
 int  menu_take_camera(menu_t *m, int *point, unsigned *ticks, int *hold);
+/* 1 (once per change) and fills *out when the SETTINGS screen changed a value: the host applies and stores it. */
+int  menu_take_settings(menu_t *m, settings_t *out);
 /* The MENU_SND_* bits the last menu_key calls produced; clears them. */
 unsigned menu_take_sounds(menu_t *m);
 /* 1 when a level and difficulty were chosen (and fills them); the host starts the game. */

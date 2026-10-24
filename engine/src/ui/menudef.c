@@ -10,7 +10,7 @@ static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] 
 static const char *const k_names[MS_COUNT] = {
 	"logo", "campaign0", "campaign1", "multi0", "multi1", "settings0", "settings1", "demos0", "demos1", "gradient",
 	"itemtop0", "itemtop1", "item0", "item1", "hdr_diff", "emblem0", "emblem1", "emblem2", "emblem3", "listfield",
-	"a_butn", "b_butn", "hdr_level", "alert", "white", "arrow_l", "arrow_r", "card0", "card1", "ind0", "ind1", "ind2", "ind3",
+	"x_butn", "o_butn", "hdr_level", "alert", "white", "arrow_l", "arrow_r", "option0", "option1", "card0", "card1", "ind0", "ind1", "ind2", "ind3",
 	"level0", "level1", "level2", "level3", "level4", "level5", "level6", "level7", "level8", "level9", "level10"
 };
 
