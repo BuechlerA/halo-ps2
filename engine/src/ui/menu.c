@@ -173,7 +173,7 @@ void menu_init(menu_t *m, const menudef_t *def, const huddef_fonts *fonts, const
 	m->def = def; m->fonts = fonts; m->strs = strs; m->level_mask = level_mask;
 	m->screen = skip_title ? MENU_SCREEN_MAIN : MENU_SCREEN_TITLE;
 	m->launch_level = m->launch_diff = -1;
-	m->cam_point = -1; m->fade_in = 30;
+	m->cam_point = -1; m->fade_in = 45;
 	m->sel_diff = 1;                                           /* NORMAL is the default highlight */
 	m->sel_level = 0;
 }
@@ -333,4 +333,5 @@ void menu_build(const menu_t *m, hud_frame_t *f)
 	case MENU_SCREEN_NOTICE: build_notice(m, f); break;
 	default: break;
 	}
+	if (m->fade_in) sprite_stretch(f, m->def, MS_WHITE, 0.0f, 0.0f, (float)MENUDEF_VIRT_W, (float)MENUDEF_VIRT_H, (uint32_t)(m->fade_in * 128u / 45u) << 24);      /* from black at the start */
 }
