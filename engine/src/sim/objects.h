@@ -27,7 +27,7 @@
  * lips and jaw on top of whatever it plays. graph = graph index + 1 (0 = no face), emo_anim / talk_anim = animation index + 1 of
  * "stand emotions" / "stand talk", emotion = frame + 1 of the emotions overlay (`unit_set_emotion`, 0 = none), talk = the sound's
  * mouth amplitude of this tick (0..255, the jaw overlay scaled by it). */
-typedef struct { int16_t graph, emo_anim, talk_anim, look_anim; uint8_t emotion, talk, talk_s, emo_from, emo_blend; int8_t look_yaw, look_pitch; } object_face;   /* talk_s: the low-passed jaw amplitude (the engine eases it: ADR-078); emo_from / emo_blend (255 = done): the previous emotion frame and how far the switch to `emotion` has gone */
+typedef struct { int16_t graph, emo_anim, talk_anim, look_anim, aim_anim; uint8_t emotion, talk, talk_s, emo_from, emo_blend; int8_t look_yaw, look_pitch, aim_yaw, aim_pitch; } object_face;   /* aim_anim: the `aim-still` overlay of an armed unit's posture / weapon block (animation index + 1), turned by aim_yaw / aim_pitch like the look grid */   /* talk_s: the low-passed jaw amplitude (the engine eases it: ADR-078); emo_from / emo_blend (255 = done): the previous emotion frame and how far the switch to `emotion` has gone */
 
 typedef struct {
 	int16_t  def;                         /* scen definition */

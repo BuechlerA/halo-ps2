@@ -508,7 +508,7 @@ int units_attach(units_t *s, game_t *g, int obj, int team, int32_t weapon_tag)
 	player_init(&u->body, o->pos, yaw);
 	u->body.pos[2] += 0.02f;                                    /* a placement stands exactly on the floor: start a hair above it */
 	params_for(g, &b, &u->pp, &u->turn_speed);
-	u->turn_threshold = b.turn_threshold; u->turning = 0;
+	u->turn_threshold = b.turn_threshold; u->turning = 0; u->look_range[0] = -1.0f; u->aim_key = 0xFFFFFFFFu; u->aim_k = -1;
 	u->mv_have = 0;                                                  /* the speeds of the new tag are the base of refresh_move_speeds */
 	u->ctl.aim_yaw = yaw; u->ctl.weapon_slot = -1;
 	u->spawn_tick = g->tick;
@@ -956,6 +956,29 @@ static int no_ray(void *u, const float a[3], const float b[3], phys_hit *h) { (v
 static int no_sweep(void *u, const float a[3], const float b[3], float r, phys_hit *h) { (void)u; (void)a; (void)b; (void)r; (void)h; return 0; }
 static const phys_world k_empty_world = { NULL, no_ray, no_sweep, NULL };
 
+/* The aim-still overlay of an armed unit's posture / weapon block and the aiming screen of that class block (looked up when posture, weapon or graph change). */
+static void refresh_aim_overlay(unit_t *u, const game_t *g)
+{
+	ansm_graph gr;
+	weap_weapon w;
+	const char *wl;
+	uint32_t key = (uint32_t)u->posture | (((uint32_t)(u->weapon + 1) & 0xFFFu) << 2) | (((uint32_t)u->base_graph & 0x3FFu) << 14);
+	unsigned i;
+	if (key == u->aim_key) return;
+	u->aim_key = key; u->aim_k = -1;
+	if (u->weapon < 0 || u->base_graph < 0 || !get_graph(g, u, &gr)) return;
+	wl = weapon_label(g, u, &w);
+	for (i = 0; i < 2 && u->aim_k < 0; i++) {
+		const char *lbl = i == 0 ? (u->posture == 2 ? "alert" : u->posture ? "crouch" : "stand") : "stand";
+		int cls = -1, ui, k = block_slot(g->ansm, &gr, lbl, wl, ANSM_C_AIM_STILL, &cls);
+		ansm_class ci;
+		if (k < 0 || !is_overlay(g->ansm, &gr, k) || cls < 0 || (ui = ansm_find_unit(g->ansm, &gr, lbl)) < 0 || ansm_class_info(g->ansm, &gr, (uint32_t)ui, (uint32_t)cls, &ci) != 0) continue;
+		u->aim_k = (int16_t)k;
+		ansm_aim_ranges(&ci.aim, u->aim_range);
+		if (u->aim_range[0] < 1e-3f && u->aim_range[1] < 1e-3f && u->aim_range[2] < 1e-3f && u->aim_range[3] < 1e-3f) u->aim_k = -1;
+	}
+}
+
 /* the animation of a stationary turn (turn-left / turn-right class slot of the unit's posture block), -1 when the graph has none */
 static int turn_anim_for(const game_t *g, const unit_t *u, int right)
 {
@@ -1226,11 +1249,31 @@ static void tick_unit(units_t *s, unit_t *u, game_t *g, object_t *o)
 		}
 		custom_root_motion(u, o, g);
 	} else anim_update(u, o, g, spd, turn_left);
-	if (o->face.look_anim > 0) {                       /* the head's share of the aim: the aim relative to the body, as a fraction of the aiming screen (apply_grid) */
-		if (g_units_look && !(u->flags & UF_PLAYER) && u->action != UA_CUSTOM && u->action != UA_DEAD && !u->dying) {
-			float fy = clampf(wrap_pi(u->ctl.aim_yaw - u->body.yaw) * (1.0f / AIM_YAW_LIMIT), -1.0f, 1.0f), fp = clampf(u->ctl.aim_pitch * (1.0f / AIM_PITCH_LIMIT), -1.0f, 1.0f);
-			o->face.look_yaw = (int8_t)(fy * 127.0f); o->face.look_pitch = (int8_t)(fp * 127.0f);
-		} else o->face.look_yaw = o->face.look_pitch = 0;
+	{                                                  /* the aim relative to the body, as a fraction of the aiming screen: the aim-still overlay of an armed unit (spine, arms, head), the `look` overlay of the head for the others (apply_grid) */
+		int live = g_units_look && !(u->flags & UF_PLAYER) && u->action != UA_CUSTOM && u->action != UA_DEAD && !u->dying;
+		float ry = wrap_pi(u->ctl.aim_yaw - u->body.yaw), rp = u->ctl.aim_pitch;
+		o->face.look_yaw = o->face.look_pitch = o->face.aim_yaw = o->face.aim_pitch = 0;
+		if (live) refresh_aim_overlay(u, g);
+		if (live && u->aim_k >= 0) {
+			float fy = ry >= 0.0f ? (u->aim_range[1] > 1e-3f ? ry / u->aim_range[1] : 0.0f) : (u->aim_range[0] > 1e-3f ? ry / u->aim_range[0] : 0.0f);
+			float fp = rp >= 0.0f ? (u->aim_range[3] > 1e-3f ? rp / u->aim_range[3] : 0.0f) : (u->aim_range[2] > 1e-3f ? rp / u->aim_range[2] : 0.0f);
+			if (!o->face.graph) o->face.graph = (int16_t)(o->graph + 1);
+			o->face.aim_anim = (int16_t)(u->aim_k + 1);
+			o->face.aim_yaw = (int8_t)(clampf(fy, -1.0f, 1.0f) * 127.0f); o->face.aim_pitch = (int8_t)(clampf(fp, -1.0f, 1.0f) * 127.0f);
+		} else if (live && o->face.look_anim > 0) {
+			float fy, fp;
+			if (u->look_range[0] < 0.0f) {                  /* the unit block's aiming screen (marines: 60 right, 20 left, 30 down, 60 up), read once */
+				ansm_graph lg;
+				ansm_unit ui;
+				int ux;
+				u->look_range[0] = u->look_range[1] = AIM_YAW_LIMIT; u->look_range[2] = u->look_range[3] = AIM_PITCH_LIMIT;
+				if (get_graph(g, u, &lg) && (ux = ansm_find_unit(g->ansm, &lg, "stand")) >= 0 && ansm_unit_info(g->ansm, &lg, (uint32_t)ux, &ui) == 0) ansm_aim_ranges(&ui.aim, u->look_range);
+				if (u->look_range[0] < 0.0f) u->look_range[0] = 0.0f;
+			}
+			fy = ry >= 0.0f ? (u->look_range[1] > 1e-3f ? ry / u->look_range[1] : 0.0f) : (u->look_range[0] > 1e-3f ? ry / u->look_range[0] : 0.0f);
+			fp = rp >= 0.0f ? (u->look_range[3] > 1e-3f ? rp / u->look_range[3] : 0.0f) : (u->look_range[2] > 1e-3f ? rp / u->look_range[2] : 0.0f);
+			o->face.look_yaw = (int8_t)(clampf(fy, -1.0f, 1.0f) * 127.0f); o->face.look_pitch = (int8_t)(clampf(fp, -1.0f, 1.0f) * 127.0f);
+		}
 	}
 
 	u->prev_flags = c->flags;

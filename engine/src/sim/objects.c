@@ -268,6 +268,7 @@ static void apply_face(const object_world_t *w, const model_info *mi, int model,
 		if (f->emotion) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emotion - 1), (f->emo_from && f->emo_from != f->emotion) || f->emo_blend < 255 ? b : 1.0f, local, n);
 	}
 	if (f->talk && f->talk_anim > 0) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->talk_anim - 1u, 0.0f, (float)f->talk * (1.0f / 255.0f), local, n);
+	if ((f->aim_yaw || f->aim_pitch) && f->aim_anim > 0) apply_grid(w, mi, model, f->graph - 1, &g, (unsigned)f->aim_anim - 1u, (float)f->aim_yaw * (1.0f / 127.0f), (float)f->aim_pitch * (1.0f / 127.0f), local, n);
 	if ((f->look_yaw || f->look_pitch) && f->look_anim > 0) apply_grid(w, mi, model, f->graph - 1, &g, (unsigned)f->look_anim - 1u, (float)f->look_yaw * (1.0f / 127.0f), (float)f->look_pitch * (1.0f / 127.0f), local, n);
 }
 
@@ -275,7 +276,7 @@ void objects_set_face_graph(object_t *o, const object_world_t *w, int graph)
 {
 	anim_graph g;
 	int emo, talk, look;
-	o->face.graph = o->face.emo_anim = o->face.talk_anim = o->face.look_anim = 0; o->face.emo_blend = 255; o->face.emo_from = 0; o->face.look_yaw = o->face.look_pitch = 0;
+	o->face.graph = o->face.emo_anim = o->face.talk_anim = o->face.look_anim = o->face.aim_anim = 0; o->face.emo_blend = 255; o->face.emo_from = 0; o->face.look_yaw = o->face.look_pitch = o->face.aim_yaw = o->face.aim_pitch = 0;
 	if (graph < 0 || !w->anims || (unsigned)graph >= w->anims->graph_count) return;
 	g = anim_get_graph(w->anims, (uint32_t)graph);
 	emo = anim_find_name(w->anims, &g, "stand emotions");
@@ -364,7 +365,7 @@ static unsigned pose_impl(const object_world_t *w, int model, int graph, unsigne
 			}
 		}
 	}
-	if (face && (face->emotion || face->talk || face->look_yaw || face->look_pitch)) apply_face(w, &mi, model, local, n, face);
+	if (face && (face->emotion || face->talk || face->look_yaw || face->look_pitch || face->aim_yaw || face->aim_pitch)) apply_face(w, &mi, model, local, n, face);
 	if (n == 0) { out->count = 0; return 0; }
 	if (skel_world(out->world, local, parent, n, root) != 0) { out->count = 0; return 0; }
 	if (skin) {
