@@ -1183,7 +1183,14 @@ static void tick_unit(units_t *s, unit_t *u, game_t *g, object_t *o)
 		if (u->alert_state == 1) u->posture = 2;
 	}
 	if (!(u->flags & UF_PLAYER) && !s->tag_speeds) refresh_move_speeds(u, g);
-	step_body(u, g, u->action != UA_CUSTOM, throttle_scale, phys_divider(s, u, g), &turn_left);
+	if (u->action == UA_CUSTOM) {
+		/* a script's animation owns the body: it stands exactly where object_teleport put it (cryo bay crew: the flag is 7 cm below the floor the ground physics found, they stood on tiptoe
+		 * and their forearms went through the console); the animation's root motion moves it, the ground check resumes when the animation ends (ADR-089) */
+		turn_left = 0.0f;
+		u->body.vel[0] = u->body.vel[1] = u->body.vel[2] = 0.0f;
+		if (!u->body.on_ground) { u->body.on_ground = 1; u->body.ground_normal[0] = u->body.ground_normal[1] = 0.0f; u->body.ground_normal[2] = 1.0f; }
+		u->air = 0;
+	} else step_body(u, g, u->action != UA_CUSTOM, throttle_scale, phys_divider(s, u, g), &turn_left);
 	if (u->body.landed_speed > 0.0f) { landed(s, u, g); u->body.landed_speed = 0.0f; }
 	spd = speed2d(u);
 	if (u->body.on_ground) { if (u->settle > 0 && spd > MOVING_SPEED) u->settle = 0; }

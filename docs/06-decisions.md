@@ -1030,5 +1030,10 @@ crew, Keyes, the chairs and the command display of the bridge (ticks 1120 .. 130
 **Measured**: ticks 1000 .. 1300 against the video: the bridge's contents appear as the camera closes in (first visible about tick 1120 at 3 px, as the object pass's size rule allows), and the cryo pod is in view at 6660 as in the video. **Still different**: the video's interior is dark and teal behind tinted glass, ours is lit like the bridge itself (the exterior BSP's lightmaps and the missing glass reflection), the cryo bay is still brighter in the video.
 **Consequences**: no pack rebuild; any scene with glass or additive BSP surfaces now shows the objects behind them (the tutorial's cryo glass, the hangar's lights).
 
+## ADR-089 A scripted animation owns its unit's body: no ground physics while it plays
+**Decision**: while a unit plays a script's `custom_animation` (`UA_CUSTOM`), `units_tick` no longer runs the ground physics (`step_body`): the unit stands exactly where `object_teleport` put it, the animation's root motion (x, y, yaw) moves it, and it counts as on the ground (no airborne animation when the animation ends); the ground check resumes with the animation's last tick.
+**Why**: the technician and assistant of the cryo console (flags `tech_base` / `asst_base`, z 1.490) were dropped onto the collision floor under them, 7 cm higher (z 1.56): they stood on their toes and the console's top edge cut them at the thighs, their forearms went through the panel (ticks 6500 .. 6700). The Xbox leaves a teleported unit where the script puts it; the video shows the console's edge at their belts, which the frames now give.
+**Measured**: ticks 6560 and 6660 against the video. **Consequences**: any scripted animation on a slope or in the air (a unit teleported above the floor) now keeps its height until the animation ends instead of falling.
+
 ## Open decisions
 None.
