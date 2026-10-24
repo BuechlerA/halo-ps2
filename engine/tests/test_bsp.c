@@ -123,6 +123,7 @@ int main(int argc, char **argv)
 	bsp_material m0 = bsp_get_material(&b, 0), m1 = bsp_get_material(&b, 1);
 	CHECK(m0.shader_id == 0xE1740042u && m0.lightmap_page == 3 && m0.batch_count == 4 && m0.triangles == 40);
 	CHECK(m1.shader_id == 0xE1740043u && m1.batch_count == 2 && m1.triangles == 18);
+	CHECK(m0.uv_world >= 0.0f && m0.uv_world < 1.0e6f && m1.uv_world >= 0.0f && m1.uv_world < 1.0e6f);    /* +0x10: world units per uv unit, 0 = unknown (docs/37) */
 	static const uint16_t tris[6] = { 24, 6, 4, 8, 6, 10 }, mat[6] = { 0, 0, 0, 1, 0, 1 };
 	for (uint32_t i = 0; i < 6; i++) {
 		bsp_batch bt = bsp_get_batch(&b, i);

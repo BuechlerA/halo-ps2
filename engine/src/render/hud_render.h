@@ -25,5 +25,8 @@ typedef struct {
 } hud_render_t;
 
 void hud_render_pass(void *user, struct render_ctx *rc);
+/* Claims the HUD's textures (the font, the meters) early in the frame, before the world takes every page of the texture window: the pass itself runs last and found the
+ * font atlas without a page for hundreds of frames in the hangar (no help text, no "Checkpoint... done"). */
+void hud_render_prefetch(hud_render_t *h);
 
 #endif

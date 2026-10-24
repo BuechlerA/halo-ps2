@@ -27,7 +27,7 @@
  * lips and jaw on top of whatever it plays. graph = graph index + 1 (0 = no face), emo_anim / talk_anim = animation index + 1 of
  * "stand emotions" / "stand talk", emotion = frame + 1 of the emotions overlay (`unit_set_emotion`, 0 = none), talk = the sound's
  * mouth amplitude of this tick (0..255, the jaw overlay scaled by it). */
-typedef struct { int16_t graph, emo_anim, talk_anim; uint8_t emotion, talk; } object_face;
+typedef struct { int16_t graph, emo_anim, talk_anim; uint8_t emotion, talk, talk_s, emo_from, emo_blend; } object_face;   /* talk_s: the low-passed jaw amplitude (the engine eases it: ADR-078); emo_from / emo_blend (255 = done): the previous emotion frame and how far the switch to `emotion` has gone */
 
 typedef struct {
 	int16_t  def;                         /* scen definition */
@@ -84,6 +84,8 @@ void objects_tick(object_table_t *t, const object_world_t *w);
  * the matrix that takes bind-pose model-space vertices of node n to the world (what the palette uses). */
 typedef struct { mat4 world[SKEL_MAX_NODES]; mat4 skin[SKEL_MAX_NODES]; unsigned count; } object_nodes_t;
 unsigned objects_pose(const object_t *o, const object_world_t *w, object_nodes_t *out);
+/* The node world matrices only (out->skin is NOT filled): what marker lookups and collision poses need; skips the bind-pose chain and one inverse and one multiply per node. */
+unsigned objects_pose_world(const object_t *o, const object_world_t *w, object_nodes_t *out);
 /* Same for an arbitrary model/animation with an explicit root (first-person arms, weapons). */
 /* Model node i is driven by the graph node of the same NAME (ANIM v2 names); a model whose node order equals the
  * graph's maps 1:1, a node the graph does not name keeps its bind pose. The map is cached per (model, graph). */

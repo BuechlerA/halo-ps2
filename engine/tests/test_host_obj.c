@@ -254,7 +254,58 @@ static void test_teleport(void)
 			CHECK(fabsf(sqrtf(obj(s)->root.m[0][0] * obj(s)->root.m[0][0] + obj(s)->root.m[0][1] * obj(s)->root.m[0][1]) - 2.0f * len0) < 1e-3f);
 		}
 	}
-	call1("object_beautify", HS_VOID, mfix_obj(F.mission.player_obj));
+	call2("object_beautify", HS_VOID, mfix_obj(first_live(SCEN_SCENERY, 0, -1)), mfix_bool(1));      /* another object: nothing happens */
+}
+
+/* The player's body as a stand-in (the cryo pod, ADR-085): object_beautify true makes it a drawn unit that stays where the script puts it (the player does
+ * not drag it along), false hands the player back to where the body is and hides it again. */
+static void test_player_stand_in(void)
+{
+	int p;
+	float pos[3];
+	int ui;
+	fresh(41, 0);
+	p = F.mission.player_obj;
+	CHECK(p >= 0 && live(p));
+	CHECK(obj(p)->flags & OBJ_F_HIDDEN);
+	CHECK(units_of_object(&F.units, p) < 0);
+	call2("object_beautify", HS_VOID, mfix_obj(p), mfix_bool(1));
+	ui = units_of_object(&F.units, p);
+	CHECK(ui >= 0 && F.mission.hobj.stand_in == 2);
+	CHECK(!(obj(p)->flags & OBJ_F_HIDDEN));
+	pos[0] = F.game.player.pos[0] + 3.0f; pos[1] = F.game.player.pos[1]; pos[2] = F.game.player.pos[2];
+	F.units.u[ui].body.pos[0] = pos[0]; F.units.u[ui].body.pos[1] = pos[1]; F.units.u[ui].body.pos[2] = pos[2];
+	F.objects.obj[p].pos[0] = pos[0]; F.objects.obj[p].pos[1] = pos[1]; F.objects.obj[p].pos[2] = pos[2];
+	mission_sync_player(&F.mission);                                  /* the object keeps its place: the body is not the player's while it is a stand-in */
+	CHECK(fabsf(obj(p)->pos[0] - pos[0]) < 1e-4f);
+	call2("object_beautify", HS_VOID, mfix_obj(p), mfix_bool(0));
+	CHECK(units_of_object(&F.units, p) < 0 && F.mission.hobj.stand_in == 0);
+	CHECK(obj(p)->flags & OBJ_F_HIDDEN);
+	CHECK(fabsf(F.game.player.pos[0] - pos[0]) < 1e-3f && fabsf(F.game.player.pos[1] - pos[1]) < 1e-3f);
+}
+
+/* An unarmed start hands the pistol out with the starting profile's ammunition when the script asks (player_add_equipment, a10's bridge0_profile: 6 + 48) */
+static void test_player_equipment(void)
+{
+	scen_player pl;
+	int slot = -1;
+	fresh(42, 0);
+	pl = scen_get_player(F.mission.ow.scen);
+	game_drop_weapons(&F.game);
+	F.game.grenades[0] = pl.start_grenades[0]; F.game.grenades[1] = pl.start_grenades[1];
+	CHECK(F.game.cur < 0 && F.game.unarmed_start);
+	call3("player_add_equipment", HS_VOID, mfix_obj(F.mission.player_obj), mfix_handle(3, 19), mfix_bool(0));
+	CHECK(F.game.cur >= 0 && F.game.slot[F.game.cur].weapon >= 0);
+	CHECK(F.game.grenades[0] == pl.start_grenades[0] + pl.equip_grenades[0] && F.game.grenades[1] == pl.start_grenades[1] + pl.equip_grenades[1]);
+	if (F.game.cur >= 0) {
+		const game_slot_t *sl = &F.game.slot[F.game.cur];
+		if (pl.weapon_total) CHECK(sl->st.loaded[0] == pl.weapon_loaded && sl->st.reserve[0] == pl.weapon_total);        /* packs built before ADR-085 carry no ammunition: the weapon's own */
+		else CHECK(sl->st.loaded[0] == sl->def.magazine[0].rounds_loaded_max);
+		slot = F.game.cur;
+	}
+	call3("player_add_equipment", HS_VOID, mfix_obj(F.mission.player_obj), mfix_handle(3, 19), mfix_bool(0));          /* already armed: nothing changes */
+	CHECK(F.game.cur == slot);
+	printf("  player_add_equipment: pistol with %u loaded + %u reserve (pack profile: %u + %u)\n", slot >= 0 ? (unsigned)F.game.slot[slot].st.loaded[0] : 0u, slot >= 0 ? (unsigned)F.game.slot[slot].st.reserve[0] : 0u, (unsigned)pl.weapon_loaded, (unsigned)pl.weapon_total);
 }
 
 static void test_volumes(void)
@@ -1301,6 +1352,8 @@ int main(int argc, char **argv)
 	test_lists();
 	test_create_destroy();
 	test_teleport();
+	test_player_stand_in();
+	test_player_equipment();
 	test_volumes();
 	test_attach();
 	test_sight();

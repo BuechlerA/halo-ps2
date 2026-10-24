@@ -1,17 +1,44 @@
 #include "stream/hp2.h"
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
 static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
 
+/* CRC-32 (IEEE, reflected): slicing by 4. The bit-at-a-time loop this replaced cost about 30 cycles a byte and ran over every decoded section, 1.2 s of the 1.6 s
+ * it took the EE to load a 3.7 MB BSP; the tables are built on first use (no static data to keep in sync, ~1 KB x 4). */
+static uint32_t s_crc_tab[4][256];
+static int      s_crc_ready;
+
+static void crc_init(void)
+{
+	for (uint32_t i = 0; i < 256; i++) {
+		uint32_t c = i;
+		for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+		s_crc_tab[0][i] = c;
+	}
+	for (uint32_t i = 0; i < 256; i++)
+		for (int t = 1; t < 4; t++) s_crc_tab[t][i] = (s_crc_tab[t - 1][i] >> 8) ^ s_crc_tab[0][s_crc_tab[t - 1][i] & 255u];
+	s_crc_ready = 1;
+}
+
 uint32_t hp2_crc32(const uint8_t *p, size_t n)
 {
 	uint32_t crc = 0xFFFFFFFFu;
-	while (n--) {
-		crc ^= *p++;
-		for (int k = 0; k < 8; k++)
-			crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+	if (!s_crc_ready) crc_init();
+	while (n && ((uintptr_t)p & 3u)) {
+		crc = (crc >> 8) ^ s_crc_tab[0][(crc ^ *p++) & 255u];
+		n--;
 	}
+	while (n >= 4) {                                  /* little endian word: byte 0 is the low byte on the EE and on every host the tests run on */
+		uint32_t w = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+		crc ^= w;
+		crc = s_crc_tab[3][crc & 255u] ^ s_crc_tab[2][(crc >> 8) & 255u] ^ s_crc_tab[1][(crc >> 16) & 255u] ^ s_crc_tab[0][crc >> 24];
+		p += 4;
+		n -= 4;
+	}
+	while (n--) crc = (crc >> 8) ^ s_crc_tab[0][(crc ^ *p++) & 255u];
 	return ~crc;
 }
 
@@ -94,8 +121,15 @@ long lz4_decode(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
 		}
 		ml += 4;
 		if (off == 0 || off > o || ml > cap - o) return -1;
-		for (size_t k = 0; k < ml; k++, o++)    /* byte-wise: source and destination may overlap */
-			dst[o] = dst[o - off];
+		if (off >= 8 && cap - o >= ml + 8) {           /* the source ends at least 8 bytes behind the destination: copy in words (may write up to 7 bytes past the match, inside the buffer) */
+			uint8_t *d = dst + o;
+			const uint8_t *sp = d - off;
+			for (size_t k = 0; k < ml; k += 8) { uint64_t t; memcpy(&t, sp + k, 8); memcpy(d + k, &t, 8); }
+			o += ml;
+		} else {
+			for (size_t k = 0; k < ml; k++, o++)    /* byte-wise: source and destination overlap */
+				dst[o] = dst[o - off];
+		}
 	}
 	return (long)o;
 }

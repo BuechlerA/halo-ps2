@@ -8,6 +8,7 @@
  * and an expression can only recurse as deep as the frame stack, which is bounded. */
 #include "script/hs.h"
 #include <string.h>
+#include <stdio.h>
 
 #define MACHINE_MAGIC 0x4D4D5348u   /* "HSMM" */
 #define HEADER_SIZE 128u
@@ -37,6 +38,7 @@ static int table_ok(uint32_t off, uint64_t count, uint32_t rec, size_t size)
 	return count * rec <= (uint64_t)size - off;
 }
 
+int g_hs_trace, g_hs_trace_all;     /* debug: print every built-in call (cfg scripttrace 1: unit / object / animation / camera calls, 2: all) */
 hs_status hs_open(hs_section *s, const uint8_t *data, size_t size)
 {
 	uint32_t nn, ns, ng, nb, nx, nstr, o_nodes, o_sc, o_gl, o_bi, o_str, o_cls, i, h;
@@ -680,6 +682,13 @@ top:
 			const hs_bind *b = &m->bind[nd->data];
 			hs_value ret = hs_neutral(nd->cls, nd->vtype);
 			COLLECT_ARGS();
+			if (g_hs_trace) {                          /* cfg scripttrace: every built-in call with its first arguments (raw: handles hex, reals as floats) */
+				const char *bn = hs_builtin_name(m->sec, nd->data);
+				if (g_hs_trace_all || (strstr(bn, "unit") || strstr(bn, "object") || strstr(bn, "anim") || strstr(bn, "ai_") || strstr(bn, "camera") || strstr(bn, "cs_")))
+					printf("[script] t%u thread %u %s(%08x %08x %08x %08x) n=%u\n", (unsigned)st->tick, (unsigned)(t - st->threads), bn,
+					       (unsigned)(t->vsp - f->vbase > 0 ? t->v[f->vbase].v.h : 0u), (unsigned)(t->vsp - f->vbase > 1 ? t->v[f->vbase + 1].v.h : 0u),
+					       (unsigned)(t->vsp - f->vbase > 2 ? t->v[f->vbase + 2].v.h : 0u), (unsigned)(t->vsp - f->vbase > 3 ? t->v[f->vbase + 3].v.h : 0u), (unsigned)(t->vsp - f->vbase));
+			}
 			if (b->fn) {
 				int rc;
 				m->cur = t;

@@ -29,8 +29,9 @@ scenario (``scnr``)
               ``looking_panel_down_success`` while 177 of 182 without it are unnamed set dressing),
               bits 1..3 "not placed on easy / normal / hard" and bit 4 "use player appearance" (unverified
               meaning: only the bit patterns 0, 1, 3, 8 and 4 were seen)
-        +0x06 u16 desired permutation (always 0 on scenery; 100, 10, 12 on 5 of 107 a10 bipeds: not a
-              permutation index we can resolve, ignored; ``variant`` is therefore always empty)
+        +0x06 u16 desired permutation (always 0 on scenery; 100, 10, 12 on 5 of 107 a10 bipeds): the number the model's
+              permutation names end in (``sgt_johnson-100``, ``head_charles_helmet-10``, ``head_marcus_cap-101``,
+              ``damaged torso-102``); a biped's value is carried in the SCEN placement (docs/13), ``variant`` stays empty
         +0x08 f32 x, y, z world units           +0x14 f32 yaw, pitch, roll radians
     Scenery and light fixtures additionally carry +0x20 u16 "manual BSP flags": bit n = BSP n.
     verified: on a10 scenery it equals the BSP set found by point location on 270 of 274 placements, and is a
@@ -203,6 +204,7 @@ class Placement:
     name_index: int = -1
     bsp_mask: int = 0
     variant: str = ""
+    permutation: int = 0                 # "desired permutation" (+0x06): selects the model permutations whose name ends in -<number> (docs/13)
     manual_bsp: int = 0
     mask_tier: str = "none"
     def_index: int = 0
@@ -218,6 +220,10 @@ class Player:
     biped_tag: int = 0                   # object tag id of the player biped (-> biped_def)
     arms_idle_anim: int = NO_ANIM
     weapon_idle_anim: int = NO_ANIM
+    weapon_loaded: int = 0               # rounds loaded / in reserve the starting profile gives the weapon (0 0 = the weapon's own defaults)
+    weapon_total: int = 0
+    start_grenades: tuple[int, int] = (0, 0)   # frag, plasma of the first starting profile (what the player starts with) and of the profile that gives the weapon (player_add_equipment)
+    equip_grenades: tuple[int, int] = (0, 0)
     weapon_hand_marker: str = ""
     fp_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     weapon_def: int = 0                  # def index + 1 (set when the section is built)
@@ -419,11 +425,15 @@ def read_player(r: Region, dt: DefTable, problems: list[str]) -> Player:
         sb = r.block(scn)
         n, o = r.reflexive(sb + SCN_PROFILES, PROFILE_REC, 64)
         weapon = 0
+        if n:
+            p.start_grenades = r.u("<2B", o + 0x50)
         for off in (0x28, 0x3C):                  # primary weapons of all profiles first, then secondary
             for i in range(n):
                 g, tid = r.tagref(o + i * PROFILE_REC + off)
                 if g == "weap" and r.entry(tid):
                     weapon = tid
+                    p.weapon_loaded, p.weapon_total = r.u("<2H", o + i * PROFILE_REC + (0x38 if off == 0x28 else 0x4C))     # a10: bridge0_profile gives the pistol 6 + 48
+                    p.equip_grenades = r.u("<2B", o + i * PROFILE_REC + 0x50)
                     break
             if weapon:
                 break
@@ -547,8 +557,9 @@ def collect_objects(m: texconv.MapData, probes: list[BspProbe], extra: dict[int,
             flags = (raw & 0x1E) | (0 if raw & 1 else P_INITIALLY_VISIBLE)
             manual = r.u("<H", e + 0x20)[0] if kind in MANUAL_BSP_KINDS else 0
             mask, tier = locate_mask(probes, pos, manual) if probes else (0, "none")
+            perm = r.u("<H", e + 6)[0] if kind == "biped" else 0     # a10: 100 on Sergeant Johnson, 10 / 12 on the two lab crew (assistant, technician)
             placements.append(Placement(d.tag_id, kind, flags, pos, rot, ni if ni < nname else -1,
-                                        mask, "", manual, tier))
+                                        mask, "", perm, manual, tier))
     for tid, group in sorted((extra or {}).items()):
         if group == "bipd":
             dt.get(tid, BIPED, "bipd", 0)
@@ -719,16 +730,17 @@ def map_lights(m: texconv.MapData, indices: list[int] | None) -> list[list[Clust
             mats, _ = bspconv.read_materials(block, loc)
             st = bsp.read_structure(loc, block)
             pages = texconv.lightmap_pages_rgba(m, infos[i])
-            out.append(cluster_lights(mats, st, pages, suns, OBJECT_LM_GAIN, texconv.LM_GAMMA, texconv.CHROMA_STRENGTH))
+            tone = texconv.bsp_tone(infos[i].path)
+            out.append(cluster_lights(mats, st, pages, suns, tone[2] if tone else OBJECT_LM_GAIN, tone[3] if tone else texconv.LM_GAMMA, texconv.bsp_chroma(infos[i].path)))
     return out
 
 
 # ---- section writer / reference parser ----------------------------------------------------------
 HEADER_FMT = "<4sHHIIIIIIIIII"      # magic, version, reserved, size, defs, placements, bsps, 5 offsets, lights
 DEF_FMT = "<IIIBBH32sf12x"
-PLACEMENT_FMT = "<HHI3f3f16shh12x"
+PLACEMENT_FMT = "<HHI3f3f16shH12x"
 LIGHT_FMT = "<3Bx3Bx3hxx"
-PLAYER_FMT = "<6IHH3f32s8x"
+PLAYER_FMT = "<6IHH3f32sHH4B"
 for _f, _n in ((DEF_FMT, DEF_REC), (PLACEMENT_FMT, PLACEMENT_REC), (LIGHT_FMT, LIGHT_REC), (PLAYER_FMT, PLAYER_REC)):
     assert struct.calcsize(_f) == _n, (_f, struct.calcsize(_f), _n)
 assert struct.calcsize(HEADER_FMT) <= HEADER_SIZE
@@ -769,7 +781,7 @@ def build(defs: list[Def], placements: list[Placement], player: Player,
         if not 0 <= p.def_index < len(defs):
             raise ScenError("placement definition index out of range")
         out += struct.pack(PLACEMENT_FMT, p.def_index, p.flags, p.bsp_mask, *p.pos, *p.rot,
-                           _str(p.variant, VARIANT_LEN), p.name_index, 0)
+                           _str(p.variant, VARIANT_LEN), p.name_index, p.permutation)
     _pad16(out)
     offs["lights"] = len(out)
     table = bytearray()
@@ -788,7 +800,8 @@ def build(defs: list[Def], placements: list[Placement], player: Player,
     out += struct.pack(PLAYER_FMT, player.fp_arms_model_tag, player.fp_arms_anim_tag, player.weapon_def,
                        player.weapon_fp_model_tag, player.weapon_fp_anim_tag, player.biped_def,
                        player.arms_idle_anim, player.weapon_idle_anim, *player.fp_offset,
-                       _str(player.weapon_hand_marker, NAME_LEN))
+                       _str(player.weapon_hand_marker, NAME_LEN), player.weapon_loaded, player.weapon_total,
+                       *player.start_grenades, *player.equip_grenades)
     _pad16(out)
     per_type = [0] * 10
     for p in placements:
@@ -831,10 +844,10 @@ def parse_section(data: bytes) -> Section:
                          name=name.split(b"\0", 1)[0].decode("latin1"), radius=radius))
     pls = []
     for i in range(npl):
-        d, fl, mask, x, y, z, yaw, pitch, roll, var, ni, _pd = struct.unpack_from(
+        d, fl, mask, x, y, z, yaw, pitch, roll, var, ni, perm = struct.unpack_from(
             PLACEMENT_FMT, data, o_pl + i * PLACEMENT_REC)
         pls.append(dict(def_index=d, flags=fl, bsp_mask=mask, pos=(x, y, z), rot=(yaw, pitch, roll),
-                        variant=var.split(b"\0", 1)[0].decode("latin1"), name_index=ni))
+                        variant=var.split(b"\0", 1)[0].decode("latin1"), name_index=ni, permutation=perm))
     allc = []
     for i in range(nlights):
         v = struct.unpack_from(LIGHT_FMT, data, o_li + i * LIGHT_REC)
@@ -848,7 +861,8 @@ def parse_section(data: bytes) -> Section:
     pv = struct.unpack_from(PLAYER_FMT, data, o_pla)
     player = dict(fp_arms_model_tag=pv[0], fp_arms_anim_tag=pv[1], weapon_def=pv[2], weapon_fp_model_tag=pv[3],
                   weapon_fp_anim_tag=pv[4], biped_def=pv[5], arms_idle_anim=pv[6], weapon_idle_anim=pv[7],
-                  fp_offset=pv[8:11], weapon_hand_marker=pv[11].split(b"\0", 1)[0].decode("latin1"))
+                  fp_offset=pv[8:11], weapon_hand_marker=pv[11].split(b"\0", 1)[0].decode("latin1"),
+                  weapon_loaded=pv[12], weapon_total=pv[13], start_grenades=pv[14:16], equip_grenades=pv[16:18])
     return Section(size, defs, pls, lights, player, list(struct.unpack_from("<10I", data, 0x38)))
 
 

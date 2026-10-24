@@ -124,12 +124,15 @@ static void draw_number(hud_frame_t *f, const huddef_section *s, const huddef_gl
 	x = (float)n->x + (float)n->w - dw * (float)len;       /* right aligned inside the number's box */
 	for (i = 0; i < len; i++) {
 		huddef_sprite d = huddef_get_sprite(s, gl->digit_first + (uint32_t)(buf[i] - '0'));
-		add_quad(f, &d, x + dw * (float)i, (float)n->y, dw, dh, 1.0f, colour, HUDDEF_BLEND_ALPHA);
+		/* a digit sprite is a cell about twice the glyph's width with the glyph in its middle (the sheet's pitch, not the
+		 * on-screen advance): draw the cell at its own size, centred on the advance slot, never squeezed into it */
+		float cw = (float)d.w * (n->scale_x > 0.0f ? n->scale_x : 1.0f);
+		add_quad(f, &d, x + dw * (float)i + (dw - cw) * 0.5f, (float)n->y, cw, dh, 1.0f, colour, HUDDEF_BLEND_ALPHA);
 		f->digits++;
 	}
 }
 
-static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hud_tag, const game_t *g, uint32_t tick, int depth)
+static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hud_tag, const game_t *g, uint32_t tick, int depth, uint32_t hidden)
 {
 	int hi = huddef_find_hud(s, hud_tag);
 	huddef_hud h;
@@ -146,10 +149,11 @@ static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hu
 		loaded = sl->st.loaded[mag]; reserve = sl->st.reserve[mag]; heat = sl->st.heat;
 	}
 	low_ammo = (h.loaded_ammo_cutoff && loaded <= h.loaded_ammo_cutoff) || (h.total_ammo_cutoff && reserve <= h.total_ammo_cutoff);
-	for (i = 0; i < h.elem_count; i++) {
+	for (i = 0; (sl && sl->weapon >= 0) && i < h.elem_count; i++) {          /* empty hands: no ammo statics (the default HUD's left bar), only the crosshair below */
 		huddef_elem e = huddef_get_elem(s, (uint32_t)h.elem_first + i);
 		uint32_t col;
-		if (e.role != HUDDEF_R_STATIC || e.allowed == HUDDEF_MAP_MULTIPLAYER) continue;
+		/* statics and overlay sub elements (the "x" and clip icon after the ammo count are the latter) */
+		if ((e.role != HUDDEF_R_STATIC && e.role != HUDDEF_R_OVERLAY) || e.allowed == HUDDEF_MAP_MULTIPLAYER) continue;
 		col = e.colour;
 		if (!col) { if (!low_ammo || !flash_on(tick, e.flash_period, e.flash_length)) continue; col = e.flash_colour; }
 		draw_elem(f, s, &e, col, tick);
@@ -180,7 +184,7 @@ static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hu
 		draw_number(f, s, &gl, &n, v, col);
 	}
 	/* crosshair: the zoom reticle when zoomed, else the aim reticle */
-	if (depth == 0 && sl && sl->weapon >= 0) {
+	if (depth == 0 && !(hidden & HUD_HIDE_CROSSHAIR)) {
 		huddef_crosshair c;
 		uint32_t type = g->zoomed ? HUDDEF_X_ZOOM : HUDDEF_X_AIM;
 		if (!huddef_find_crosshair(s, hud_tag, type, &c) && type != HUDDEF_X_AIM) { type = HUDDEF_X_AIM; huddef_find_crosshair(s, hud_tag, type, &c); }
@@ -193,7 +197,7 @@ static void draw_weapon_hud(hud_frame_t *f, const huddef_section *s, uint32_t hu
 			draw_elem(f, s, &e, col, tick);
 		}
 	}
-	if (h.child_tag && h.child_tag != hud_tag) draw_weapon_hud(f, s, h.child_tag, g, tick, depth + 1);
+	if (h.child_tag && h.child_tag != hud_tag) draw_weapon_hud(f, s, h.child_tag, g, tick, depth + 1, hidden);
 }
 
 void hud_state_init(hud_state_t *s) { memset(s, 0, sizeof *s); }
@@ -241,13 +245,14 @@ int hud_text(hud_frame_t *f, const huddef_fonts *fonts, uint32_t font_tag, float
 
 void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *fonts, const game_t *g, uint32_t tick, const hud_state_t *st)
 {
-	uint32_t tag = 0;
+	uint32_t tag = 0, hidden = st ? st->hidden : 0u;
+	int all = (hidden & HUD_HIDE_ALL) != 0;
 	huddef_globals gl;
 	memset(f, 0, sizeof *f);
 	if (!s || !s->hud_count) return;
 	gl = huddef_get_globals(s);
-	/* unit HUD: backgrounds and the shield / health meters */
-	if (g->has_biped && huddef_find_link(s, HUDDEF_L_UNIT, g->biped.tag_id, 0, &tag)) {
+	/* unit HUD: backgrounds and the shield / health meters (the tutorial hides them until Cortana explains them) */
+	if (!all && g->has_biped && huddef_find_link(s, HUDDEF_L_UNIT, g->biped.tag_id, 0, &tag)) {
 		int hi = huddef_find_hud(s, tag);
 		if (hi >= 0) {
 			huddef_hud h = huddef_get_hud(s, (uint32_t)hi);
@@ -258,10 +263,18 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 			int have_sensor = 0;
 			for (i = 0; i < h.elem_count; i++) {
 				huddef_elem e = huddef_get_elem(s, (uint32_t)h.elem_first + i);
-				if (e.role == HUDDEF_R_HUD_BG || e.role == HUDDEF_R_SHIELD_BG || e.role == HUDDEF_R_HEALTH_BG || e.role == HUDDEF_R_MOTION_BG ||
-				    e.role == HUDDEF_R_MOTION_FG)
+				int hide = (e.role == HUDDEF_R_SHIELD_BG && (hidden & HUD_HIDE_SHIELD)) || (e.role == HUDDEF_R_HEALTH_BG && (hidden & HUD_HIDE_HEALTH)) ||
+				           ((e.role == HUDDEF_R_MOTION_BG || e.role == HUDDEF_R_MOTION_FG) && (hidden & HUD_HIDE_MOTION)) ||
+				           (e.role == HUDDEF_R_HUD_BG && (hidden & (HUD_HIDE_SHIELD | HUD_HIDE_HEALTH)) == (HUD_HIDE_SHIELD | HUD_HIDE_HEALTH));
+				if (!hide && (e.role == HUDDEF_R_MOTION_BG || e.role == HUDDEF_R_MOTION_FG)) {
+					/* measured on the Xbox video (a dark corridor): the tracker's disc is (10, 28, 48) over black and its centre (127, 157, 178), which is the tag colour
+					 * (3, 10, 20) / (53, 67, 80) modulated x2 and ADDED with full alpha, not blended with the tag's alpha (20 / 80 of 128) */
+					huddef_elem add = e;
+					add.blend = HUDDEF_BLEND_ADD;
+					draw_elem(f, s, &add, (e.colour ? (e.colour & 0x00FFFFFFu) : 0x00808080u) | 0x80000000u, tick);
+				} else if (!hide && (e.role == HUDDEF_R_HUD_BG || e.role == HUDDEF_R_SHIELD_BG || e.role == HUDDEF_R_HEALTH_BG))
 					draw_elem(f, s, &e, e.colour ? e.colour : 0x80808080u, tick);
-				if (e.role == HUDDEF_R_MOTION_BG && e.sprite != HUDDEF_NONE) have_sensor = 1;
+				if (e.role == HUDDEF_R_MOTION_BG && e.sprite != HUDDEF_NONE && !(hidden & HUD_HIDE_MOTION)) have_sensor = 1;
 				if (e.role == HUDDEF_R_MOTION_CENTER) {   /* radar centre; the centre's distance from the sensor corner is the radar radius */
 					int ox = e.off_x < 0 ? -e.off_x : e.off_x, oy = e.off_y < 0 ? -e.off_y : e.off_y;
 					cx = (float)e.x; cy = (float)e.y; radius = (float)(ox < oy ? ox : oy);
@@ -269,8 +282,8 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 			}
 			for (i = 0; i < h.meter_count; i++) {
 				huddef_meter m = huddef_get_meter(s, (uint32_t)h.meter_first + i);
-				if (m.role == HUDDEF_M_SHIELD) draw_meter(f, s, &m, shield, tick, shield < 0.25f && shield > 0.0f);
-				else if (m.role == HUDDEF_M_HEALTH) draw_meter(f, s, &m, health, tick, health < 0.25f);
+				if (m.role == HUDDEF_M_SHIELD && !(hidden & HUD_HIDE_SHIELD)) draw_meter(f, s, &m, shield, tick, shield < 0.25f && shield > 0.0f);
+				else if (m.role == HUDDEF_M_HEALTH && !(hidden & HUD_HIDE_HEALTH)) draw_meter(f, s, &m, health, tick, health < 0.25f);
 			}
 			if (have_sensor) draw_blips(f, s, &gl, g, cx, cy, radius);
 		}
@@ -281,10 +294,10 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 		uint32_t wt = 0;
 		if (sl && sl->weapon >= 0 && !(huddef_find_link(s, HUDDEF_L_WEAPON, sl->def.tag_id, 0, &wt))) wt = sl->def.hud_tag;
 		if (!wt) wt = gl.default_weapon_hud;
-		if (wt) draw_weapon_hud(f, s, wt, g, tick, 0);
+		if (wt && !all) draw_weapon_hud(f, s, wt, g, tick, 0, hidden);
 	}
 	/* grenades */
-	if (huddef_find_link(s, HUDDEF_L_GRENADE, (uint32_t)g->grenade_type, 0, &tag)) {
+	if (!all && (g->grenades[0] || g->grenades[1]) && huddef_find_link(s, HUDDEF_L_GRENADE, (uint32_t)g->grenade_type, 0, &tag)) {         /* no grenades, no grenade HUD (the Xbox's first minutes show nothing at the top left) */
 		int hi = huddef_find_hud(s, tag);
 		if (hi >= 0) {
 			huddef_hud h = huddef_get_hud(s, (uint32_t)hi);
@@ -303,7 +316,7 @@ void hud_build(hud_frame_t *f, const huddef_section *s, const huddef_fonts *font
 	if (fonts && fonts->font_count) {
 		unsigned i;
 		for (i = 0; st && i < HUD_MSG_COUNT; i++)
-			if (st->ticks[i] && st->text[i][0]) hud_text(f, fonts, gl.font_sp, 24.0f, 372.0f + 22.0f * (float)i, st->text[i], 0x80808080u);
+			if (st->ticks[i] && st->text[i][0]) hud_text(f, fonts, gl.font_sp, 24.0f, 118.0f + 22.0f * (float)i, st->text[i], 0x80785646u);
 		if (g->nearby_weapon >= 0 && g->objects && g->ow.scen) {
 			char line[HUD_MSG_LEN];
 			scen_def d = scen_get_def(g->ow.scen, (uint32_t)g->objects->obj[g->nearby_weapon].def);

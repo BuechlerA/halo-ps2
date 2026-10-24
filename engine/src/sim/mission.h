@@ -48,6 +48,8 @@ typedef struct { uint16_t volume; uint8_t active; uint8_t pad; uint32_t last_tic
 #define MISSION_BITS(n) (((n) + 31) / 32)
 typedef struct { int16_t parent, child, marker, pad; } mission_attach;        /* marker: model marker index of the parent, -1 = its origin */
 typedef struct { int16_t obj, pad; float pos[3]; } mission_suspend;
+#define MISSION_POSE_MAX 4
+typedef struct { int16_t obj, anim; float frame, step; } mission_pose;       /* a vehicle's open / close animation a script plays (unit_open / unit_close): the frame is driven here, step < 0 closes */
 typedef struct {
 	uint8_t  player_input_disabled;    /* player_enable_input false: the main loop feeds neutral input */
 	uint8_t  player_look_disabled;     /* player_camera_control false: the main loop ignores the look stick */
@@ -66,8 +68,16 @@ typedef struct {
 	uint32_t not_enterable[MISSION_BITS(OBJ_MAX)];        /* unit_set_enterable_by_player false */
 	int16_t  seat_vehicle[OBJ_MAX];    /* unit slot -> vehicle slot + 1 (0 = not seated) */
 	uint16_t seat_hash[OBJ_MAX];       /* FNV-1a 16 of the seat label */
+	uint8_t  seat_want[OBJ_MAX];       /* unit slot plays a seat animation: sits on the "seat" marker of the chair under it as soon as there is one (hs_host_obj.c seat_on_chair) */
 	int16_t  held[UNIT_MAX];           /* unit index -> object slot of the weapon in its hand + 1 (0 = none) */
 	int16_t  saved_graph[OBJ_MAX];     /* custom animation: the object's own graph + 2 while a foreign graph plays (0 = none) */
+	mission_pose pose[MISSION_POSE_MAX];
+	uint32_t pose_count;
+	uint8_t  stand_in;                 /* the player's body is a unit (the cryo pod, ADR-085): 0 no, 1 seated in a vehicle, 2 standing / playing an animation */
+	uint8_t  stand_vitals;             /* unit_state.has_vitals of the player's body before the stand-in took it */
+	int16_t  stand_anim;               /* animation of the player's graph that moved the stand-in out of its seat (-1 none) */
+	int32_t  stand_model;              /* unit_state.model likewise */
+	char     stand_seat[16];           /* label of the seat ("ct-driver") */
 } mission_hostobj;
 
 struct ai;                 /* ai/ai.h (Phase 4 AI runtime) */
@@ -111,6 +121,7 @@ typedef struct mission {
 	uint32_t     missing_noted[8];
 	unsigned     builtin_calls;
 	int          log;
+	int          log_anim;                    /* cfg animlog: print every custom_animation call and whether its graph and name resolve */
 	/* optional profiling of mission_tick: set clock/clock_ms (platform timer), zone sums and peaks in ms since the last reset */
 	uint32_t   (*clock)(void);
 	float      (*clock_ms)(uint32_t, uint32_t);

@@ -166,6 +166,7 @@ scen_placement scen_get_placement(const scen_section *s, uint32_t index)
 		memcpy(r.variant, p + 32, sizeof r.variant);
 		r.variant[sizeof r.variant - 1] = 0;
 		r.name_index = (int16_t)rd16(p + 48);
+		r.permutation = (uint16_t)rd16(p + 50);
 	}
 	return r;
 }
@@ -223,5 +224,8 @@ scen_player scen_get_player(const scen_section *s)
 	for (k = 0; k < 3; k++) r.fp_offset[k] = rdf(p + 28 + 4 * k);
 	memcpy(r.weapon_hand_marker, p + 40, SCEN_NAME_LEN);
 	r.weapon_hand_marker[SCEN_NAME_LEN - 1] = 0;
+	r.weapon_loaded = rd16(p + 72);
+	r.weapon_total = rd16(p + 74);
+	for (k = 0; k < 2; k++) { r.start_grenades[k] = p[76 + k]; r.equip_grenades[k] = p[78 + k]; }
 	return r;
 }

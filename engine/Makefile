@@ -58,6 +58,7 @@ EE_OBJS = src/main.o \
           src/render/hud_render.o \
           src/render/lodctl.o \
           src/render/obj_render.o \
+          src/stream/aread.o \
           src/render/selftest.o \
           src/render/sprite.o \
           src/render/text.o \

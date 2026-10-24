@@ -2,6 +2,7 @@
 #include "stream/file.h"
 #include "stream/hp2.h"
 #include "render/gs.h"
+#include "platform/timer.h"
 #include <kernel.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,6 +17,7 @@ uint8_t *world_load_section(arena_t *a, const char *path, const char *tag, size_
 	size_t mark;
 	uint8_t *raw, *stored;
 	size_t hdr_bytes = sizeof hdr;
+	u32 t_read, t_dec;
 	if (fsize < 0) { printf("[err] cannot open %s\n", path); return NULL; }
 	if ((long)hdr_bytes > fsize) hdr_bytes = (size_t)fsize;
 	if (file_read_at(path, 0, hdr, hdr_bytes)) { printf("[err] cannot read the header of %s\n", path); return NULL; }
@@ -28,8 +30,11 @@ uint8_t *world_load_section(arena_t *a, const char *path, const char *tag, size_
 	mark = arena_mark(a);
 	stored = arena_alloc(a, s->stored_size ? s->stored_size : 16, 16);       /* scratch: released below */
 	if (!stored) { printf("[err] no scratch room for %s (%u bytes)\n", tag, (unsigned)s->stored_size); return NULL; }
+	t_read = timer_cycles();
 	if (file_read_at(path, (long)s->offset, stored, s->stored_size)) { printf("[err] cannot read %s from %s\n", tag, path); return NULL; }
+	t_dec = timer_cycles();
 	st = hp2_load_stored(s, stored, raw, s->raw_size);
+	if (s->raw_size > 262144u) printf("[pack] %s: %u KB stored (codec %u) read %.0f ms, decode %.0f ms\n", tag, (unsigned)(s->stored_size / 1024), (unsigned)s->codec, (double)timer_ms(t_read, t_dec), (double)timer_ms(t_dec, timer_cycles()));
 	arena_release(a, mark);
 	if (st != HP2_OK) { printf("[err] %s: decoding %s failed (%d)\n", path, tag, (int)st); return NULL; }
 	SyncDCache(raw, raw + s->raw_size);      /* DMA reads batches and textures straight from this memory */

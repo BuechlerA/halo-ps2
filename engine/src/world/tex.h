@@ -12,7 +12,7 @@
 #define TEX_PSMT4 0x14u
 #define TEX_MAX_MIPS 4u
 #define TEX_MIN_DIM 8u
-#define TEX_MAX_DIM 512u            /* the format's limit; the converter's default cap is 256, only hero textures (tools/halo2ps2 HERO_BITMAPS) go above it */
+#define TEX_MAX_DIM 1024u           /* the format's limit; resident textures stay at 256 (hero textures 512, ADR-073), only streamed variants (docs/37) go to 1024 */
 #define TEX_NONE 0xFFFFu           /* binding without a texture: draw flat grey */
 
 /* tex_info.flags */
@@ -53,7 +53,7 @@ typedef struct {
 	uint32_t shader_id;
 	uint16_t texture, flags;       /* texture index or TEX_NONE; TEX_B_* */
 	uint8_t  blend, group;         /* TEX_BLEND_*, TEX_GROUP_* */
-	uint16_t change;               /* colour change: 1..4 = change colour a..d tints a second pass of the part (objects, ADR-062), 0 = none */
+	uint16_t change;               /* colour change: 1..4 = change colour a..d tints a second pass of the part (objects, ADR-065), 0 = none */
 	float    uv_scale[2];          /* multiply the baked texture uv */
 	uint32_t flat_rgba;            /* average colour (flat grey when untextured) */
 	uint16_t texture2;             /* the colour change pass's texture (base map with the mask as alpha), TEX_NONE = none */

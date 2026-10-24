@@ -37,7 +37,7 @@ and `u32 total cluster lights 0x2C`; `u32 x 10` placements per `scen_type` at `0
 `u16 idle_anim` (`0xFFFF` none), `char[32] name` (tag path tail, NUL terminated), `f32 radius`, 12 reserved.
 
 **Placement, 64 B**: `u16 def`, `u16 flags`, `u32 bsp_mask`, `f32 pos[3]`, `f32 rot[3]` (yaw, pitch, roll),
-`char[16] variant` (always empty, see below), `s16 name_index` (-1 none), `s16 pad`, 12 reserved.
+`char[16] variant` (always empty, see below), `s16 name_index` (-1 none), `u16 permutation` (the scenario's desired permutation, ADR-083), 12 reserved.
 `flags`: bit 0 = `SCEN_P_INITIALLY_VISIBLE` (the scenario's "not placed automatically" bit is *clear*: objects
 the scenario creates itself; the cleared ones are created by scripts, e.g. `object_create`); bits 1..3 are the
 scenario's raw "not placed on easy / normal / hard" bits (value 2, 4, 8) and bit 4 "use player appearance" (value
@@ -51,7 +51,7 @@ probes, `bsp_filter`; a cluster past the table): ambient 64, sun 64 (both 0.5), 
 
 **Player, 80 B**: `u32 fp_arms_model_tag, fp_arms_anim_tag, weapon_def, weapon_fp_model_tag, weapon_fp_anim_tag,
 biped_def` (`*_def` = def index + 1, 0 none), `u16 arms_idle_anim, weapon_idle_anim`, `f32 fp_offset[3]`,
-`char[32] weapon_hand_marker`, 8 reserved.
+`char[32] weapon_hand_marker`, `u16 weapon_loaded`, `u16 weapon_total` (the rounds the starting profile that gives the default weapon loads / carries, 0 0 = none; ADR-085), `u8 start_frag, start_plasma, equip_frag, equip_plasma` (grenades of the first starting profile and of the weapon's profile).
 
 ## Reader validation (`scen_open`)
 Size field (`SCEN_ERR_TRUNCATED` if larger than the buffer, `SCEN_ERR_LAYOUT` if smaller), signature
@@ -76,7 +76,7 @@ the distance to the next non-empty block divided by its count), in depth on a10 
 | Common placement header: `u16 type, u16 name, u16 flags, u16 permutation, f32 position[3], f32 rotation[3]` | verified (every position lies in a BSP, see below) |
 | Bit 0 of the flags = "not placed automatically" (the object is created by a script) | verified (a10: 90 of 92 scenery with it set are named script objects; 177 of 182 without it are unnamed set dressing) |
 | Bits 1..3 = not placed on easy / normal / hard; bit 4 = use player appearance | **unverified** (public tag names; only the values 0, 1, 3 and 8 occur on scenery) |
-| `desired permutation` (+0x06) | not usable: 0 on scenery and nearly all bipeds, 100 / 10 / 12 on 5 of 107 a10 bipeds. The variant string is therefore empty. |
+| `desired permutation` (+0x06) | 0 on scenery and nearly all bipeds, 100 / 101 / 10 / 12 on 5 of 107 a10 bipeds; the variant string stays empty. Carried in the placement (`+50`, ADR-083) and matched to model permutation names ending in `-<number>` (`sgt_johnson-100`, `head_marcus_cap-101`); 0 draws from the random pool `-1 .. -99`. |
 | Scenery and light fixtures carry "manual BSP flags" (+0x20, bit n = BSP n) | verified (a10 scenery: 270 of 274 equal the located set, 4 are supersets) |
 | Rotation: yaw about +z counter-clockwise seen from above (x forward, y left, z up) | weakly verified (light fixtures on walls are more consistent across a kind with this sign, 0.58 against 0.52; the sun of a30 comes out right with it) |
 | Rotation matrix `Rz(yaw) * Ry(-pitch) * Rx(roll)`, positive pitch = nose up | **unverified** for pitch and roll (a ground-alignment test over 2265 tilted objects of all maps was inconclusive: the objects are mostly not ground aligned) |
@@ -202,7 +202,7 @@ program (it is a first approximation; `AMBIENT_FLOOR`, `PRIOR_AREA` and the 0.75
 ## Sky
 `skyconv.py` writes a 64-byte `SKY0` section next to `SCEN` (object packs from `objpack.py` carry both). Layout (little-endian):
 `'SKYS'`, u16 version (1), u16 reserved, u32 sky model tag id (0 = none), f32 fog rgb[3] (0..1), f32 fog near, f32 fog far (opaque
-distance), f32 fog max density, f32 outdoor ambient rgb[3], f32 indoor ambient rgb[3], u32 model tag id of the scenario's second sky (+60; ADR-061), padded to 64. Sources in the scenario: the `skies`
+distance), f32 fog max density, f32 outdoor ambient rgb[3], f32 indoor ambient rgb[3], u32 model tag id of the scenario's second sky (+60; ADR-064), padded to 64. Sources in the scenario: the `skies`
 block (+0x30) lists sky tags; the first is converted. The sky model is converted by `modelconv` (as a normal MODL entry, no placement).
 The engine draws it camera-locked before the world (ADR-029). a30: ring and cloud dome (fog near 1, far 120, density 0.8);
 a10: space. **Unverified**: the second a30 sky, the animation of the sky model, and the sky tag's fog values as a match for the Xbox's look.

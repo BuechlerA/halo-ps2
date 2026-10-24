@@ -8,3 +8,5 @@ inside a scratch directory that holds `halo_flat.bin`, and write there.
    creates a function at every `call rel32` target and every 16-aligned code pointer in the data sections and writes `halo_dec.c` (6000 decompiled functions, a minute).
 3. `fn.py` (`fn.py 00184070`, `fn.py c 0007e5d0` = callers) reads `halo_dec.c`; `dis.py START LEN` disassembles; `defs.py` / `decode.py` rebuild the
    pixel-shader programs that Halo's rasterizer assembles at runtime (buffer `0x2fce60`, installed through `0x7e5d0`) and print them as combiner equations.
+4. `observer_oracle.py` (needs `pip install unicorn`, run in the scratch directory with `halo_flat.bin`) runs the Xbox's own camera observer (0x11dd30, with 0x11c760 .. 0x11d2d0) under an x86 emulator,
+   fed the way the scripted-camera director (0x120a90, 0x120eb0) feeds it: the ground truth of `engine/tests/cine_observer_golden.h` (`python3 observer_oracle.py golden`).

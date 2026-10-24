@@ -419,7 +419,7 @@ def test_colours_layout() -> None:
     # anchors: the matching corner (centre) goes to anchor point + offset
     # anchors: the matching corner (centre) goes to the title-safe frame corner (48, 36 in) + offset, y down everywhere
     assert hc.resolve_position(hc.A_TL, 5, 6, 100, 20) == (53, 42)
-    assert hc.resolve_position(hc.A_TR, -5, 6, 100, 20) == (487, 42)
+    assert hc.resolve_position(hc.A_TR, -5, 6, 100, 20) == (497, 42)      # x counted inward from a right anchor
     assert hc.resolve_position(hc.A_BL, 12, -40, 128, 32) == (60, 372)
     assert hc.resolve_position(hc.A_BR, 0, 0, 10, 10) == (582, 434)
     assert hc.resolve_position(hc.A_C, 0, -40, 32, 16) == (304, 192)
@@ -466,13 +466,13 @@ def test_collect() -> None:
         assert (shield_bg.role, shield_bg.w, shield_bg.h, shield_bg.x, shield_bg.y) == (hc.R_SHIELD_BG, 128, 32, 464, 37)
         assert shield_bg.colour == gs(170, 213, 255, 220) and shield_bg.flash_colour == gs(255, 85, 43, 255)
         assert (shield_bg.flash_period, shield_bg.flash_delay, shield_bg.flash_count, shield_bg.flash_length) == (90, 7, 3, 7)
-        assert (health_bg.w, health_bg.h, health_bg.x, health_bg.y, health_bg.off_x, health_bg.off_y) == (100, 20, 487, 54, -5, 18)
+        assert (health_bg.w, health_bg.h, health_bg.x, health_bg.y, health_bg.off_x, health_bg.off_y) == (100, 20, 497, 54, -5, 18)
         assert (motion_bg.w, motion_bg.h, motion_bg.x, motion_bg.y, motion_bg.anchor) == (512, 16, 48, 444 - 16, hc.A_BL) and motion_bg.seq == 2
         assert motion_fg.sprite == NONE and motion_fg.anchor == hc.A_BL
         assert (centre.role, centre.x, centre.y, centre.off_x, centre.anchor, centre.sprite) == (hc.R_MOTION_CENTER, 89, 403, 41, hc.A_BL, NONE)
-        assert aux_bg.role == hc.R_AUX_BG and aux_bg.frames == 3 and aux_bg.w == 32 and aux_bg.x == 592 - 7 - 32
+        assert aux_bg.role == hc.R_AUX_BG and aux_bg.frames == 3 and aux_bg.w == 32 and aux_bg.x == 592 + 7 - 32
         sm, hm, am = ua.meters
-        assert (sm.role, sm.w, sm.h, sm.x, sm.y, sm.alpha_mult, sm.alpha_bias, sm.value_scale, sm.flags) == (hc.M_SHIELD, 32, 16, 592 + 7 - 32, 36, 1, 55, 198, 0)
+        assert (sm.role, sm.w, sm.h, sm.x, sm.y, sm.alpha_mult, sm.alpha_bias, sm.value_scale, sm.flags) == (hc.M_SHIELD, 32, 16, 592 - 7 - 32, 36, 1, 55, 198, 0)
         assert sm.colour_min == gs(0, 80, 159, 255) and sm.colour_max == gs(40, 150, 255, 255) and sm.colour_flash == gs(255, 255, 255, 255)
         assert sm.colour_empty == 0 and sm.colour_disabled == gs(0, 37, 74, 255) and (sm.opacity, sm.translucency) == (0.0, 0.5)
         assert (hm.flags, hm.min_value, hm.alpha_mult, hm.alpha_bias, hm.off_x, hm.off_y) == (1, 31, 30, 15, 36, 17)

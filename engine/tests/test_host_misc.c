@@ -306,12 +306,17 @@ static void test_sound(void)
 		call("sound_impulse_start", a, 3, HS_VOID);
 		t0 = (uint32_t)call("sound_impulse_time", a, 1, HS_SHORT).v.i;
 		CHECK(t0 > 10);
-		for (k = 1; k < 8; k++) {                                               /* tick k after the start plays byte k */
-			step(1);
-			CHECK(X.objects.obj[o].face.talk == line[k]);
+		{                                                                       /* the jaw follows byte k through the low pass of sim/hs_host_misc.c: 0.65 up, 0.35 down per tick */
+			float cur = 0.0f;
+			for (k = 1; k < 8; k++) {                                           /* tick k after the start plays byte k */
+				float goal = (float)line[k];
+				cur += (goal - cur) * (goal > cur ? 0.65f : 0.35f);
+				step(1);
+				CHECK(X.objects.obj[o].face.talk == (uint8_t)(cur + 0.5f));
+			}
+			for (k = 0; k < 40 && X.objects.obj[o].face.talk; k++) step(1);     /* past the data the mouth closes by itself */
+			CHECK(X.objects.obj[o].face.talk == 0);
 		}
-		step(1);
-		CHECK(X.objects.obj[o].face.talk == 0);                                 /* past the data: closed */
 		call("sound_impulse_stop", a, 1, HS_VOID);
 		X.m.ow.mouth = NULL;
 		step(1);
@@ -445,11 +450,20 @@ static void test_sound(void)
 			CHECK(stream_get_stats(&g_sp)->frames_decoded > 0 && stream_get_stats(&g_sp)->plays >= 1);
 			{
 				hs_value b[3];
+				int sl;
 				b[0] = hv(d2, 24); b[1] = a[1]; b[2] = a[2];
 				call("sound_impulse_start", b, 3, HS_VOID);
+				CHECK(stream_slot_busy(&g_sp, STREAM_SLOT_LAYER0));            /* a line over a line takes a free layer: the first one plays on */
+				CHECK(stream_get_stats(&g_sp)->steals == 0);
+				CHECK(call("sound_impulse_time", a, 1, HS_SHORT).v.i > 0 && call("sound_impulse_time", b, 1, HS_SHORT).v.i > 0);
+				call("sound_impulse_start", b, 3, HS_VOID);
+				call("sound_impulse_start", b, 3, HS_VOID);                    /* the other two layers */
+				CHECK(stream_get_stats(&g_sp)->steals == 0);
+				call("sound_impulse_start", b, 3, HS_VOID);                    /* every voice busy: the dialogue slot's line is replaced, its time is over */
 				CHECK(stream_get_stats(&g_sp)->steals >= 1);
 				CHECK(call("sound_impulse_time", a, 1, HS_SHORT).v.i == 0);
 				call("sound_impulse_stop", b, 1, HS_VOID);
+				for (sl = 0; sl < STREAM_VOICES; sl++) stream_kill(&g_sp, sl);
 			}
 			for (li = 0; li < X.strm.loop_count && !music_loop; li++) {
 				strm_loop lp = strm_get_loop(&X.strm, li);
@@ -730,9 +744,9 @@ static void test_player_effect(void)
 /* ---- 7. debug family: typed no-ops that change nothing ----------------------------------------------------------------------------------- */
 static void test_noops(void)
 {
-	static const char *const names[] = { "objects_predict", "object_beautify", "object_pvs_activate", "object_type_predict", "rasterizer_model_ambient_reflection_tint",
+	static const char *const names[] = { "objects_predict", "object_pvs_activate", "object_type_predict", "rasterizer_model_ambient_reflection_tint",
 		"garbage_collect_now", "object_pvs_set_camera", "breakable_surfaces_enable", "cls", "breakable_surfaces_reset", "object_pvs_clear", "object_pvs_set_object",
-		"render_lights", "rasterizer_lights_reset_for_new_map", "cinematic_screen_effect_set_convolution", "cinematic_screen_effect_set_filter",
+		"render_lights", "rasterizer_lights_reset_for_new_map", "cinematic_screen_effect_set_convolution",
 		"cinematic_screen_effect_set_filter_desaturation_tint", "cinematic_screen_effect_set_video", "sound_impulse_predict", "sound_looping_predict" };
 	unsigned i;
 	hs_value a[5];
@@ -748,6 +762,11 @@ static void test_noops(void)
 		CHECK(memcmp(cs, &X.cine, sizeof *cs) == 0 && want == (unsigned)X.m.want_bsp && ob == X.objects.count);
 		free(cs);
 	}
+	/* set_filter is the one screen-effect setter that does something: it arms the tutorial pod's veil (ADR-085), and the effect's stop disarms it */
+	(void)call("cinematic_screen_effect_set_filter", a, 5, HS_VOID);
+	CHECK(X.cine.screen.filter == 1);
+	(void)call("cinematic_screen_effect_stop", a, 0, HS_VOID);
+	CHECK(X.cine.screen.filter == 0);
 }
 
 /* ---- 8. every call site of the a10 script, once, with the script's own arguments ---------------------------------------------------------- */

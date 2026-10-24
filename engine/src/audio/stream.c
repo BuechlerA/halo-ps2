@@ -150,7 +150,9 @@ static void plan_advance(stream_player *p, stream_voice *v)
 		if (ref_valid(p, v->ref_loop) && seg_open_ref(p, v, v->ref_loop, 1)) { v->plan = PLAN_LOOP; return; }
 		break;
 	case PLAN_LOOP: {
-		uint32_t ref = (v->alt_on && ref_valid(p, v->ref_alt)) ? v->ref_alt : v->ref_loop;
+		uint32_t ref;
+		if (v->once) break;                                           /* "not a loop": the pass just planned was the only one */
+		ref = (v->alt_on && ref_valid(p, v->ref_alt)) ? v->ref_alt : v->ref_loop;
 		if (seg_open_ref(p, v, ref, ref != v->cur_ref)) { p->stats.loop_passes++; return; }
 		break;
 	}
@@ -617,6 +619,7 @@ int stream_play_stream(stream_player *p, int slot, uint32_t index, uint32_t flag
 	v->ref_loop = (flags & STREAM_PLAY_LOOP) ? index : NONE_REF;
 	if (!seg_open_ref(p, v, index, 1)) { voice_reset(v); return -1; }
 	voice_start(p, v, gain, pan, fade_in_s, st.gain > 0.0f ? st.gain : 1.0f, 0);
+	v->owner = st.owner;
 	return (int)index;
 }
 
@@ -631,7 +634,9 @@ int stream_play_sound(stream_player *p, int slot, uint32_t tag_id, int variant, 
 	if (!sd.stream_count) return -1;
 	if (variant < 0) variant = (int)(rng_next(p) % sd.stream_count);
 	if ((uint32_t)variant >= sd.stream_count) variant = (int)sd.stream_count - 1;
-	return stream_play_stream(p, slot, sd.stream_first + (uint32_t)variant, flags, gain, pan, fade_in_s);
+	si = stream_play_stream(p, slot, sd.stream_first + (uint32_t)variant, flags, gain, pan, fade_in_s);
+	if (si >= 0) p->voice[slot].owner = tag_id;                          /* a deduplicated stream names its first owner, the caller asked for this sound */
+	return si;
 }
 
 static uint32_t first_stream_of(const stream_player *p, uint32_t tag)
@@ -667,10 +672,12 @@ int stream_play_loop(stream_player *p, int slot, uint32_t loop_tag, unsigned tra
 	v->ref_loop = ref_loop;
 	v->ref_alt = ref_alt;
 	v->ref_end = ref_end;
+	v->once = (lp.flags & STRM_LOOP_NOT_A_LOOP) != 0;
 	v->plan = ref_start != NONE_REF ? PLAN_START : PLAN_LOOP;
 	first = ref_start != NONE_REF ? ref_start : ref_loop;
 	if (!seg_open_ref(p, v, first, 1)) { voice_reset(v); return -1; }
 	voice_start(p, v, gain, pan, fade_in_s < 0.0f ? tr.fade_in : fade_in_s, tr.gain > 0.0f ? tr.gain : 1.0f, seconds_to_frames(tr.fade_out));
+	v->owner = loop_tag;
 	return 0;
 }
 
@@ -719,6 +726,19 @@ void stream_kill(stream_player *p, int slot)
 int stream_slot_busy(const stream_player *p, int slot)
 {
 	return slot >= 0 && slot < STREAM_VOICES && p->voice[slot].active;
+}
+
+uint32_t stream_slot_owner(const stream_player *p, int slot)
+{
+	return slot >= 0 && slot < STREAM_VOICES && p->voice[slot].active ? p->voice[slot].owner : 0;
+}
+
+int stream_free_slot(const stream_player *p, int first, int count)
+{
+	int i;
+	for (i = first; i < first + count && i < STREAM_VOICES; i++)
+		if (i >= 0 && !p->voice[i].active) return i;
+	return -1;
 }
 
 /* The loop faded out: drop what is buffered and play the end sound once at the track gain. */

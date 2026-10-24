@@ -18,7 +18,7 @@ converters and the engine can follow it.
 * Decoded programs (`tools/xbe/decode.py`; T0..T3 textures, V0 diffuse vertex colour, C0 / C1 constants; "x2" = shift left 1):
   - base x detail x2 x (T2 + V0): `R0 = T0*T1*2` (alpha `T0.a*T1.a`), `R1 = T2 + V0`, `out = R0 * R1`, alpha `R0.a`: the environment diffuse pass; the third texture is not
     scaled and is **added** to the vertex colour before it modulates, i.e. the lightmap is not doubled (a lit lightmap texel of 249 is about 1.0 of the base colour, which
-    is what the tone curve of ADR-061 ends at) and a vertex term lifts the shadows (the curve does too). What V0 carries for a10 is not established: the sky tag's indoor
+    is what the tone curve of ADR-064 ends at) and a vertex term lifts the shadows (the curve does too). What V0 carries for a10 is not established: the sky tag's indoor
     ambient power is 0.
   - texture x vertex colour (`R0 = T0*V0`): objects without detail.
   - 2-stage lerp programs `(1-T1.b)*C1.a + T1.b*C0.a` (a mask in the blue channel selects between two constants), reflection / specular `dotRS`, bump `dotRD` and
@@ -26,7 +26,19 @@ converters and the engine can follow it.
   The full per-pass assignment of textures to stages was not completed: the programs are parametric (stores through registers), which `defs.py` handles only
   partly.
 
+## The camera (analysis of 2026-10-23, ADR-084)
+* `camera_set` of a scenario camera point (0x120eb0): the 0x68 byte point is read at +0x28 position, +0x34 yaw, +0x38 pitch, +0x3c roll, +0x40 field of view (0 = 70 degrees);
+  the angles go through `euler_angles3d_to_matrix` (0xb67f0, rows `forward = (c1c2, s1c3 - s2s3c1, s1s3 + s2c3c1)`, `left = (-s1c2, c1c3 + s2s3s1, c1s3 - s2c3s1)`, `up = (-s2, -c2s3, c2c3)`
+  for yaw `1`, pitch `2`, roll `3`) and the director keeps position, forward (row 0) and up (row 2). The seconds are `ticks / 30` by integer division. The call ends with an observer update of 1e-4 s.
+* The observer (0x11dd30 per player: 0x11c760 copies the director's record, 0x11d2d0 runs 0x11cb10 / 0x11c500 / 0x11c330 / 0x11c130 / 0x11cda0, 0x11d900 adds the focus / distance and the
+  collision) has the channels position 3, focus 3, distance 1, field of view 1 and orientation (forward + up as the state, a rotation vector as the offset). Every update refits a quintic
+  `e(t) = c3 t^3 + c4 t^4 + c5 t^5` of the offset in the remaining time with the velocity and acceleration of the previous fit (kept analytically in 0x2715c4 / 0x2715fc) and moves the state by
+  `D + e(t - dt)`; the orientation channel rotates forward and up about the rotation vector (0x11ca50). A fit whose acceleration exceeds 1500 (positions) or 1e5 snaps the camera.
+* The projection: 0xbc260 fills the view from the observer's output: position, forward, up and `vfov = 2 atan(0.6375 tan(fov / 2))` (qword 1.0 at 0x1f0a70 as the divisor of `fpatan`). The view window
+  (`FUN_000bba00`) is the title-safe rectangle top 36, left 48, bottom 444, right 592 (544 x 408) of the 640 x 480 screen (set at 0x1f8c5c..0x1f8c6a at start up). 0x5c5e0 maps y by `1 / tan(vfov / 2)` and x
+  by `height / (width tan(vfov / 2))`: the horizontal half tangent is `0.85 tan(fov / 2)`, 62 degrees for 70. The cinematic bars are overlay quads (0x29fd0), not a smaller window.
+
 ## Not found / still open
 * The vertex shader's lighting model for objects (ambient + lights), the exact `V0` for BSP surfaces, the glow / bloom of additive materials, the lens-flare and sun-glow
   passes (`rasterizer_sun_glow_*` exist), the second pass of the model shader for the Cortana hologram's multi-stage `sotr` programs.
-* Colour change did not need the executable: the tag data decides it (`chgconv.py`: object tag +0x164, shader_model +0x4C source, multipurpose +0xBC blue channel = mask), ADR-062.
+* Colour change did not need the executable: the tag data decides it (`chgconv.py`: object tag +0x164, shader_model +0x4C source, multipurpose +0xBC blue channel = mask), ADR-065.

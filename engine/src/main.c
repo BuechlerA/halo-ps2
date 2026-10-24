@@ -20,6 +20,7 @@
 #include "platform/memcard.h"
 #include "mission_app.h"
 #include "audio/stream.h"
+#include "stream/aread.h"
 #include "stream/file.h"
 #include "platform/pad.h"
 #include "platform/profiler.h"
@@ -55,14 +56,20 @@ static fpview_t   s_fp;
 static lodctl_t   s_lod;
 static float s_cine_light[3] = { 1.0f, 1.0f, 1.0f }, s_cine_amb = 1.0f;     /* cinematic object lighting gains (cfg objlight / objamb) */
 static obj_render_t s_objr;
-static hires_t s_hires;
-static int s_hires_open;
+/* Streamed high resolution textures (docs/37): the object set (<obj>.hires.hp2) and the BSP set (<tex>.thires.hp2) share one staging ring and each reads through its own IO thread. */
+static hires_t s_hires, s_bhires;
+static hires_ring_t s_hring;
+static aread_t s_ar_obj, s_ar_bsp;
+static int s_hires_open, s_bhires_open, s_ar_obj_open, s_ar_bsp_open;
+static unsigned s_bhires_key, s_bhires_keyed;
 static float s_cine_fxadd = 1.0f, s_cine_halo = 0.0f;
 static uint32_t s_hires_loads = 1;
-static float s_hires_px;
-static char s_hires_path[160];
+static float s_hires_px, s_bhires_ratio = 0.7f;
+static char s_hires_path[160], s_bhires_path[160];
 
-static int hires_file_read(void *user, uint32_t offset, void *dst, uint32_t bytes) { (void)user; return file_read_at(s_hires_path, (long)offset, dst, bytes); }
+static int hires_file_read(void *user, uint32_t offset, void *dst, uint32_t bytes) { return file_read_at((const char *)user, (long)offset, dst, bytes); }
+static int hires_ar_start(void *user, uint32_t offset, void *dst, uint32_t bytes) { return aread_start((aread_t *)user, offset, dst, bytes); }
+static int hires_ar_poll(void *user) { return aread_poll((aread_t *)user); }
 static int        s_have_objects;
 static gamedata_t s_gd;
 static game_t     s_game;
@@ -85,6 +92,12 @@ static int        s_paused;
 static uint32_t   s_unit_hud;
 static fx_render_t s_fxr;
 static float cine_near_floor = CAMERA_NEAR_DEFAULT;     /* cfg cinenear: the lowest near plane of a cinematic camera */
+
+static void sky_pass(void *u, struct render_ctx *rc)
+{
+	obj_render_sky(u, rc);
+	hud_render_prefetch(&s_hudr);          /* before the world has taken the texture window */
+}
 
 static void overlay_pass(void *u, struct render_ctx *rc)
 {
@@ -123,6 +136,7 @@ static void apply_options(void)
 	bsp_render_options(&o);
 	o.textures = (int)cfg_int(&s_cfg, "textures", 1);
 	o.lightmaps = (int)cfg_int(&s_cfg, "lightmaps", 1);
+	o.glow = (int)cfg_int(&s_cfg, "glow", 1);
 	o.debug = (int)cfg_int(&s_cfg, "debug", 0);
 	if (cfg_floats(&s_cfg, "onlybatch", f, 2) >= 1) { o.only_batch = (int)f[0]; o.only_batch_hi = cfg_floats(&s_cfg, "onlybatch", f, 2) == 2 ? (int)f[1] : (int)f[0]; }
 	if (cfg_floats(&s_cfg, "clipbudget", f, 1) == 1) o.clip_budget_ms = f[0];
@@ -147,6 +161,8 @@ static void apply_options(void)
 	}
 	bsp_render_set_options(&o);
 }
+
+#define FALL_KILL_MARGIN 30.0f      /* wu below the BSP's lowest vertex at which an airborne player counts as out of the world */
 
 static void setup_camera(void)
 {
@@ -202,7 +218,7 @@ static int load_bsp(int idx);
 static void do_checkpoint_save(void)
 {
 	if (mapp_active()) mapp_checkpoint_save(); else checkpoint_save(&s_ckpt, &s_game, &s_fp, s_fx.def ? &s_fx : NULL);
-	hud_message(&s_hs, "Checkpoint saved", 90);
+	hud_message(&s_hs, "Checkpoint... done", 150);        /* the tag data's own string */
 	printf("[game] checkpoint saved at tick %u\n", s_game.tick);
 }
 
@@ -224,6 +240,16 @@ static int do_revert(void)
 	return ok;
 }
 
+/* `prof2 1`: ms spent in each part of the 30 Hz tick, summed per 60-frame window (the zones are exclusive; P2_N must match the names in the prof2 print) */
+enum { P2_MAPP, P2_SERVE, P2_BSPSW, P2_STREAM, P2_FX, P2_AUDIO, P2_HUD, P2_N };
+static float s_p2_ms[P2_N], s_p2_peak[P2_N];
+static void p2_add(int zone, u32 t0)
+{
+	float ms = timer_ms(t0, timer_cycles());
+	s_p2_ms[zone] += ms;
+	if (ms > s_p2_peak[zone]) s_p2_peak[zone] = ms;
+}
+
 /* the mission asks for things the platform must do between ticks */
 static void serve_mission(void)
 {
@@ -238,6 +264,7 @@ static void serve_mission(void)
 			if (load_bsp(want) == 0) {
 				mapp_set_bsp(want);
 				if (mm->want_teleport) game_teleport(&s_game, mm->want_pos, mm->want_yaw);
+				hud_message(&s_hs, "Loading... done", 120);          /* the Xbox streams the next section with `Loading...` / `Loading... done` on the HUD (video 286 .. 288 s); ours is a blocking load */
 			}
 			printf("[mission] switched to BSP %d in %.0f ms\n", want, timer_ms(t0, timer_cycles()));
 		}
@@ -249,6 +276,15 @@ static void serve_mission(void)
 }
 
 /* (Re)loads BSP `idx` after the arena mark: render geometry, lightmap, collision; rebinds everything that points at BSP data. */
+/* Debug (nearlog): the name of the animation an object is posed with. */
+static const char *object_anim_label(const object_t *ob)
+{
+	anim_graph g;
+	if (ob->graph < 0 || ob->anim == SCEN_NO_ANIM || !s_world.anims.graph_count || (uint32_t)ob->graph >= s_world.anims.graph_count) return "";
+	g = anim_get_graph(&s_world.anims, (uint32_t)ob->graph);
+	return ob->anim < g.anim_count ? anim_get(&s_world.anims, &g, ob->anim).name : "";
+}
+
 static int load_bsp(int idx);
 
 /* Debug: `bspswitch <seconds> <bsp> <x> <y> <z> <yaw deg>` lines switch the loaded BSP and teleport the player (what the scripts' switch_bsp does). */
@@ -272,45 +308,99 @@ static void check_bsp_switch(void)
 	}
 }
 
-/* Streamed high resolution object textures (ADR-074): <obj pack>.hires.hp2 next to the object pack. Its staging ring lives above the BSP mark (a BSP switch frees it and this reopens it)
- * and is kept only when the arena still has 1 MB after it: b30 (the largest map) has no room for it, a10 does. */
+/* Streamed high resolution textures (docs/37, ADR-074 / ADR-082): the staging ring lives above the BSP mark (a BSP switch frees it and this reopens it) and is kept only when
+ * the arena still has 1 MB after it: b30 (the largest map) has no room for it, a10 does. The object set sits next to the object pack, the BSP set next to the texture pack. */
 #define HIRES_MARGIN (1024u * 1024u)
+static void close_hires(void)
+{
+	if (s_ar_obj_open) aread_close(&s_ar_obj);
+	if (s_ar_bsp_open) aread_close(&s_ar_bsp);
+	s_ar_obj_open = s_ar_bsp_open = 0;
+	s_hires_open = s_bhires_open = 0;
+	s_objr.hires = NULL;
+	bsp_render_set_hires(NULL, 0, 0.0f);
+}
+
+static int derive_path(char *out, size_t cap, const char *src, const char *from, const char *to)
+{
+	const char *dot = strstr(src, from);
+	size_t head, tail = strlen(to);
+	if (!dot) return 0;
+	head = (size_t)(dot - src);
+	if (head + tail + 1u > cap) return 0;
+	memcpy(out, src, head); strcpy(out + head, to);
+	return 1;
+}
+
+static int open_set(hires_t *h, const char *path, const char *what)
+{
+	long fsz = file_size_of(path);
+	if (fsz <= 0) { printf("[hires] %s: none (%s)\n", what, path); return -1; }
+	if (hires_open(h, &s_arena, hires_file_read, (void *)path, (size_t)fsz) != 0) { printf("[hires] %s: unusable (%s)\n", what, path); return -1; }
+	return 0;
+}
+
 static void open_hires(void)
 {
 	const char *obj = cfg_str(&s_cfg, "obj", "");
-	const char *dot = strstr(obj, ".obj.hp2");
-	size_t mark;
-	s_hires_open = 0; s_objr.hires = NULL;
-	if (!s_have_objects || !cfg_int(&s_cfg, "hires", 1) || !dot || (size_t)(dot - obj) + 11u >= sizeof s_hires_path) return;
-	memcpy(s_hires_path, obj, (size_t)(dot - obj)); strcpy(s_hires_path + (dot - obj), ".hires.hp2");
-	{
-		long fsz = file_size_of(s_hires_path);
-		if (fsz <= 0) { printf("[hires] none (%s)\n", s_hires_path); return; }
-		mark = arena_mark(&s_arena);
-		if (hires_open(&s_hires, &s_arena, hires_file_read, NULL, (size_t)fsz, (unsigned)cfg_int(&s_cfg, "hiresslots", 3)) != 0) { arena_release(&s_arena, mark); printf("[hires] unusable (%s)\n", s_hires_path); return; }
+	size_t mark = arena_mark(&s_arena);
+	int have_obj = 0, have_bsp = 0;
+	uint32_t slot_bytes = 0;
+	close_hires();
+	if (!s_have_objects) return;
+	if (cfg_int(&s_cfg, "hires", 1) && derive_path(s_hires_path, sizeof s_hires_path, obj, ".obj.hp2", ".hires.hp2") && open_set(&s_hires, s_hires_path, "objects") == 0) { have_obj = 1; slot_bytes = s_hires.max_bytes; }
+	if (cfg_int(&s_cfg, "bsphires", 1) && s_bhires_keyed && s_tex && derive_path(s_bhires_path, sizeof s_bhires_path, s_tex, ".tex.hp2", ".thires.hp2") && open_set(&s_bhires, s_bhires_path, "bsp") == 0) {
+		have_bsp = 1;
+		if (s_bhires.max_bytes > slot_bytes) slot_bytes = s_bhires.max_bytes;
 	}
-	if (arena_free(&s_arena) < HIRES_MARGIN) { printf("[hires] dropped: %u KB left after the staging ring (needs %u KB)\n", (unsigned)(arena_free(&s_arena) / 1024u), (unsigned)(HIRES_MARGIN / 1024u)); arena_release(&s_arena, mark); return; }
-	s_hires_px = 200.0f;
-	cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
+	if (!have_obj && !have_bsp) { arena_release(&s_arena, mark); return; }
+	if (hires_ring_init(&s_hring, &s_arena, (unsigned)cfg_int(&s_cfg, "hiresslots", 3), slot_bytes) != 0 || arena_free(&s_arena) < HIRES_MARGIN) {
+		printf("[hires] dropped: %u KB left after the staging ring (needs %u KB)\n", (unsigned)(arena_free(&s_arena) / 1024u), (unsigned)(HIRES_MARGIN / 1024u));
+		arena_release(&s_arena, mark); return;
+	}
 	s_hires_loads = (uint32_t)cfg_int(&s_cfg, "hiresloads", 1);
-	s_hires.max_loads = s_hires_loads;
-	s_hires_open = 1;
-	s_objr.hires = &s_hires; s_objr.hires_px = s_hires_px;
-	printf("[hires] %s: %u variants of %u textures, %u slots of %u KB, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (unsigned)s_hires.slots, (unsigned)(s_hires.slot_bytes / 1024u), (double)s_hires_px);
+	s_hring.max_loads = s_hires_loads;
+	s_hires_px = 200.0f; cfg_floats(&s_cfg, "hirespx", &s_hires_px, 1);
+	s_bhires_ratio = 0.7f; cfg_floats(&s_cfg, "bsphiresratio", &s_bhires_ratio, 1);
+	if (have_obj) {
+		if (aread_open(&s_ar_obj, s_hires_path) == 0) {
+			s_ar_obj_open = 1;
+			hires_attach(&s_hires, &s_hring, hires_ar_start, hires_ar_poll, &s_ar_obj);
+			s_hires_open = 1;
+			s_objr.hires = &s_hires; s_objr.hires_px = s_hires_px;
+			printf("[hires] %s: %u variants of %u textures, from %.0f px\n", s_hires_path, (unsigned)s_hires.tex.texture_count, (unsigned)s_hires.map_count, (double)s_hires_px);
+		} else printf("[hires] cannot open %s for streaming\n", s_hires_path);
+	}
+	if (have_bsp) {
+		if (aread_open(&s_ar_bsp, s_bhires_path) == 0) {
+			s_ar_bsp_open = 1;
+			hires_attach(&s_bhires, &s_hring, hires_ar_start, hires_ar_poll, &s_ar_bsp);
+			s_bhires_open = 1;
+			bsp_render_set_hires(&s_bhires, s_bhires_key, s_bhires_ratio);
+			printf("[hires] %s: %u variants of %u textures, from %.2f px per texel\n", s_bhires_path, (unsigned)s_bhires.tex.texture_count, (unsigned)s_bhires.map_count, (double)s_bhires_ratio);
+		} else printf("[hires] cannot open %s for streaming\n", s_bhires_path);
+	}
+	printf("[hires] ring: %u slots of %u KB, %u loads a frame\n", (unsigned)s_hring.slots, (unsigned)(s_hring.slot_bytes / 1024u), (unsigned)s_hring.max_loads);
 }
 
 static int load_bsp(int idx)
 {
-	s_objr.hires = NULL; s_hires_open = 0;
+	u32 t0 = timer_cycles(), t1;
+	float ms_world, ms_render, ms_game = 0.0f;
+	close_hires();
 	arena_release(&s_arena, s_bsp_mark);
 	if (world_load_bsp(&s_world, &s_arena, s_pack, s_tex, idx)) return -1;
+	t1 = timer_cycles(); ms_world = timer_ms(t0, t1); t0 = t1;
 	if (bsp_render_set_world(&s_arena, &s_world.bsp, &s_world.source)) return -1;
+	t1 = timer_cycles(); ms_render = timer_ms(t0, t1); t0 = t1;
 	if (s_have_objects) { s_objr.bsp = &s_world.bsp; s_objr.bsp_index = idx; objects_set_active_bsp(&s_objects, (unsigned)idx); }
 	if (cfg_str(&s_cfg, "game", NULL)) {
 		gamedata_load_bsp(&s_gd, &s_arena, cfg_str(&s_cfg, "game", NULL), idx);
 		if (s_game_on) game_set_collision(&s_game, s_gd.has_coll ? &s_gd.coll : NULL);
 	}
+	t1 = timer_cycles(); ms_game = timer_ms(t0, t1); t0 = t1;
 	open_hires();
+	printf("[bsp] load %d: world %.0f ms, render setup %.0f ms, game data %.0f ms, hires %.0f ms\n", idx, (double)ms_world, (double)ms_render, (double)ms_game, (double)timer_ms(t0, timer_cycles()));
 	return 0;
 }
 
@@ -408,6 +498,9 @@ int main(int argc, char *argv[])
 			s_objr.lod = &s_lod;
 			if (!cfg_int(&s_cfg, "objanim", 1)) { unsigned oi; for (oi = 0; oi < s_objects.count; oi++) s_objects.obj[oi].flags &= ~OBJ_F_ANIMATED; }
 			s_objr.max_distance = (float)cfg_int(&s_cfg, "objdist", 200);
+			s_objr.far_px = (float)cfg_int(&s_cfg, "objfarpx", 20);
+			s_objr.ee_clip = (int)cfg_int(&s_cfg, "objclip", 1);
+			s_objr.clip_budget_ms = (float)cfg_int(&s_cfg, "objclipms", 3);
 			s_objr.max_batches = (unsigned)cfg_int(&s_cfg, "objcap", 900);
 			s_objr.draw_objects = (int)cfg_int(&s_cfg, "objects", 1);
 			s_objr.draw_fp = (int)cfg_int(&s_cfg, "fp", 1);
@@ -416,6 +509,7 @@ int main(int argc, char *argv[])
 			s_objr.sky_model = -1;
 			s_objr.sky_hide = (unsigned)cfg_int(&s_cfg, "skyhide", 0);
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
+			{ float tr[3]; s_objr.trace_lo = s_objr.trace_hi = 0; s_objr.trace_step = 1; if (cfg_floats(&s_cfg, "objtrace", tr, 3) == 3 && tr[2] >= 1.0f) { s_objr.trace_lo = (unsigned)tr[0]; s_objr.trace_hi = (unsigned)tr[1]; s_objr.trace_step = (unsigned)tr[2]; } }
 			s_objr.unlit_add = (int)cfg_int(&s_cfg, "unlitadd", 1);
 			{
 				float v[3] = { 1.0f, 1.0f, 1.0f };
@@ -471,7 +565,8 @@ int main(int argc, char *argv[])
 	if (s_have_objects) {
 		bsp_render_set_object_pass(obj_render_pass, &s_objr, &s_world.obj_source);   /* after the first set_world: key layout needs it */
 		s_objr.hires_key_base = bsp_render_reserve_keys(s_world.obj_tex.has ? s_world.obj_tex.tex.texture_count : 0);       /* the key range is reserved whether or not the staging ring fits */
-		bsp_render_set_sky_pass(obj_render_sky, &s_objr);
+		s_bhires_key = bsp_render_reserve_keys((unsigned)s_world.source.texture_count); s_bhires_keyed = 1;     /* the BSP set's range (docs/37) */
+		bsp_render_set_sky_pass(sky_pass, &s_objr);
 		if (load_bsp(s_world.bsp_index)) return 1;           /* re-run so the texture cache is sized with the object key range */
 	}
 	printf("[mem] level arena: %u KB used of %u KB\n", (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024));
@@ -500,6 +595,11 @@ int main(int argc, char *argv[])
 			game_init(&s_game, &gi, pp, pp[3] * 3.14159265f / 180.0f);
 			s_game.all_weapons = (int)cfg_int(&s_cfg, "allweapons", 0);
 			s_game.difficulty = (int)cfg_int(&s_cfg, "difficulty", 1);
+			if (cfg_int(&s_cfg, "startunarmed", 0)) {       /* a10: the first weapon comes with the bridge profile, and the first profile has no grenades either */
+				scen_player sp = scen_get_player(s_objr.world.scen);
+				game_drop_weapons(&s_game);
+				s_game.grenades[0] = sp.start_grenades[0]; s_game.grenades[1] = sp.start_grenades[1];
+			}
 			s_game_on = 1;
 			checkpoint_save(&s_ckpt, &s_game, &s_fp, NULL);          /* the level-start checkpoint (fx are saved from the first Start press) */
 			printf("[game] fp: arms model %d graph %d anim %u, weapon model %d graph %d anim %u hand marker %d node %d\n", s_fp.arms_model, s_fp.arms_graph, s_fp.arms_anim,
@@ -562,7 +662,7 @@ int main(int argc, char *argv[])
 
 	limit = (u32)cfg_int(&s_cfg, "frames", 0);
 	for (;;) {
-		u32 t0 = timer_cycles(), t1, t2;
+		u32 t0 = timer_cycles(), t1, t2, tsim, tobj, tp, tw1, tw2;
 		fly_input in;
 		unsigned down = pad_poll(&in);
 
@@ -580,12 +680,23 @@ int main(int argc, char *argv[])
 					if (s_game.dead_ticks > 90) printf("[game] dead for 3 s at %.1f %.1f %.1f (bsp %d, hp %.0f/%.0f): reverting\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_game.vitals.health, (double)s_game.vitals.shield);
 					if (do_revert()) { gin.held = gin.pressed = 0; } else s_game.dead_ticks = 0;
 				}
+				if (!vitals_dead(&s_game.vitals) && !s_game.player.on_ground && s_game.player.pos[2] < s_world.bsp.bounds[2] - FALL_KILL_MARGIN) {
+					/* out of the world (ADR-062): the loaded BSP has no floor down here, and with no cluster around the camera the renderer draws everything in view */
+					printf("[game] fell out of the world at %.1f %.1f %.1f (bsp %d, floor of the map %.1f): killed\n", (double)s_game.player.pos[0], (double)s_game.player.pos[1], (double)s_game.player.pos[2], s_world.bsp_index, (double)s_world.bsp.bounds[2]);
+					vitals_damage(&s_game.vitals, 1.0e6f, 1.0f, 1.0f, 1.0f);
+				}
 				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
-				if (mapp_active()) { mapp_tick(&gin); serve_mission(); } else game_tick(&s_game, &gin);
+				tp = timer_cycles();
+				if (mapp_active()) { mapp_tick(&gin); p2_add(P2_MAPP, tp); tp = timer_cycles(); serve_mission(); p2_add(P2_SERVE, tp); } else { game_tick(&s_game, &gin); p2_add(P2_MAPP, tp); }
+				tp = timer_cycles();
 				check_bsp_switch();
 				s_tick++;
 				s_hudr.tick = s_tick;
+				p2_add(P2_BSPSW, tp);
+				tp = timer_cycles();
 				if (s_stream_on) stream_ee_tick(&s_see);
+				p2_add(P2_STREAM, tp);
+				tp = timer_cycles();
 				if (s_fx.def) {
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -614,12 +725,16 @@ int main(int argc, char *argv[])
 						const fx_dynlight *dl;
 						unsigned dn = fx_dynamic_lights(&s_fx, &dl), di, dq;
 						for (di = 0; di < dn && di < 16; di++) { for (dq = 0; dq < 3; dq++) { rows[di][dq] = dl[di].pos[dq]; rows[di][3 + dq] = dl[di].rgb[dq]; } rows[di][6] = dl[di].radius; }
-						bsp_render_set_dynamic_lights((const float (*)[7])rows, dn < 8 ? dn : 8);
+						bsp_render_set_dynamic_lights((const float (*)[7])rows, cfg_int(&s_cfg, "dynlights", 1) ? (dn < 8 ? dn : 8) : 0u);       /* cfg dynlights 0: debug, the BSP takes none */
 					}
 					s_fx.cam[0] = s_cam.pos[0]; s_fx.cam[1] = s_cam.pos[1]; s_fx.cam[2] = s_cam.pos[2];
 					fx_tick(&s_fx);
 				}
+				p2_add(P2_FX, tp);
+				tp = timer_cycles();
 				if (s_ga.snd) { camera_t ac; game_camera(&s_game, &ac); gameaudio_events(&s_ga, &s_game, &ac); }
+				p2_add(P2_AUDIO, tp);
+				tp = timer_cycles();
 				{
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -643,6 +758,7 @@ int main(int argc, char *argv[])
 						}
 					}
 				}
+				p2_add(P2_HUD, tp);
 				if (cfg_int(&s_cfg, "gamelog", 0)) {
 					unsigned ei, ec;
 					const game_event_t *ev = game_events(&s_game, &ec);
@@ -693,12 +809,25 @@ int main(int argc, char *argv[])
 						scen_def d;
 						if (ob->model < 0 || dx * dx + dy * dy + dz * dz > (float)cfg_int(&s_cfg, "nearrad", 10) * (float)cfg_int(&s_cfg, "nearrad", 10)) continue;
 						d = scen_get_def(s_objr.world.scen, (uint32_t)ob->def);
-						printf("[near] #%u %s type %u model %d graph %d anim %u frame %.1f flags %02x at %.2f %.2f %.2f (d %.2f)\n", oi, d.name, ob->type, ob->model, ob->graph, (unsigned)ob->anim, (double)ob->frame, ob->flags,
+						printf("[near] #%u %s type %u model %d graph %d anim %u \"%s\" frame %.1f flags %02x perm %u/%u/%u/%u at %.2f %.2f %.2f (d %.2f)\n", oi, d.name, ob->type, ob->model, ob->graph, (unsigned)ob->anim,
+						       						       object_anim_label(ob),
+						       (double)ob->frame, ob->flags, (unsigned)ob->perm[0], (unsigned)ob->perm[1], (unsigned)ob->perm[2], (unsigned)ob->perm[3],
 						       (double)ob->pos[0], (double)ob->pos[1], (double)ob->pos[2], (double)sqrtf(dx * dx + dy * dy + dz * dz));
+						{                                                   /* where it lands on the screen (0..1 from the left, from the top), to name an object in a frame */
+							float cyw = cosf(cp.yaw), syw = sinf(cp.yaw), cpt = cosf(cp.pitch), spt = sinf(cp.pitch);
+							float fwd = dx * cyw * cpt + dy * syw * cpt + dz * spt, lft = -dx * syw + dy * cyw, up = -dx * cyw * spt - dy * syw * spt + dz * cpt;
+							if (fwd > 0.05f) {
+								float th = tanf(cp.fov * 0.5f);
+								printf("[near]    screen x %.2f y %.2f (depth %.2f)\n", (double)(0.5f - 0.5f * lft / fwd / th), (double)(0.5f - 0.5f * up / fwd / th), (double)fwd);
+							}
+						}
+						if (cfg_int(&s_cfg, "nearaxes", 0))
+							printf("[near]    root fwd %.2f %.2f %.2f  left %.2f %.2f %.2f  up %.2f %.2f %.2f\n", (double)ob->root.m[0][0], (double)ob->root.m[0][1], (double)ob->root.m[0][2],
+							       (double)ob->root.m[1][0], (double)ob->root.m[1][1], (double)ob->root.m[1][2], (double)ob->root.m[2][0], (double)ob->root.m[2][1], (double)ob->root.m[2][2]);
 						if (cfg_int(&s_cfg, "nearnodes", 0) && ob->type == 1) {
 							static object_nodes_t nn;
 							unsigned ni, nc = objects_pose(ob, &s_objr.world, &nn);
-							for (ni = 0; ni < nc && ni < 12; ni++) printf("[near]    node %u world %.2f %.2f %.2f\n", ni, (double)nn.world[ni].m[3][0], (double)nn.world[ni].m[3][1], (double)nn.world[ni].m[3][2]);
+							for (ni = 0; ni < nc && ni < 40; ni++) printf("[near]    node %u world %.2f %.2f %.2f\n", ni, (double)nn.world[ni].m[3][0], (double)nn.world[ni].m[3][1], (double)nn.world[ni].m[3][2]);
 						}
 					}
 				}
@@ -706,6 +835,32 @@ int main(int argc, char *argv[])
 					printf("[game] t=%us pos %.1f %.1f %.1f hp %.0f sh %.0f shots %u proj %u hits %u kills %u\n", s_tick / 30, s_game.player.pos[0], s_game.player.pos[1],
 					       s_game.player.pos[2], s_game.vitals.health, s_game.vitals.shield, (unsigned)s_game.st_shots, (unsigned)s_game.st_projectiles,
 					       (unsigned)s_game.st_hits, (unsigned)s_game.st_kills);
+			}
+			{                                                  /* debug (cfg forceanim "object anim frame"): pose one object with this animation of its own graph every frame, to compare a candidate with the Xbox video */
+				float fa[3];
+				if (s_have_objects && cfg_floats(&s_cfg, "forceanim", fa, 3) == 3 && fa[0] >= 0.0f && (unsigned)fa[0] < s_objects.count) {
+					object_t *fo = &s_objects.obj[(unsigned)fa[0]];
+					fo->anim = (uint16_t)fa[1]; fo->frame = fa[2]; fo->flags |= OBJ_F_ANIMATED;
+				}
+			}
+			if (s_have_objects && (s_tick % 30) == 0 && cfg_int(&s_cfg, "trackperm", -1) >= 0) {   /* debug (cfg trackperm N): every 30 ticks, the live objects whose first region's permutation is N (Sergeant Johnson: 1 on the marine model) */
+				unsigned ti;
+				for (ti = 0; ti < s_objects.count; ti++) {
+					const object_t *to = &s_objects.obj[ti];
+					if (to->model < 0 || (to->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)) || (int)to->perm[0] != (int)cfg_int(&s_cfg, "trackperm", -1) || to->type != 1) continue;
+					printf("[track] t%u #%u at %.2f %.2f %.2f yaw %.2f anim %u frame %.1f flags %02x\n", (unsigned)s_tick, ti, (double)to->pos[0], (double)to->pos[1], (double)to->pos[2], (double)atan2f(to->root.m[0][1], to->root.m[0][0]), (unsigned)to->anim, (double)to->frame, to->flags);
+				}
+			}
+			{                                                  /* debug (cfg forcemodel "model anim frame"): pose every object of this model with that animation of its graph every frame (compare candidates for a whole crowd) */
+				float fm[3];
+				if (s_have_objects && cfg_floats(&s_cfg, "forcemodel", fm, 3) == 3 && fm[0] >= 0.0f) {
+					unsigned fi;
+					for (fi = 0; fi < s_objects.count; fi++) {
+						object_t *fo = &s_objects.obj[fi];
+						if (fo->model != (int)fm[0] || (fo->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)) || fo->graph < 0) continue;
+						fo->anim = (uint16_t)fm[1]; fo->frame = fm[2]; fo->flags |= OBJ_F_ANIMATED;
+					}
+				}
 			}
 			if (s_have_objects && cfg_int(&s_cfg, "hideobj", -1) >= 0 && (unsigned)cfg_int(&s_cfg, "hideobj", -1) < s_objects.count)       /* debug: never draw this object */
 				s_objects.obj[cfg_int(&s_cfg, "hideobj", -1)].flags |= OBJ_F_HIDDEN;
@@ -720,6 +875,8 @@ int main(int argc, char *argv[])
 					cine_pose cp = cine_cam_pose(&cs->cam);
 					cine_pose_to_camera(&cp, &s_cam);
 					s_cam.pitch += (float)cfg_int(&s_cfg, "campitch", 0) * 0.01745329f;                  /* debug */
+					{ float cl[5]; if (cfg_floats(&s_cfg, "camlock", cl, 5) == 5) {      /* debug (cfg camlock x y z yaw pitch, degrees): the cinematic camera stays where this says, to look at a scene from outside the shot */
+						s_cam.pos[0] = cl[0]; s_cam.pos[1] = cl[1]; s_cam.pos[2] = cl[2]; s_cam.yaw = cl[3] * 0.01745329f; s_cam.pitch = cl[4] * 0.01745329f; s_cam.roll = 0.0f; } }
 					{ int cperm = (int)cfg_int(&s_cfg, "camperm", 0);                       /* debug: try other angle conventions for cutscene cameras */
 					  if (cperm) { float y = s_cam.yaw, pi = s_cam.pitch, ro = s_cam.roll;
 						if (cperm & 4) { float t = pi; pi = ro; ro = t; }
@@ -733,6 +890,7 @@ int main(int argc, char *argv[])
 		} else if (s_path.count) campath_eval(&s_path, (float)frame * (float)s_vblanks * VBLANK_S, &s_cam);
 		else flycam_update(&s_cam, &in, (float)s_vblanks * VBLANK_S);
 
+		tsim = timer_cycles();
 		if (s_have_objects) {
 			if ((s_vblanks == 2 || (frame & 1) == 0) && !s_paused) {         /* the 30 Hz tick: every frame at 30 fps, every other at 60 */
 				objects_tick(&s_objects, &s_objr.world);
@@ -740,7 +898,17 @@ int main(int argc, char *argv[])
 			}
 			fpview_place(&s_fp, &s_objr.world, &s_cam);
 		}
+		tobj = timer_cycles();
 		if ((frame % 6) == 0) profiler_overlay(&s_prof, &s_text);   /* a few updates a second: float formatting is slow */
+		{                                                  /* the player is in the air with no floor under them: out of the world, draw no world around that camera (ADR-062) */
+			int in_void = 0;
+			if (s_game_on && !s_game.player.on_ground && s_game.has_phys) {
+				phys_hit ph;
+				float dn[3] = { s_game.player.pos[0], s_game.player.pos[1], s_game.player.pos[2] - 80.0f };
+				in_void = !s_game.phys.ray(s_game.phys.user, s_game.player.pos, dn, &ph);
+			}
+			bsp_render_set_void_view(in_void);
+		}
 		{
 			camera_t rcam = s_cam;
 			if (mapp_active()) {                                       /* cinematic object lighting vs gameplay */
@@ -751,11 +919,17 @@ int main(int argc, char *argv[])
 				s_fxr.add_gain = cin ? s_cine_fxadd : 1.0f;
 				s_fxr.halo = cin ? s_cine_halo : 0.0f;
 			}
-			if (cfg_int(&s_cfg, "widescreen", 0) == 2) {              /* debug: the horizontal field of view kept (70 degrees across the 16:9 picture) */
-				rcam.aspect = 16.0f / 9.0f;
-			} else if (cfg_int(&s_cfg, "widescreen", 0)) {                 /* 1: 16:9 with the 4:3 vertical field of view kept (hfov 70 -> 86 degrees, anamorphic buffer). Off by default: measured against the Xbox video (ADR-073) the picture is the 4:3 render, hfov 70 */
-				rcam.hfov = 2.0f * atanf(tanf(s_cam.hfov * 0.5f) * ((16.0f / 9.0f) / s_cam.aspect));
-				rcam.aspect = 16.0f / 9.0f;
+			{                                                          /* cfg widescreen: 0 the Xbox's projection, 1 16:9 with the 4:3 vertical field of view kept, 2 the horizontal field of view kept across 16:9, 3 the old 4:3 buffer with the point's fov as the horizontal one */
+				int ws = (int)cfg_int(&s_cfg, "widescreen", 0);
+				if (ws == 0) {                                         /* XBE 0xbc260: the view's vertical tangent is 0.6375 tan(fov / 2) and 0x5c5e0 scales x by the window's 4:3 (544 x 408 of 640 x 480): the horizontal tangent is 0.85 tan(fov / 2) (62 degrees for a 70 degree point) */
+					rcam.hfov = 2.0f * atanf(0.85f * tanf(s_cam.hfov * 0.5f));
+					rcam.aspect = 4.0f / 3.0f;
+				} else if (ws == 2) {
+					rcam.aspect = 16.0f / 9.0f;
+				} else if (ws == 1) {
+					rcam.hfov = 2.0f * atanf(tanf(s_cam.hfov * 0.5f) * ((16.0f / 9.0f) / s_cam.aspect));
+					rcam.aspect = 16.0f / 9.0f;
+				}
 			}
 			if (s_have_objects && cfg_int(&s_cfg, "objlabel", 0)) {   /* debug: the index of every unit (type 1, 5, 2) at its projected position, to read colour-change picks off a frame */
 				float m[4][4];
@@ -776,23 +950,51 @@ int main(int argc, char *argv[])
 					text_batch_print(&s_text, sx, sy, 0xFFFF00, buf);
 				}
 			}
+			if (s_hires_open || s_bhires_open) hires_ring_begin_frame(&s_hring);
+			bsp_render_set_blur_target(s_video.fb[s_video.back ^ 1].address);     /* build overlaps the GS drawing the other buffer; the kick after the flip draws into this one */
 			bsp_render_build(frame, &rcam, &s_text);           /* overlaps the GS drawing frame-1 */
 		}
 		t1 = timer_cycles();
+		{                                                  /* `prof2 1`: where the EE prep time goes (sim tick / object animation / render build), averaged per 60 frames */
+			static float acc[3]; static unsigned n; static int on = -1;
+			if (on < 0) on = (int)cfg_int(&s_cfg, "prof2", 0);
+			if (on) {
+				acc[0] += timer_ms(t0, tsim); acc[1] += timer_ms(tsim, tobj); acc[2] += timer_ms(tobj, t1);
+				if (++n == 60) { {
+					unsigned z;
+					static const char *const zn[P2_N] = { "mapp", "serve", "bspsw", "stream", "fx", "audio", "hud" };
+					printf("[prof2] frame %u sim %.2f objects %.2f build %.2f ms; sim parts avg/peak:", (unsigned)frame, acc[0] / 60.0f, acc[1] / 60.0f, acc[2] / 60.0f);
+					for (z = 0; z < P2_N; z++) { printf(" %s %.2f/%.1f", zn[z], s_p2_ms[z] / 60.0f, s_p2_peak[z]); s_p2_ms[z] = s_p2_peak[z] = 0.0f; }
+					printf("\n");
+				}
+				acc[0] = acc[1] = acc[2] = 0.0f; n = 0; }
+			}
+		}
 		if (!s_gpu_idle) { bsp_render_wait_gpu(); video_wait_gpu(); }      /* FINISH seen: burning vsyncs below clears the flag */
 		s_gpu_idle = 0;
+		tw1 = timer_cycles();
 		{
 			/* Present exactly s_vblanks vblanks after the previous flip (30 fps: 2). flip() itself waits for the next
 			 * vsync; if the build finished before the vsync that is already (s_vblanks - 1) vblanks after the last
 			 * flip, burn the vsyncs that have not happened yet. A build that ran long just lands on a later vsync. */
-			int passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS), v;
-			for (v = passed; v < s_vblanks - 1; v++) { if (s_stream_on) stream_ee_pump(&s_see); graph_wait_vsync(); }
+			int passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS);
+			while (passed < s_vblanks - 1) {
+				int now_passed;
+				if (s_stream_on) stream_ee_pump(&s_see);
+				/* the pump takes time: when it ran across the vsync we were about to wait for, that vsync is gone and waiting for "the next" one would
+				 * burn a whole extra frame (ADR-063: this alone made every frame whose EE work ended within a pump of the vblank 3 vblanks long) */
+				now_passed = (int)(timer_ms(s_prof.last_flip, timer_cycles()) / VBLANK_MS);
+				if (now_passed > passed) { passed = now_passed; continue; }
+				graph_wait_vsync();
+				passed++;
+			}
 		}
+		tw2 = timer_cycles();
 		video_present(&s_video);                           /* vsync + display */
 		t2 = timer_cycles();
 
 		profiler_frame(&s_prof, timer_ms(t0, t1), timer_ms(t1, t2), bsp_render_stats(), t2);
-		if (frame > 0 && s_prof.last_interval > s_prof.drop_ms) printf("[prof] DROP frame %u interval %.1f ms (ee %.1f ms)\n", (unsigned)frame, s_prof.last_interval, timer_ms(t0, t1));
+		if (frame > 0 && s_prof.last_interval > s_prof.drop_ms) printf("[prof] DROP frame %u interval %.1f ms (ee %.1f ms; gpu wait %.1f, vsync burn %.1f, present %.1f)\n", (unsigned)frame, s_prof.last_interval, timer_ms(t0, t1), timer_ms(t1, tw1), timer_ms(tw1, tw2), timer_ms(tw2, t2));
 		if (s_have_objects) {
 			s_prof.obj_visible = s_objr.st_visible; s_prof.obj_culled = s_objr.st_culled;
 			s_prof.obj_batches = s_objr.st_batches; s_prof.obj_tris = s_objr.st_triangles; s_prof.lod_level = (unsigned)s_lod.level;
@@ -816,7 +1018,14 @@ int main(int argc, char *argv[])
 				       (unsigned)(s_arena.used / 1024), (unsigned)(s_arena.cap / 1024), (unsigned)(s_arena.high / 1024),
 				       (unsigned)rs->pages_free, (unsigned)bsp_render_cache_pages());
 			}
-			if (s_hires_open) printf("[hires] %u loads, %u KB read, %u refused (over the per frame budget)\n", (unsigned)s_hires.loads, (unsigned)(s_hires.bytes_read / 1024u), (unsigned)s_hires.refused);
+			if (s_hires_open || s_bhires_open) printf("[hires] %u loads, %u KB read, %u refused (budget / busy / no slot), %u failed, %u unclaimed\n", (unsigned)s_hring.loads, (unsigned)(s_hring.bytes_read / 1024u), (unsigned)s_hring.refused, (unsigned)s_hring.failed, (unsigned)s_hring.stale);
+			if (s_stream_on) {
+				const stream_stats *ss = stream_get_stats(&s_sp);
+				printf("[stream] %u plays, %u steals, %u finished, %u loop passes; %u reads %u KB, %u read errors; underruns voice %u (%u frames) output %u; ee ms avg %.2f max %.2f per service call\n",
+				       (unsigned)ss->plays, (unsigned)ss->steals, (unsigned)ss->finished, (unsigned)ss->loop_passes, (unsigned)ss->reads, (unsigned)(ss->read_bytes / 1024u),
+				       (unsigned)ss->read_errors, (unsigned)ss->voice_underruns, (unsigned)ss->voice_underrun_frames, (unsigned)ss->out_underruns,
+				       (double)(ss->service_calls ? ss->ms_sum / (float)ss->service_calls : 0.0f), (double)ss->ms_max);
+			}
 			printf("[done] frames=%u dropped=%u (%.2f%%)\n", s_prof.frames, s_prof.dropped,
 			       100.0f * (float)s_prof.dropped / (float)(s_prof.frames ? s_prof.frames : 1));
 			if (cfg_int(&s_cfg, "hold", 0)) {

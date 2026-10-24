@@ -420,6 +420,10 @@ def check_serialisation(objs: sc.ObjectSet) -> bytes:
     expect(lambda: sc.build(list(reversed(objs.defs)), [], objs.player, []))
     bad = sc.Placement(0, "scenery", 0, (0.0,) * 3, (0.0,) * 3, def_index=99)
     expect(lambda: sc.build(objs.defs, [bad], objs.player, []))
+    # the desired permutation of a biped (Sergeant Johnson: 100) survives the build and the parse; every other placement keeps 0
+    jp = sc.Placement(objs.defs[0].tag_id, "biped", 0, (0.0,) * 3, (0.0,) * 3, permutation=101)
+    jb = sc.parse_section(sc.build(objs.defs, [jp], objs.player, [[]]))
+    assert jb.placements[0]["permutation"] == 101 and all(q["permutation"] == 0 for q in sec.placements)
     expect(lambda: sc.build(objs.defs, [], objs.player, [[]] * 33))
     # strings are cut to fit and stay NUL terminated
     long = sc.Def(1, sc.SCENERY, "x" * 80)

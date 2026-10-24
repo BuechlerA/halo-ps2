@@ -142,7 +142,7 @@ void vis_run(vis_t *v, const bsp_section *s, const camera_t *cam, const frustum_
 			}
 		}
 		for (i = 0; i < s->cluster_count; i++) if (!win_empty(win(v, i))) add_cluster(v, i);
-	} else {
+	} else if (!v->skip_outside || cam_cluster >= 0) {
 		for (i = 0; i < s->cluster_count; i++) {
 			bsp_cluster cl = bsp_get_cluster(s, i);
 			if (frustum_aabb(fr, cl.bounds_min, cl.bounds_max)) {

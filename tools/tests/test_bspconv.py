@@ -283,7 +283,22 @@ def check_tags() -> None:
     hp2.build("t", [(bspconv.section_tag(i), b"x") for i in range(13)])
 
 
+def check_uv_world() -> None:
+    """The streamed texture variants' density value (+0x10 of a material record): world units per uv unit, sqrt(world area / uv area); 0 for a material without uv area."""
+    quad = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0), (2.0, 2.0, 0.0)]
+    uv = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
+    m = bspconv.Material(1, 0, quad, uv, [(0, 0)] * 4, [(0, 1, 2), (1, 3, 2)])
+    assert abs(bspconv.uv_world(m) - 2.0) < 1e-6                                   # 4 world units^2 over 1 uv unit^2
+    big = bspconv.Material(1, 0, [(x * 3, y * 3, z * 3) for x, y, z in quad], uv, [(0, 0)] * 4, [(0, 1, 2), (1, 3, 2)])
+    assert abs(bspconv.uv_world(big) - 6.0) < 1e-5
+    assert bspconv.uv_world(bspconv.Material(1, 0, quad, [(0.0, 0.0)] * 4, [(0, 0)] * 4, [(0, 1, 2)])) == 0.0
+    assert bspconv.uv_world(bspconv.Material(1, 0, quad, uv, [(0, 0)] * 4, [])) == 0.0
+    sec = bspconv.parse_section(bspconv.build_section([m, big], (0, 0, 0, 6, 6, 0)))
+    assert abs(sec.materials[0]["uv_world"] - 2.0) < 1e-6 and abs(sec.materials[1]["uv_world"] - 6.0) < 1e-5
+
+
 def main() -> None:
+    check_uv_world()
     check_tags()
     blob = check_world()
     check_chunking_and_colour_hook()

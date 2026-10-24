@@ -80,7 +80,11 @@ typedef struct {
 	int16_t   base_graph;                   /* the unit's own ANIM graph index */
 	int16_t   anim_cur;                     /* animation index of the base animation being played, -1 none */
 	uint8_t   grenade_type;                 /* current grenade type, 0 frag 1 plasma */
-	uint8_t   posture;                      /* 0 stand 1 crouch (animation block) */
+	uint8_t   posture;                      /* the animation block: 0 stand, 1 crouch, 2 alert (an unarmed non-player unit: the Xbox shows the captain and the crew walking and standing with their hands behind their backs, the `alert unarmed` animations, ADR-080) */
+	uint8_t   alert_state;                  /* 0 not looked up, 1 the graph has an `alert` block, 2 it has none */
+	uint8_t   mv_have;                      /* mv_base holds the biped tag's speeds (the unit has adopted its move animations' ground speeds at least once) */
+	uint32_t  mv_key;                       /* posture / weapon / graph the speeds in pp were taken for */
+	float     mv_base[5];                   /* the speeds of the biped tag (run, back, strafe, crouch, walk): what pp falls back to when a move animation has no root motion */
 	uint8_t   move_dir;                     /* 0 front 1 back 2 left 3 right (sticky) */
 	uint8_t   settle;                       /* ticks since the physics last ran on a settled unit */
 	uint8_t   air;                          /* ticks without ground under the feet */
@@ -91,6 +95,7 @@ typedef struct {
 #define UF_HIDE_BODY 4u      /* the player's own body in first person */
 #define UF_PLAYER 8u         /* the player's body object */
 #define UF_NO_DROP 16u       /* does not drop its weapon when it dies */
+#define UF_ALERT 32u         /* a script put the unit in its alert posture (`unit_set_seat unit "alert"`): it stands in the graph's `alert` block, armed or not (ADR-083) */
 
 /* what happened in the last units_tick, for sound, muzzle flashes and the AI's hearing (the game's own event list is cleared by game_tick, which
  * runs after units_tick): shots, reloads, blows, grenades, deaths, flinches and landings. */
@@ -110,6 +115,9 @@ typedef struct {
 	unsigned count;                          /* high-water mark of u[] */
 	uint32_t spawned, died;                  /* statistics */
 	float    lod_distance;                   /* wu from the player beyond which a unit's body is integrated every other tick (0 = never; set by the host) */
+	uint8_t  lod_cine;                       /* host: allow lod_all during cinematics (the mission sets lod_all from the cinematic flag) */
+	uint8_t  tag_speeds;                     /* debug (cfg unitspeeds 1): units keep the speeds of their biped tag instead of the ground speed of the move animation they play (ADR-083) */
+	uint8_t  lod_all;                        /* every unit's body is integrated every other tick (a cinematic: the mission sets it from the cinematic flag) */
 	unsigned ev_count;                       /* events of the last units_tick (dropped beyond UNIT_EVENTS) */
 	unit_event_t ev[UNIT_EVENTS];
 } units_t;
@@ -130,6 +138,8 @@ int  units_apply_variant(units_t *s, game_t *g, int unit, const aidef_variant_de
  * game_fire_projectile, update animation (object anim/frame), handle death (death animation, weapon drop), flinch on damage.
  * Call it BEFORE game_tick (the hit events of the previous game tick give the direction of a hit) and keep objects_tick after it. */
 void units_tick(units_t *s, game_t *g);
+/* Body integrations (capsule sweeps) run by units_tick since the last call; resets the count. For the mission log. */
+unsigned units_take_sweeps(void);
 void units_set_control(units_t *s, int unit, const unit_control_t *c);
 /* Kills / damages through the game's vitals so the usual events fire; returns damage dealt. */
 float units_damage(units_t *s, game_t *g, int unit, float amount);
@@ -137,6 +147,9 @@ void  units_kill(units_t *s, game_t *g, int unit, int silent);
 int   units_alive(const units_t *s, const game_t *g, int unit);
 /* Teleports a unit (and its object) without physics. */
 void units_teleport(units_t *s, game_t *g, int unit, const float pos[3], float yaw);
+/* Holds a unit at `pos` every tick (a script's unit_suspended, an object carried by an attachment): like units_teleport but it keeps the unit on the ground and its settle count, so the body
+ * is not swept every tick; call it every tick. */
+void units_pin(units_t *s, game_t *g, int unit, const float pos[3], float yaw);
 /* Gives a weapon (tag id) to a unit; resets the weapon state. */
 void units_give_weapon(units_t *s, game_t *g, int unit, uint32_t weapon_tag);
 /* Eye / aim origin of a unit and its current aim direction. */

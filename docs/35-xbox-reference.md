@@ -37,3 +37,9 @@ check: `Created QEMU launch parameters` must contain `-bios`.
   matching the camera in the engine to a screenshot taken in xemu (`scripts/campos.py` already derives positions from the Xbox data).
 - xemu's `Machine > Take Screenshot` gives lossless PNGs; `scripts/refrender.py` stays the independent reference renderer for CPU-side checks.
 - Frame times from xemu are not Xbox timings; use it for picture parity only.
+
+## What xemu cannot be used for (2026-10-23)
+`xemu` accepts `-qmp tcp:127.0.0.1:4444,server=on,wait=off` (QMP: `send-key` with qcodes works, `pmemsave` dumps guest RAM, there is no `screendump`; the window is captured with
+`screencapture -l <id>`), but the main menu did not take the A button reliably (the attract loop restarted instead of the campaign) and the intro is 4 minutes in. Do not spend time driving it: the
+executable itself is the ground truth, read with `tools/xbe` (docs/36) and run under an emulator (`tools/xbe/observer_oracle.py`). The reference video is an approximation (it is not necessarily a
+4:3 Xbox capture): where it disagrees with the executable, the executable wins (ADR-084).

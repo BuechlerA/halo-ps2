@@ -37,6 +37,7 @@ typedef struct {
 	uint32_t       model_count, part_count, batch_count;
 	const uint8_t *models, *parts, *batches, *vif, *nodes, *markers, *ranges;
 	size_t         vif_size;
+	uint32_t       generation;                  /* counts model_open calls: caches keyed on a section (the bind-pose inverses) drop when it is reopened */
 } model_section;
 
 typedef struct {
@@ -100,6 +101,13 @@ void         model_perm_name(const model_section *s, const model_info *m, uint32
  * region the permutation whose name equals the variant, else the first one. out[region_count] = flat
  * permutation index. Documented in docs/11-model-section.md. */
 void         model_select_permutations(const model_section *s, const model_info *m, const char *variant, uint16_t *out);
+/* Permutations by number (docs/13): a permutation's name may end in "-<number>" (`sgt_johnson-100`, `head_charles_helmet-10`, `head_marcus_cap-101`, `damaged torso-102`).
+ * Per region: with `desired` != 0 the permutation whose number matches, if the region has one; otherwise a deterministic pick (from `seed`) among the permutations numbered
+ * 1 .. 99 (the random pool: the marines' and the crew's heads 10 .. 14); a region without such permutations takes its first (`__base`). Numbers from 100 up are only ever
+ * chosen by a matching `desired`. */
+void         model_select_variant(const model_section *s, const model_info *m, unsigned desired, uint32_t seed, uint16_t *out);
+/* The number a name ends in ("head_matt_helmet-12" -> 12), 0 when it has none. */
+unsigned     model_name_number(const char *name);
 model_part   model_get_part(const model_section *s, uint32_t part_index);
 model_batch  model_get_batch(const model_section *s, uint32_t batch_index);
 const uint8_t *model_batch_vif(const model_section *s, const model_batch *b);

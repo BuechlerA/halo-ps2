@@ -154,6 +154,8 @@ void bsp_render_options(render_options_t *o)
 }
 
 void bsp_render_set_options(const render_options_t *o) { s_opt = *o; }
+static int s_void_view;
+void bsp_render_set_void_view(int on) { s_void_view = on; }
 
 int bsp_render_init(const video_t *v)
 {
@@ -592,20 +594,23 @@ static void gather_clipped(const camera_t *cam, const float clip[4][4])
 }
 
 /* Group the clipped polygons by `key` (material or lightmap page). Fills s_cgroup_start/count. */
+/* A material that is blended or alpha tested takes no lightmap multiply: the multiply has no alpha test of its own, so over a grating it darkened the holes as well (the first gameplay view of a10 had a black floor patch where the Xbox shows a lit metal grating); such surfaces keep their vertex lighting. */
+#define LM_SKIP(flags) (((flags) & (MAT_BLEND | MAT_ALPHA_TEST)) != 0)
+
 static void group_clipped(int by_page)
 {
 	u32 keys = by_page ? s_page_slots : s_bsp->material_count, i, pos = 0;
 	memset(s_cgroup_count, 0, 4u * (keys + 1));
 	for (i = 0; i < s_cpoly_count; i++) {
 		u32 k = by_page ? s_cpoly[i].page : s_cpoly[i].material;
-		if (by_page && (s_cpoly[i].page == BSP_NO_LIGHTMAP || (s_bind[s_cpoly[i].material].flags & MAT_BLEND))) continue;
+		if (by_page && (s_cpoly[i].page == BSP_NO_LIGHTMAP || LM_SKIP(s_bind[s_cpoly[i].material].flags))) continue;
 		s_cgroup_count[k]++;
 	}
 	for (i = 0; i < keys; i++) { s_cgroup_start[i] = pos; pos += s_cgroup_count[i]; }
 	for (i = 0; i < keys; i++) s_cgroup_count[i] = 0;
 	for (i = 0; i < s_cpoly_count; i++) {
 		u32 k = by_page ? s_cpoly[i].page : s_cpoly[i].material;
-		if (by_page && (s_cpoly[i].page == BSP_NO_LIGHTMAP || (s_bind[s_cpoly[i].material].flags & MAT_BLEND))) continue;
+		if (by_page && (s_cpoly[i].page == BSP_NO_LIGHTMAP || LM_SKIP(s_bind[s_cpoly[i].material].flags))) continue;
 		s_cpoly_sorted[s_cgroup_start[k] + s_cgroup_count[k]++] = (u16)i;
 	}
 }
@@ -643,6 +648,59 @@ static void emit_clipped(chain_t *c, u32 key, int pass, u64 prim, const clip_gs 
 	}
 }
 
+/* ---- streamed high resolution BSP textures (docs/37) --------------------------------------------------------------------------------------------- */
+#define BHIRES_RETRY 90u              /* a variant whose upload failed (no room in the GS texture cache) is not requested again for this many frames */
+#define BHIRES_RETRY_MAX 512u
+static hires_t *s_bhires;
+static unsigned s_bhires_key;
+static float    s_bhires_ratio = 0.7f;
+static u32      s_bhires_retry[BHIRES_RETRY_MAX];
+static u32      s_bhires_frame;
+
+void bsp_render_set_hires(hires_t *h, unsigned key_base, float want_ratio)
+{
+	s_bhires = h; s_bhires_key = key_base; s_bhires_ratio = want_ratio > 0.0f ? want_ratio : 0.7f;
+}
+
+/* How badly does material `m` want the sharper texture: 0 not (yet), 1 now, 2 start the read, draw the resident one. The test is texel density: the nearest visible batch of
+ * the material (distance to its bounding sphere) puts `kpx / d` pixels on a world unit, the material has `texture size x tiling / uv_world` texels on it. */
+static int bhires_want(u32 m, const bsp_material *bm, const mat_binding_t *mb, const tex_image_t *img, const float *cam_pos, float kpx)
+{
+	float nearest = 1.0e30f, texels, ratio;
+	u32 k;
+	if (bm->uv_world <= 0.0f) return 0;
+	for (k = 0; k < s_mat_count[m]; k++) {
+		bsp_batch b = bsp_get_batch(s_bsp, s_sorted[s_mat_start[m] + k]);
+		float dx = b.centre[0] - cam_pos[0], dy = b.centre[1] - cam_pos[1], dz = b.centre[2] - cam_pos[2];
+		float d = sqrtf(dx * dx + dy * dy + dz * dz) - b.radius;
+		if (d < nearest) nearest = d;
+	}
+	if (nearest < 0.05f) nearest = 0.05f;
+	texels = sqrtf((float)img->w * (float)img->h * mb->uv_scale[0] * mb->uv_scale[1]) / bm->uv_world;     /* texels per world unit */
+	ratio = kpx / nearest / (texels > 1.0e-6f ? texels : 1.0e-6f);                                         /* screen pixels per texel */
+	return ratio >= s_bhires_ratio ? 1 : ratio >= 0.5f * s_bhires_ratio ? 2 : 0;
+}
+
+/* GS TEX0 of the variant of base texture `tex` when it has arrived and fits the texture cache, else 0 (the caller keeps the resident texture). */
+static u64 bhires_tex0(int tex, int want)
+{
+	hires_view v;
+	tex_image_t im;
+	int was;
+	u64 t0;
+	if (!s_bhires || tex < 0 || hires_info(s_bhires, (unsigned)tex, &v) != 0) return 0;
+	was = tc_find(&s_tc, s_bhires_key + (unsigned)tex) != NULL;
+	if (!was) {
+		if ((unsigned)tex < BHIRES_RETRY_MAX && s_bhires_frame < s_bhires_retry[tex]) return 0;
+		if (hires_request(s_bhires, (unsigned)tex, &v) != 0) return 0;                    /* on its way: asynchronous */
+		SyncDCache((void *)v.clut, (u8 *)v.pixels + v.pixel_bytes);                        /* the DMA reads RAM, not the cache */
+	}
+	im.pixels = v.pixels; im.clut = v.clut; im.pixel_bytes = v.pixel_bytes; im.clut_bytes = v.clut_bytes; im.w = v.w; im.h = v.h; im.psm = v.psm;
+	t0 = resident_tex0(s_bhires_key + (unsigned)tex, &im, 0);
+	if (!t0 && !was && (unsigned)tex < BHIRES_RETRY_MAX) s_bhires_retry[tex] = s_bhires_frame + BHIRES_RETRY;
+	return want == 2 ? 0 : t0;
+}
+
 void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overlay)
 {
 	u32 t0 = timer_cycles(), t1;
@@ -655,6 +713,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 	gs_ad ad[8];
 	clip_gs cgs;
 
+	s_bhires_frame++;
 	s_build ^= 1;
 	c = &s_chain[s_build];
 	chain_init(c, s_chain_mem[s_build], CHAIN_QW);
@@ -672,6 +731,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		s_horizon_y = hy < 0.0f ? 0 : hy > (float)VIDEO_HEIGHT ? VIDEO_HEIGHT : (int)hy;
 	}
 	s_vis.force_all = (s_opt.debug & 64) != 0;
+	s_vis.skip_outside = s_void_view;
 	vis_run(&s_vis, s_bsp, cam, &fr, clip);
 	dl_apply();
 	if (s_opt.only_batch >= 0) {
@@ -725,7 +785,13 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		int blend = (mb->flags & MAT_BLEND) != 0, atest = (mb->flags & MAT_ALPHA_TEST) != 0;
 		if (s_opt.textures && mb->tex >= 0) {
 			tex_image_t img;
-			if (s_src.texture && s_src.texture(s_src.user, mb->tex, &img) == 0) tex0 = resident_tex0((unsigned)mb->tex, &img, 0);
+			if (s_src.texture && s_src.texture(s_src.user, mb->tex, &img) == 0) {
+				tex0 = resident_tex0((unsigned)mb->tex, &img, 0);
+				if (tex0 && s_bhires) {
+					int want = bhires_want(m, &bm, mb, &img, cam->pos, 256.0f / tanf(cam->hfov * 0.5f));
+					if (want) { u64 hi = bhires_tex0(mb->tex, want); if (hi) tex0 = hi; }
+				}
+			}
 		}
 		if (tex0) {
 			ad[n].data = tex0;                     ad[n++].addr = GS_A_TEX0_1;
@@ -755,7 +821,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		for (i = 0; i < nused; i++) {
 			unsigned m = s_used[i];
 			bsp_material bm = bsp_get_material(s_bsp, m);
-			if (bm.lightmap_page != BSP_NO_LIGHTMAP && !(s_bind[m].flags & MAT_BLEND)) s_page_count[bm.lightmap_page] += s_mat_count[m];
+			if (bm.lightmap_page != BSP_NO_LIGHTMAP && !LM_SKIP(s_bind[m].flags)) s_page_count[bm.lightmap_page] += s_mat_count[m];
 		}
 		for (p = 0, pos = 0; p < np; p++) { s_page_start[p] = s_page_cursor[p] = pos; pos += s_page_count[p]; }
 		group_clipped(1);
@@ -763,7 +829,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 			unsigned m = s_used[i];
 			bsp_material bm = bsp_get_material(s_bsp, m);
 			u32 k;
-			if (bm.lightmap_page == BSP_NO_LIGHTMAP || (s_bind[m].flags & MAT_BLEND)) continue;
+			if (bm.lightmap_page == BSP_NO_LIGHTMAP || LM_SKIP(s_bind[m].flags)) continue;
 			for (k = 0; k < s_mat_count[m]; k++) s_sorted2[s_page_cursor[bm.lightmap_page]++] = s_sorted[s_mat_start[m] + k];
 		}
 		for (p = 0; p < np; p++) {
@@ -782,6 +848,35 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 			emit_batches(c, s_sorted2 + s_page_start[p], s_page_count[p], entry_lm);
 			emit_clipped(c, p, 1, GS_PRIM(GSX_PRIM_TRIANGLE, 1, 1, 0, 1, 0, 0, 0, 0), &cgs);
 			if ((p & 7) == 7) bsp_render_poll();
+		}
+	}
+
+	/* pass 3: self illumination (ADR-079): a material whose binding carries a glow texture (the senv self illumination map: the bridge's screens, lamps, the Pillar's
+	 * windows) is drawn again, additive (Cs + Cd), Z tested and read only, after the lightmap so the glow is not dimmed by it */
+	if (s_opt.glow && s_opt.textures && s_src.texture) {
+		int regrouped = 0;
+		for (i = 0; i < nused; i++) {
+			unsigned m = s_used[i], n = 0;
+			bsp_material bm = bsp_get_material(s_bsp, m);
+			const mat_binding_t *mb = &s_bind[m];
+			tex_image_t img;
+			u64 tex0;
+			float scale = 1.0f / (float)(1u << bm.uv_shift);
+			if (mb->tex2 < 0 || mb->cc || (mb->flags & MAT_BLEND)) continue;
+			if (s_src.texture(s_src.user, mb->tex2, &img) != 0) continue;
+			tex0 = resident_tex0((unsigned)mb->tex2, &img, 0);
+			if (!tex0) continue;
+			if (!regrouped) { group_clipped(0); regrouped = 1; }       /* the lightmap pass grouped the clipped polygons by page */
+			ad[n].data = tex0;                             ad[n++].addr = GS_A_TEX0_1;
+			ad[n].data = GS_TEX1(1, 0, 1, 1, 0, 0, 0);     ad[n++].addr = GS_A_TEX1_1;
+			ad[n].data = GS_CLAMP(0, 0, 0, 0, 0, 0);       ad[n++].addr = GS_A_CLAMP_1;
+			ad[n].data = GS_ALPHA(0, 2, 2, 1, 0x80);       ad[n++].addr = GS_A_ALPHA_1;
+			ad[n].data = GS_TEST(0, 1, 0, 0, 0, 0, 1, 2);  ad[n++].addr = GS_A_TEST_1;
+			ad[n].data = GS_ZBUF(s_zbuf_page, GS_PSMZ24, 1); ad[n++].addr = GS_A_ZBUF_1;
+			emit_state(c, ad, n, scale * mb->uv_scale[0], scale * mb->uv_scale[1], GS_PRIM(GSX_PRIM_TRIANGLE, 1, 1, 0, 1, 0, 0, 0, 0));
+			if (!(s_opt.debug & 1)) emit_batches(c, s_sorted + s_mat_start[m], s_mat_count[m], entry_lit);
+			emit_clipped(c, m, 0, GS_PRIM(GSX_PRIM_TRIANGLE, 1, 1, 0, 1, 0, 0, 0, 0), &cgs);
+			if ((i & 31) == 31) bsp_render_poll();
 		}
 	}
 
@@ -885,6 +980,9 @@ u64  rb_take_pending(void) { return take_pending(); }
 void rb_set_pending(u64 pair) { s_pending = pair; }
 u32  rb_model_entry(void) { return entry_addr(&VU1Model_Entry); }
 const u32 *rb_zbuf_page_ptr(void) { return &s_zbuf_page; }
+static u32 s_blur_target;
+void bsp_render_set_blur_target(u32 fb_word_address) { s_blur_target = fb_word_address; }
+u32 rb_blur_target(void) { return s_blur_target; }
 
 void rb_fog_params(float *k, float *b)
 {
@@ -929,6 +1027,16 @@ int rb_extra_resident(unsigned key_base, unsigned index)
 u64 rb_extra_tex0(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx)
 {
 	return resident_tex0(key_base + index, img, tfx);
+}
+
+/* The same, for a texture that must never be evicted (the HUD font): allocated pinned, so ask for it early in a frame / right after a flush, while a free run exists. */
+u64 rb_extra_tex0_pinned(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx)
+{
+	u64 r;
+	s_tc.pin_next = 1;
+	r = resident_tex0(key_base + index, img, tfx);
+	s_tc.pin_next = 0;
+	return r;
 }
 
 void bsp_render_set_overlay_pass(render_pass_fn fn, void *user)

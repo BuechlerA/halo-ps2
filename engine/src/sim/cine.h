@@ -97,10 +97,13 @@ typedef struct {
 	cine_pose rel_cur;               /* the same in the transition's space (relative to the anchor for a relative camera) */
 	cine_pose player;                /* the player camera pose, kept up to date by the host (start of a transition) */
 	cine_frame anchor;
-	cine_pose hist[3];               /* the last three evaluated poses (newest first) in the transition's space: the retarget velocity and acceleration */
-	uint8_t   hist_n, hist_rel;      /* how many are valid; whether they are relative to the anchor */
-	float     coef[7][3];            /* quintic coefficients (s^3, s^4, s^5) of the position, orientation vector and field of view offsets */
-	float     qt[4];                 /* target orientation */
+	/* Halo's observer (XBE 0x11dd30): the state it keeps between updates, in the transition's space. The camera_set pass and every tick run obs_update. */
+	uint8_t   os_valid, os_rel;      /* the state holds a pose; whether it is in the anchor's space */
+	float     os_pos[3], os_fov;     /* position and field of view (the channels the scripted camera moves) */
+	float     os_fwd[3], os_up[3];   /* orientation as forward and up vectors (the observer's state; rotated by a rotation vector each update) */
+	float     os_v[7], os_a[7];      /* d/dt and d2/dt2 of the offset from the target (remaining time t) at the next step: position 0..2, fov 3, rotation vector 4..6 (0x2715c4 / 0x2715fc) */
+	float     tgt_fwd[3], tgt_up[3]; /* the target orientation */
+	float     rem;                   /* seconds left of the running camera_set, counted down like the director does (0x120a90) */
 	float     near_clip;             /* cinematic_set_near_clip_distance, 0 = the engine's default */
 } cine_camera;
 
@@ -110,8 +113,8 @@ void cine_cam_set_player_pose(cine_camera *c, const cine_pose *p);
 /* camera_control on / off. On: the camera stays where it is (mode POSE holding the player's pose the first time); off: back to
  * the player camera. */
 void cine_cam_control(cine_camera *c, int on);
-/* camera_set: move to `to` in `ticks` ticks (0 = cut). Implies control on. The motion is Halo's observer: a quintic (minimum jerk) from the
- * current pose to `to`, started with the velocity and acceleration the camera had when it was retargeted (XBE 0x11cda0 / 0x11c500). */
+/* camera_set: move to `to` in `ticks` ticks (0 = cut). Implies control on. The motion is Halo's observer, ported from the executable (XBE 0x11c500 .. 0x11cda0, ADR-084): a quintic from the
+ * current pose to `to`, refitted every tick with the velocity and acceleration the camera has at that instant, so a retarget in mid flight continues the motion. */
 void cine_cam_set(cine_camera *c, const cine_pose *to, uint32_t ticks, int ease);
 /* camera_set_relative: `rel` is in the frame of an object (x forward of `anchor`); the host refreshes the anchor every tick with
  * cine_cam_set_anchor. Yaw is added to the anchor yaw, the position rotated by it about z (the object's pitch and roll are
@@ -156,6 +159,10 @@ typedef struct {
 	uint32_t fade_ticks, fade_elapsed;
 	uint8_t  effect;                 /* cinematic_screen_effect_start / _stop: the hologram look of the briefing (hud_render draws a teal wash and scan bars) */
 	uint32_t effect_ticks;
+	uint8_t  filter;                 /* cinematic_screen_effect_set_filter was called: the veil of the tutorial's pod (a pale wash standing in for the Xbox's blur and desaturation) */
+	float    veil;                   /* 0 .. 1 its strength: lerp(filter_from, filter_to) over filter_ticks, advanced by misc_tick */
+	float    filter_from, filter_to;
+	uint32_t filter_ticks, filter_elapsed;
 } cine_screen;
 
 /* ---- 5. titles and messages ------------------------------------------------------------------------------------------ */

@@ -21,7 +21,7 @@ typedef struct {
 	float    gain;
 } sspec;
 
-typedef struct { uint32_t tag, start, loop, end, alt_loop; float gain, fade_in, fade_out; } lspec;
+typedef struct { uint32_t tag, start, loop, end, alt_loop; float gain, fade_in, fade_out; uint32_t flags; } lspec;
 
 typedef struct {
 	uint8_t *strm, *strd;
@@ -94,6 +94,7 @@ static int build_pack(mempack *mp, const sspec *st, int nst, const lspec *lp, in
 	for (l = 0; l < nlp; l++) {
 		uint8_t *rec = hdr + loops_off + (size_t)l * 64, *tr = hdr + tracks_off + (size_t)l * 48;
 		wr32le(rec, lp[l].tag);
+		wr32le(rec + 4, lp[l].flags);
 		wrf(rec + 8, 5.0f);
 		wr16le(rec + 12, 1);
 		wr32le(rec + 16, (uint32_t)l);
@@ -253,10 +254,12 @@ static const sspec k_streams[] = {
 #define LT_SEQ 0x2000u      /* start -> loop (+ alternate) -> end, gain 0.5, fade in 0.1 s, fade out 0.1 s */
 #define LT_MISMATCH 0x2001u /* mono start, stereo loop: the loop cannot join the voice's format */
 #define LT_LOOPONLY 0x2002u
+#define LT_ONCE 0x2003u     /* start -> loop, flagged "not a loop": the loop segment plays once and the voice ends */
 static const lspec k_loops[] = {
-	{ LT_SEQ,      T_START, T_LOOP, T_END, T_ALT, 0.5f, 0.1f, 0.1f },
-	{ LT_MISMATCH, T_START, T_STEREO_LOOP, STRM_NO_TAG, STRM_NO_TAG, 1.0f, 0.0f, 0.0f },
-	{ LT_LOOPONLY, STRM_NO_TAG, T_LOOP, STRM_NO_TAG, STRM_NO_TAG, 1.0f, 0.0f, 0.5f },
+	{ LT_SEQ,      T_START, T_LOOP, T_END, T_ALT, 0.5f, 0.1f, 0.1f, 0 },
+	{ LT_MISMATCH, T_START, T_STEREO_LOOP, STRM_NO_TAG, STRM_NO_TAG, 1.0f, 0.0f, 0.0f, 0 },
+	{ LT_LOOPONLY, STRM_NO_TAG, T_LOOP, STRM_NO_TAG, STRM_NO_TAG, 1.0f, 0.0f, 0.5f, 0 },
+	{ LT_ONCE,     T_START, T_LOOP, STRM_NO_TAG, STRM_NO_TAG, 1.0f, 0.0f, 0.0f, STRM_LOOP_NOT_A_LOOP },
 };
 #define NLP ((int)(sizeof k_loops / sizeof k_loops[0]))
 
@@ -446,6 +449,54 @@ static size_t run_len(const harness *h, size_t at)
 	while (a > 0 && h->out[2 * (a - 1)] == h->out[2 * at]) a--;
 	while (b + 1 < h->frames && h->out[2 * (b + 1)] == h->out[2 * at]) b++;
 	return b - a + 1;
+}
+
+/* ---- "not a loop" tracks and layered voices (a cinematic's score over its foley and a spoken line) ---------------------------------- */
+static int run_once_layers(void)
+{
+	mempack mp;
+	stream_player *p = NEW_PLAYER();
+	membe be;
+	harness h;
+	size_t k;
+	CHECK(build_pack(&mp, k_streams, NST, k_loops, NLP) == 0);
+	p->sec = &mp.sec;
+	be_init(&be, mp.strd, mp.strd_size, &mp.sec, 0);
+	h_init(&h, p, &be, 60000);
+
+	/* one voice: the start (640 frames, DC 1000) and the loop segment once (1280 frames, DC 5000), then it is over */
+	CHECK(stream_play_loop(p, STREAM_SLOT_MUSIC, LT_ONCE, 0, 1.0f, 0.0f, 0.0f) == 0);
+	CHECK(stream_slot_owner(p, STREAM_SLOT_MUSIC) == LT_ONCE && stream_slot_owner(p, STREAM_SLOT_LAYER0) == 0);
+	CHECK(stream_free_slot(p, STREAM_SLOT_MUSIC, 1) == -1 && stream_free_slot(p, STREAM_SLOT_LAYER0, STREAM_LAYERS) == STREAM_SLOT_LAYER0);
+	h_run(&h, 20);
+	for (k = 0; k < 640; k++) CHECK(h.out[2 * k] == 1000);
+	for (k = 640; k < 640 + 1280; k++) CHECK(h.out[2 * k] == 5000);
+	for (k = 640 + 1280; k < h.frames; k++) CHECK(h.out[2 * k] == 0);
+	CHECK(!stream_slot_busy(p, STREAM_SLOT_MUSIC) && p->stats.finished == 1 && p->stats.loop_passes == 0);
+	CHECK(stream_slot_owner(p, STREAM_SLOT_MUSIC) == 0);
+
+	/* two voices of the same track, started together on a kind slot and a layer: they add, each ends on its own, a stop reaches one only */
+	h.frames = 0;
+	CHECK(stream_play_loop(p, STREAM_SLOT_MUSIC, LT_ONCE, 0, 1.0f, 0.0f, 0.0f) == 0);
+	CHECK(stream_play_loop(p, STREAM_SLOT_LAYER0, LT_ONCE, 0, 0.5f, 0.0f, 0.0f) == 0);
+	CHECK(stream_free_slot(p, STREAM_SLOT_LAYER0, STREAM_LAYERS) == STREAM_SLOT_LAYER0 + 1);
+	h_run(&h, 20);
+	for (k = 0; k < 640; k++) CHECK(h.out[2 * k] == 1500);
+	for (k = 640; k < 640 + 1280; k++) CHECK(h.out[2 * k] == 7500);
+	for (k = 640 + 1280; k < h.frames; k++) CHECK(h.out[2 * k] == 0);
+	CHECK(!stream_slot_busy(p, STREAM_SLOT_MUSIC) && !stream_slot_busy(p, STREAM_SLOT_LAYER0));
+
+	/* a sound on a layer names its tag as owner and does not disturb the other voices */
+	h.frames = 0;
+	CHECK(stream_play_loop(p, STREAM_SLOT_MUSIC, LT_LOOPONLY, 0, 1.0f, 0.0f, 0.0f) == 0);
+	CHECK(stream_play_sound(p, STREAM_SLOT_LAYER0 + 2, T_RAMP, 0, 0, 1.0f, 0.0f, -1.0f) >= 0);
+	CHECK(stream_slot_owner(p, STREAM_SLOT_LAYER0 + 2) == T_RAMP && stream_slot_owner(p, STREAM_SLOT_MUSIC) == LT_LOOPONLY);
+	stream_kill(p, STREAM_SLOT_MUSIC);
+	CHECK(stream_slot_busy(p, STREAM_SLOT_LAYER0 + 2) && !stream_slot_busy(p, STREAM_SLOT_MUSIC));
+	CHECK(stream_slot_owner(p, STREAM_VOICES) == 0 && stream_slot_owner(p, -1) == 0 && stream_free_slot(p, STREAM_VOICES, 2) == -1);
+	free(p);
+	free_pack(&mp);
+	return 0;
 }
 
 static int run_loops(void)
@@ -936,7 +987,9 @@ int main(int argc, char **argv)
 	CHECK(run_mix() == 0);
 	printf("  mix: sums, clamp, gain, pan, fades: ok\n");
 	CHECK(run_loops() == 0);
+	CHECK(run_once_layers() == 0);
 	printf("  sound_looping: start, loop, alternate, stop, end, format mismatch: ok\n");
+	printf("  not-a-loop tracks play once, voices layer, slot owners: ok\n");
 	CHECK(run_io() == 0);
 	printf("  io: chunking, slow disc, errors, abandoned reads, ring: ok\n");
 	CHECK(run_fixture(argv[1]) == 0);

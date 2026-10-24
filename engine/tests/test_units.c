@@ -363,7 +363,26 @@ static void test_tags(void)
 }
 
 /* ---- 2. speeds and turn rate ----------------------------------------------------------------------------------------------------- */
-static float speed_test(unsigned sp, float fwd, float left, int crouch, float expect, float offset)
+/* Ground speed (wu/s) of animation k of the unit's graph: its root motion over one cycle, 0 when it has none. The tags' `anim_speed` are the standing ones; a unit in the alert
+ * posture, crouching or holding another weapon moves at the pace of the animation it plays (ADR-083). */
+static float anim_ground(int unit, int k)
+{
+	const object_t *o = obj_of(unit);
+	anim_graph gr;
+	anim_info in;
+	float sx = 0.0f, sy = 0.0f;
+	uint32_t f;
+	if (k < 0 || o->graph < 0) return 0.0f;
+	gr = anim_get_graph(&g_anims, (uint32_t)o->graph);
+	if ((unsigned)k >= gr.anim_count) return 0.0f;
+	in = anim_get(&g_anims, &gr, (uint32_t)k);
+	if (!in.root_motion || in.frame_count < 2) return 0.0f;
+	for (f = 0; f < in.frame_count; f++) { float d[4]; anim_root_motion(&g_anims, &gr, (uint32_t)k, f, d); sx += d[0]; sy += d[1]; }
+	return sqrtf(sx * sx + sy * sy) * 30.0f / (float)in.frame_count;
+}
+
+/* `*expect` goes in as the tag's speed and comes out as the ground speed of the move animation `dir` (0 front 1 back 2 left 3 right) the unit plays once it has settled in its posture */
+static float speed_test(unsigned sp, float fwd, float left, int crouch, float *expect, float offset, unsigned dir)
 {
 	float start[3], heading, measured = 0.0f;
 	unsigned cursor = 0;
@@ -381,6 +400,7 @@ static float speed_test(unsigned sp, float fwd, float left, int crouch, float ex
 		c.flags = crouch ? UC_CROUCH : 0u;
 		units_set_control(&g_units, u, &c);
 		step(15);                                                       /* settle and crouch */
+		{ float gs = anim_ground(u, units_lookup_anim(&g_units, &g_game, u, UA_MOVE, dir, NULL)); if (gs > 0.05f) *expect = gs; }
 		c.throttle_fwd = fwd; c.throttle_left = left;
 		units_set_control(&g_units, u, &c);
 		step(12);                                                       /* accelerate */
@@ -388,7 +408,7 @@ static float speed_test(unsigned sp, float fwd, float left, int crouch, float ex
 		for (t = 0; t < 45; t++) { step(1); if (!g_units.u[u].body.on_ground) ground = 0; }
 		memcpy(p1, g_units.u[u].body.pos, sizeof p1);
 		measured = xy_dist(p0, p1) / (45.0f / 30.0f);
-		ok = ground && measured > 0.5f * expect && !in_solid(&g_units.u[u]);   /* a blocked run is not a measurement: try another start */
+		ok = ground && measured > 0.5f * *expect && !in_solid(&g_units.u[u]);   /* a blocked run is not a measurement: try another start */
 	}
 	return ok ? measured : -1.0f;
 }
@@ -398,16 +418,16 @@ static void test_speeds(void)
 	unsigned i;
 	for (i = 0; i < g_nsp; i++) {
 		const unitdef_biped_def *b = &g_sp[i].b;
-		struct { float fwd, left; int crouch; float expect, offset; const char *name; } m[5] = {
-			{ 1.0f, 0.0f, 0, b->anim_speed[0], 0.0f, "run front" }, { -1.0f, 0.0f, 0, b->anim_speed[1], 3.14159265f, "run back" },
-			{ 0.0f, 1.0f, 0, b->anim_speed[2], 1.5707963f, "strafe left" }, { 0.0f, -1.0f, 0, b->anim_speed[2], -1.5707963f, "strafe right" },
-			{ 1.0f, 0.0f, 1, b->anim_speed[3], 0.0f, "crouch front" } };
+		struct { float fwd, left; int crouch; float expect, offset; unsigned dir; const char *name; } m[5] = {
+			{ 1.0f, 0.0f, 0, b->anim_speed[0], 0.0f, 0, "run front" }, { -1.0f, 0.0f, 0, b->anim_speed[1], 3.14159265f, 1, "run back" },
+			{ 0.0f, 1.0f, 0, b->anim_speed[2], 1.5707963f, 2, "strafe left" }, { 0.0f, -1.0f, 0, b->anim_speed[2], -1.5707963f, 3, "strafe right" },
+			{ 1.0f, 0.0f, 1, b->anim_speed[3], 0.0f, 0, "crouch front" } };
 		unsigned k;
-		printf("  speeds (team %u, measured/tag wu/s):", b->default_team);
+		printf("  speeds (team %u, measured/ground speed of the animation played wu/s):", b->default_team);
 		for (k = 0; k < 5; k++) {
 			float v;
 			if (m[k].expect <= 0.0f) { printf(" %s n/a;", m[k].name); continue; }
-			v = speed_test(i, m[k].fwd, m[k].left, m[k].crouch, m[k].expect, m[k].offset);
+			v = speed_test(i, m[k].fwd, m[k].left, m[k].crouch, &m[k].expect, m[k].offset, m[k].dir);
 			printf(" %s %.2f/%.2f;", m[k].name, (double)v, (double)m[k].expect);
 			CHECK(v > 0.0f && fabsf(v / m[k].expect - 1.0f) < 0.10f);
 		}
@@ -421,10 +441,11 @@ static void test_speeds_lod(void)
 	g_lod = 0.001f;                                        /* every unit is beyond the LOD distance: bodies integrate every other tick */
 	for (i = 0; i < g_nsp; i++) {
 		const unitdef_biped_def *b = &g_sp[i].b;
-		float v = speed_test(i, 1.0f, 0.0f, 0, b->anim_speed[0], 0.0f), vs = speed_test(i, 0.0f, 1.0f, 0, b->anim_speed[2], 1.5707963f);
-		printf("  speeds with the distance LOD (team %u): run front %.2f/%.2f, strafe %.2f/%.2f wu/s\n", b->default_team, (double)v, (double)b->anim_speed[0], (double)vs, (double)b->anim_speed[2]);
-		CHECK(v > 0.0f && fabsf(v / b->anim_speed[0] - 1.0f) < 0.10f);
-		CHECK(b->anim_speed[2] <= 0.0f || (vs > 0.0f && fabsf(vs / b->anim_speed[2] - 1.0f) < 0.10f));
+		float ef = b->anim_speed[0], es = b->anim_speed[2];
+		float v = speed_test(i, 1.0f, 0.0f, 0, &ef, 0.0f, 0), vs = speed_test(i, 0.0f, 1.0f, 0, &es, 1.5707963f, 2);
+		printf("  speeds with the distance LOD (team %u): run front %.2f/%.2f, strafe %.2f/%.2f wu/s\n", b->default_team, (double)v, (double)ef, (double)vs, (double)es);
+		CHECK(v > 0.0f && fabsf(v / ef - 1.0f) < 0.10f);
+		CHECK(es <= 0.0f || (vs > 0.0f && fabsf(vs / es - 1.0f) < 0.10f));
 	}
 	g_lod = 0.0f;
 }
@@ -945,6 +966,95 @@ static void test_damage_death(void)
 	}
 }
 
+/* ---- 5b. permutations and postures of the cutscene's actors (ADR-083) ----------------------------------------------------------------- */
+static void test_permutation_pool(void)
+{
+	uint32_t m, found = 0;
+	CHECK(model_name_number("sgt_johnson-100") == 100 && model_name_number("head_charles_helmet-10") == 10 && model_name_number("damaged torso-102") == 102);
+	CHECK(model_name_number("__base") == 0 && model_name_number("base") == 0 && model_name_number("x-") == 0);
+	CHECK(model_name_number("a-12345") == 0 && model_name_number("a-007") == 7 && model_name_number("") == 0 && model_name_number("head2") == 0);
+	for (m = 0; m < g_models.model_count; m++) {
+		model_info mi = model_get(&g_models, m);
+		uint16_t sel[16], first[16];
+		uint32_t p, r, seed, heads[16], nheads = 0, johnson = UINT32_MAX;
+		char nm[MODEL_NAME_LEN];
+		if (mi.region_count == 0 || mi.region_count > 16) continue;
+		for (p = 0; p < mi.permutation_count; p++) { model_perm_name(&g_models, &mi, p, nm); if (!strcmp(nm, "sgt_johnson-100")) johnson = p; }
+		if (johnson == UINT32_MAX) continue;
+		found++;
+		model_select_variant(&g_models, &mi, 0, 0, first);                                /* the first permutation of every region: the base pieces */
+		for (r = 0; r < mi.region_count; r++) { model_perm_name(&g_models, &mi, first[r], nm); CHECK(model_name_number(nm) == 0 || model_name_number(nm) < 100); }
+		model_select_variant(&g_models, &mi, 100, 7, sel);                                 /* Sergeant Johnson: the scenario's desired permutation 100 */
+		for (r = 0, p = 0; r < mi.region_count; r++) { model_perm_name(&g_models, &mi, sel[r], nm); if (model_name_number(nm) == 100) p++; }
+		CHECK(p >= 2);                                                                     /* his arms (region 0) and his head */
+		model_select_variant(&g_models, &mi, 101, 7, sel);                                 /* the cap: region 1 only */
+		for (r = 0, p = 0; r < mi.region_count; r++) { model_perm_name(&g_models, &mi, sel[r], nm); if (model_name_number(nm) == 101) p++; }
+		CHECK(p == 1);
+		for (seed = 0; seed < 300; seed++) {                                               /* the random pool (1..99): never Johnson, the cap or the damaged torso */
+			uint16_t again[16];
+			model_select_variant(&g_models, &mi, 0, seed * 2654435761u, sel);
+			model_select_variant(&g_models, &mi, 0, seed * 2654435761u, again);
+			for (r = 0; r < mi.region_count; r++) {
+				model_perm_name(&g_models, &mi, sel[r], nm);
+				CHECK(sel[r] == again[r] && model_name_number(nm) < 100);                  /* stable per seed */
+				if (r == 1 && sel[r] != first[r]) { uint32_t k = 0; while (k < nheads && heads[k] != sel[r]) k++; if (k == nheads && nheads < 16) heads[nheads++] = sel[r]; }
+			}
+		}
+		printf("  permutations of the marine model: %u distinct heads over 300 seeds, Johnson is permutation %u\n", nheads, johnson);
+		CHECK(nheads >= 3);
+	}
+	CHECK(found >= 1);
+}
+
+/* An actor stands in the alert block when a script says so (unit_set_seat unit "alert" sets UF_ALERT), and then it moves at the pace of the alert move animation */
+static void test_alert_posture(void)
+{
+	unsigned i, tried = 0, named = 0;
+	for (i = 0; i < g_nsp; i++) {
+		float p[3], start[3], heading;
+		unsigned cursor = 0;
+		int u, k, t, ground = 1;
+		unit_control_t c;
+		float p0[3], p1[3], measured, expect;
+		ansm_graph gr;
+		if (!find_run(6.0f, 0.5f, start, &heading, &cursor)) break;
+		memcpy(p, start, sizeof p); p[2] += 0.03f;
+		new_scene(17, 3);
+		u = spawn_unit(g_sp[i].def, p, heading, 0, 0);                                      /* armed: stands at the ready */
+		if (u < 0) continue;
+		step(10);
+		CHECK(g_units.u[u].posture == 0);
+		if (ansm_find_graph(&g_ansm, g_units.u[u].anim_tag, &gr) != 0 || ansm_find_unit(&g_ansm, &gr, "alert") < 0) continue;       /* a graph without an alert block */
+		tried++;
+		g_units.u[u].flags |= UF_ALERT;
+		c = ctl0(heading);
+		units_set_control(&g_units, u, &c);
+		step(15);
+		CHECK(g_units.u[u].posture == 2);
+		k = units_lookup_anim(&g_units, &g_game, u, UA_IDLE, 0, NULL);
+		if (k >= 0 && !strncmp(lookup_name(u, UA_IDLE, 0, NULL), "alert", 5)) named++;
+		k = units_lookup_anim(&g_units, &g_game, u, UA_MOVE, 0, NULL);
+		expect = anim_ground(u, k);
+		c.throttle_fwd = 1.0f;
+		units_set_control(&g_units, u, &c);
+		step(12);
+		memcpy(p0, g_units.u[u].body.pos, sizeof p0);
+		for (t = 0; t < 45; t++) { step(1); if (!g_units.u[u].body.on_ground) ground = 0; }
+		memcpy(p1, g_units.u[u].body.pos, sizeof p1);
+		measured = xy_dist(p0, p1) / (45.0f / 30.0f);
+		printf("  alert posture (team %u): '%s', %.2f wu/s measured, %.2f wu/s from the animation, %.2f wu/s tag run speed\n", g_sp[i].b.default_team, lookup_name(u, UA_MOVE, 0, NULL),
+		       (double)measured, (double)expect, (double)g_sp[i].b.anim_speed[0]);
+		if (ground && !in_solid(&g_units.u[u]) && expect > 0.05f) CHECK(fabsf(measured / expect - 1.0f) < 0.10f);
+		if (expect > 0.05f && g_sp[i].b.anim_speed[0] > 0.05f) CHECK(measured < g_sp[i].b.anim_speed[0] * 1.1f);                   /* never faster than the standing run it replaces here */
+		g_units.u[u].flags &= (uint8_t)~UF_ALERT;
+		c.throttle_fwd = 0.0f;
+		units_set_control(&g_units, u, &c);
+		step(15);
+		CHECK(g_units.u[u].posture == 0 && !strncmp(lookup_name(u, UA_IDLE, 0, NULL), "stand", 5));
+	}
+	CHECK(tried >= 1 && named >= 1);                                                       /* the marines' graph has an alert idle */
+}
+
 /* ---- 6. variants, cinedef, custom animations, rebind ------------------------------------------------------------------------------------- */
 static void test_variant(void)
 {
@@ -1452,6 +1562,8 @@ int main(int argc, char **argv)
 	test_combat();
 	test_grenade_melee();
 	test_damage_death();
+	test_permutation_pool();
+	test_alert_posture();
 	test_variant();
 	test_cinedef();
 	test_custom();

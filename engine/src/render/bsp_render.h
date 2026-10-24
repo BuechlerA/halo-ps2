@@ -11,6 +11,7 @@
 #include "render/texcache.h"
 #include "render/vis.h"
 #include "world/bsp.h"
+#include "world/hires.h"
 
 #define MAT_ALPHA_TEST 1u
 #define MAT_BLEND      2u
@@ -59,6 +60,7 @@ typedef struct {
 
 typedef struct {
 	int   textures, lightmaps, fog;
+	int   glow;                  /* draw the self illumination maps (screens, lamps, windows) as an additive pass after the lightmap: cfg glow, default 1 (ADR-079) */
 	int   only_batch, only_batch_hi;     /* debug: draw only batches lo..hi (only_batch -1 = all) */
 	int   unused_only;                    /* debug: draw only this batch index (-1 = all) */
 	int   cull_sign;                    /* back face culling: 0 off, +1 / -1 = which orientation is the back */
@@ -83,6 +85,8 @@ int  bsp_render_init(const video_t *v);
 int  bsp_render_set_world(arena_t *a, const bsp_section *s, const tex_source_t *src);
 void bsp_render_options(render_options_t *o);                    /* defaults */
 void bsp_render_set_options(const render_options_t *o);
+/* While set, a camera that lies in no BSP cluster draws no world instead of every cluster in view (the player fell out of the map: ADR-062). */
+void bsp_render_set_void_view(int on);
 /* Builds frame `frame` into the idle chain. `overlay` may be NULL. */
 void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overlay);
 /* Sends env + clear + uploads + the geometry chain; returns immediately after starting VIF1. */
@@ -107,3 +111,7 @@ void bsp_render_set_sky_pass(render_pass_fn fn, void *user);
 void bsp_render_set_overlay_pass(render_pass_fn fn, void *user);
 /* Reserves `count` texture residency keys for another texture set (HUD, effects); returns the key base to pass to rb_extra_tex0. Call before the first frame. */
 unsigned bsp_render_reserve_keys(unsigned count);
+/* Streamed high resolution variants of the BSP's textures (world/hires.h, docs/37). `key_base` is a bsp_render_reserve_keys range of the base texture count. A surface
+ * asks for the variant of its texture when one screen pixel covers at least `want_ratio` of a texel of the resident copy (0.7: the resident texture starts to blur), and
+ * starts the read from half of that ratio on; NULL switches the feature off. Needs the materials' uv_world (BSP section, tools/halo2ps2/bspconv.py). */
+void bsp_render_set_hires(hires_t *h, unsigned key_base, float want_ratio);

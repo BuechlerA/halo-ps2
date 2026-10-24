@@ -32,7 +32,7 @@
 	X(game_safe_to_speak) X(game_difficulty_get) X(game_difficulty_get_real) X(game_is_cooperative) X(game_won) X(game_lost) X(game_revert) \
 	X(game_reverted) X(game_time) X(game_speed) X(game_skip_ticks) X(switch_bsp) X(scenario_switch_bsp) X(structure_bsp_index) \
 	X(player_effect_set_max_translation) X(player_effect_set_max_rotation) X(player_effect_set_max_rumble) X(player_effect_start) X(player_effect_stop) \
-	X(objects_predict) X(object_beautify) X(object_pvs_activate) X(object_type_predict) X(rasterizer_model_ambient_reflection_tint) \
+	X(objects_predict) X(object_pvs_activate) X(object_type_predict) X(rasterizer_model_ambient_reflection_tint) \
 	X(garbage_collect_now) X(object_pvs_set_camera) X(breakable_surfaces_enable) X(cls) X(breakable_surfaces_reset) X(object_pvs_clear) \
 	X(object_pvs_set_object) X(render_lights) X(rasterizer_lights_reset_for_new_map)
 
@@ -298,9 +298,21 @@ BI(fade_in)
 
 /* Screen effects (blur / filter / convolution of the cinematic renderer) have no PS2 counterpart: only the on / off state is kept. */
 BI(cinematic_screen_effect_start) { ENTER(cinematic_screen_effect_start); if (m) { m->misc.screen_effect = (uint8_t)argb(a, n, 0, 0); if (m->cine) { if (!m->cine->screen.effect && m->misc.screen_effect) m->cine->screen.effect_ticks = 0; m->cine->screen.effect = m->misc.screen_effect; } } return 0; }
-BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) { m->misc.screen_effect = 0; if (m->cine) m->cine->screen.effect = 0; } return 0; }
+BI(cinematic_screen_effect_stop) { ENTER(cinematic_screen_effect_stop); if (m) { m->misc.screen_effect = 0; if (m->cine) { m->cine->screen.effect = 0; m->cine->screen.filter = 0; } } return 0; }
 NOOP(cinematic_screen_effect_set_convolution)
-NOOP(cinematic_screen_effect_set_filter)
+/* XBE 0xee1b0 -> 0x61c40: (a b c d on seconds); the renderer (0x61aa0) lerps the pairs (a -> b) and (c -> d) over the `seconds` that follow the call, so the tutorial's
+ * `1 0 1 0 true 5` is a sight that clears linearly in 5 s, not one that stays until the effect stops. The pale veil follows the first pair. */
+BI(cinematic_screen_effect_set_filter)
+{
+	ENTER(cinematic_screen_effect_set_filter);
+	if (m && m->cine) {
+		cine_screen *sc = &m->cine->screen;
+		float secs = argf(a, n, 5, 0.0f);
+		sc->filter = 1; sc->filter_from = argf(a, n, 0, 1.0f); sc->filter_to = argf(a, n, 1, 0.0f);
+		sc->filter_ticks = secs > 0.0f ? (uint32_t)(secs * 30.0f + 0.5f) : 0u; sc->filter_elapsed = 0;
+	}
+	return 0;
+}
 NOOP(cinematic_screen_effect_set_filter_desaturation_tint)
 NOOP(cinematic_screen_effect_set_video)
 BI(cinematic_suppress_bsp_object_creation) { ENTER(cinematic_suppress_bsp_object_creation); if (m) m->misc.suppress_bsp_objects = (uint8_t)argb(a, n, 0, 0); return 0; }
@@ -323,6 +335,10 @@ static float class_gain(const mission_t *m, unsigned group)
 }
 
 static unsigned kind_group(unsigned kind) { return kind == STRM_KIND_MUSIC ? MISC_GAIN_MUSIC : kind == STRM_KIND_AMBIENCE ? MISC_GAIN_AMBIENCE : MISC_GAIN_DIALOGUE; }
+/* A mono dialogue line against the stereo score, measured on the Xbox video: the lines sit 3 .. 4 dB under the player's unity (0.45 .. 0.6 in clear
+ * passages, 0.47 median over the windowed fits): equal-power centring, each channel at 1 / sqrt(2). */
+#define MONO_CENTRE_TRIM 0.70710678f
+
 static int kind_slot(unsigned kind) { return kind == STRM_KIND_MUSIC ? STREAM_SLOT_MUSIC : kind == STRM_KIND_AMBIENCE ? STREAM_SLOT_AMBIENCE : STREAM_SLOT_DIALOGUE; }
 
 /* Gain and pan of a mono dialogue or effect source `obj` heard by the player: linear distance attenuation between the sound's min and max
@@ -406,8 +422,13 @@ BI(sound_impulse_start)
 		take = variant;
 		float gain, pan, cg = class_gain(m, kind_group(ssn.kind));
 		slot = kind_slot(ssn.kind);
+		if (m->stream && stream_slot_busy(m->stream, slot)) {          /* impulses overlap (the marines' cheer, a line over the foley): a free layer takes it */
+			int f = stream_free_slot(m->stream, STREAM_SLOT_LAYER0, STREAM_LAYERS);
+			if (f >= 0) slot = f;
+		}
 		dur = ssn.max_play_ms ? (uint32_t)((uint64_t)ssn.max_play_ms * 30u / 1000u) : frames_to_ticks(st.frames, st.rate);   /* the Xbox: tag +0x84 ms * 30 / 1000 (0x2b9d0) */
 		spatial(m, obj, ssn.min_dist, ssn.max_dist, scale * cg, &gain, &pan);
+		if (st.channels == 1) gain *= MONO_CENTRE_TRIM;                /* the player's pan law is linear (centre = full level in both channels); the Xbox centres a mono source with equal power */
 		for (i = 0; i < MISC_IMPULSES; i++)                         /* the slot's previous sound is replaced: its time is over */
 			if (m->misc.imp[i].used && m->misc.imp[i].slot == slot && m->misc.imp[i].tag != tag) { m->misc.imp[i].slot = -1; m->misc.imp[i].end_tick = m->tick; }
 		if (m->stream && gain > 0.001f) stream_play_sound(m->stream, slot, tag, (int)variant, 0, gain, pan, -1.0f);
@@ -466,6 +487,15 @@ static misc_loop *loop_find(mission_t *m, uint32_t tag)
 	return NULL;
 }
 
+/* A cinematic's score and foley are sound_looping tags flagged "not a loop": each plays through once and the script never stops one, so every new
+ * start layers over the ones still running (x10: music01 for 114 s, foley1 from 72 s, music02 from 112 s, ...). */
+static int loop_once(const mission_t *m, uint32_t tag)
+{
+	const strm_section *ss = strm_of(m);
+	int li = ss ? strm_find_loop(ss, tag) : -1;
+	return li >= 0 && (strm_get_loop(ss, (uint32_t)li).flags & STRM_LOOP_NOT_A_LOOP) != 0;
+}
+
 /* The stream slot a sound_looping tag plays in, -1 when it has no streamed track (a resident loop: goes through the hook). */
 static int loop_route(const mission_t *m, uint32_t tag)
 {
@@ -515,14 +545,22 @@ BI(sound_looping_start)
 	slot = loop_route(m, tag);
 	if (slot >= 0) {
 		unsigned group = slot == STREAM_SLOT_MUSIC ? MISC_GAIN_MUSIC : MISC_GAIN_AMBIENCE;
+		int once = loop_once(m, tag);
+		if (once && m->stream && stream_slot_busy(m->stream, slot)) {          /* layered: the next free voice (the kind's own slot first) */
+			int f = stream_free_slot(m->stream, STREAM_SLOT_LAYER0, STREAM_LAYERS);
+			if (f >= 0) slot = f;
+		}
 		for (i = 0; i < MISC_LOOPS; i++)                             /* one voice per slot: its previous loop stops */
 			if (m->misc.loops[i].used && m->misc.loops[i].slot == slot && m->misc.loops[i].tag != tag) m->misc.loops[i].running = 0;
 		if (m->stream) {
-			if (stream_play_loop(m->stream, slot, tag, 0, scale * class_gain(m, group), 0.0f, -1.0f) != 0) slot = -1;
+			/* sound_class_set_gain "music" 0 at the start of the x10 cinematic mutes the level's music, not the cinematic's own score (audible from the
+			 * first second in the Xbox video): a play-once track takes the gain it is started with. */
+			if (stream_play_loop(m->stream, slot, tag, 0, once ? scale : scale * class_gain(m, group), 0.0f, -1.0f) != 0) slot = -1;
 			else if (lp->alt) stream_loop_alternate(m->stream, slot, 1);
 		}
 	}
 	if (slot < 0 && m->misc_env.loop_start) m->misc_env.loop_start(m->misc_env.user, tag, obj >= 0 ? pos : NULL, scale);
+	if (m->log) printf("[camset] t%u loop %08x slot %d scale %.2f\n", (unsigned)m->tick, (unsigned)tag, slot, scale);
 	lp->used = 1; lp->tag = tag; lp->slot = (int8_t)slot; lp->running = 1;
 	m->misc.loops_started++;
 	return 0;
@@ -534,7 +572,8 @@ BI(sound_looping_stop)
 	misc_loop *lp;
 	ENTER(sound_looping_stop);
 	if (!m || !(lp = loop_find(m, tag)) || !lp->running) return 0;
-	if (lp->slot >= 0) { if (m->stream) stream_stop(m->stream, lp->slot, -1.0f); }
+	if (m->log) printf("[camset] t%u loopstop %08x\n", (unsigned)m->tick, (unsigned)tag);
+	if (lp->slot >= 0) { if (m->stream && stream_slot_owner(m->stream, lp->slot) == tag) stream_stop(m->stream, lp->slot, -1.0f); }
 	else if (m->misc_env.loop_stop) m->misc_env.loop_stop(m->misc_env.user, tag);
 	lp->running = 0;
 	return 0;
@@ -556,7 +595,7 @@ BI(sound_looping_set_alternate)
 		lp->used = 1; lp->tag = tag; lp->slot = -1;
 	}
 	lp->alt = (uint8_t)argb(a, n, 1, 0);
-	if (lp->running && lp->slot >= 0 && m->stream) stream_loop_alternate(m->stream, lp->slot, lp->alt);
+	if (lp->running && lp->slot >= 0 && m->stream && stream_slot_owner(m->stream, lp->slot) == tag) stream_loop_alternate(m->stream, lp->slot, lp->alt);
 	return 0;
 }
 
@@ -607,7 +646,7 @@ static uint32_t hud_message_text(const mission_t *m, uint32_t idx, uint16_t *out
 	return pos;
 }
 
-BI(show_hud_help_text) { ENTER(show_hud_help_text); if (m && m->cine) cine_msg_set_visible(m->cine, CINE_MSG_HELP, argb(a, n, 0, 1)); return 0; }
+BI(show_hud_help_text) { ENTER(show_hud_help_text); if (m && m->log_anim) printf("[anim] t%u show_hud_help_text %d\n", (unsigned)m->tick, argb(a, n, 0, 1)); if (m && m->cine) cine_msg_set_visible(m->cine, CINE_MSG_HELP, argb(a, n, 0, 1)); return 0; }
 BI(enable_hud_help_flash) { ENTER(enable_hud_help_flash); if (m) m->misc.help_flash = (uint8_t)argb(a, n, 0, 0); return 0; }
 
 BI(hud_set_help_text)
@@ -620,6 +659,7 @@ BI(hud_set_help_text)
 	units = hud_message_text(m, (uint32_t)idx, t, CINE_TEXT_UNITS);
 	if (units == HUDDEF_STR_NONE) { mission_note_missing(m, "hud_set_help_text"); return 0; }
 	cine_msg_post(m->cine, CINE_MSG_HELP, t, units, 0);
+	if (m->log_anim) printf("[anim] t%u hud_set_help_text %d units %u\n", (unsigned)m->tick, (int)idx, (unsigned)units);
 	m->misc.help_shown++;
 	m->misc.help_msg1 = (int16_t)(idx + 1 > 32767 ? 32767 : idx + 1);
 	return 0;
@@ -656,7 +696,7 @@ BI(display_scenario_help)
 	return 0;
 }
 
-static void set_hud_bit(mission_t *m, uint32_t bit, int shown) { if (shown) m->misc.hud_hidden &= ~bit; else m->misc.hud_hidden |= bit; }
+static void set_hud_bit(mission_t *m, uint32_t bit, int shown) { if (shown) m->misc.hud_hidden &= ~bit; else m->misc.hud_hidden |= bit; if (m->hud) m->hud->hidden = m->misc.hud_hidden; }      /* MISC_HUD_* and HUD_HIDE_* are the same bits */
 static void set_blink_bit(mission_t *m, uint32_t bit, int on) { if (on) m->misc.hud_blink |= bit; else m->misc.hud_blink &= ~bit; }
 BI(show_hud) { ENTER(show_hud); if (m) set_hud_bit(m, MISC_HUD_ALL, argb(a, n, 0, 1)); return 0; }
 BI(hud_show_motion_sensor) { ENTER(hud_show_motion_sensor); if (m) set_hud_bit(m, MISC_HUD_MOTION, argb(a, n, 0, 1)); return 0; }
@@ -973,7 +1013,6 @@ BI(player_effect_stop)
 
 /* ---- debug / hints: explicit no-ops (void results) ---------------------------------------------------------------------------------------- */
 NOOP(objects_predict)
-NOOP(object_beautify)
 NOOP(object_pvs_activate)
 NOOP(object_type_predict)
 NOOP(rasterizer_model_ambient_reflection_tint)
@@ -990,23 +1029,43 @@ NOOP(rasterizer_lights_reset_for_new_map)
 /* ---- per tick service, registration, statistics ------------------------------------------------------------------------------------------ */
 /* Lip sync: the mouth data of a line a unit speaks (sound_impulse_start with the unit as source) is one loudness byte per tick; the face's talk
  * overlay is scaled by it (sim/objects.c apply_face). Every tick the speakers are zeroed first, so a line that ended or was cut closes the mouth. */
+#define EMO_EASE_TICKS 6u          /* a switch between two emotion frames takes this many ticks */
+#define TALK_ATTACK 0.65f          /* jaw: share of the way to a louder target per tick */
+#define TALK_RELEASE 0.35f         /* ... and to a quieter one */
 static void lipsync(mission_t *m)
 {
 	unsigned i;
+	static uint8_t tgt[OBJ_MAX];
 	if (!m->objects) return;
-	for (i = 0; i < MISC_IMPULSES; i++) {
-		const misc_impulse *p = &m->misc.imp[i];
-		if (p->used && p->obj >= 0 && (unsigned)p->obj < m->objects->count) m->objects->obj[p->obj].face.talk = 0;
+	for (i = 0; i < m->objects->count && i < OBJ_MAX; i++) {                 /* emotion switches ease in */
+		object_face *f = &m->objects->obj[i].face;
+		if (f->emo_blend < 255) { unsigned b = (unsigned)f->emo_blend + 255u / EMO_EASE_TICKS + 1u; f->emo_blend = (uint8_t)(b > 255u ? 255u : b); }
 	}
-	if (!m->ow.mouth) return;
 	for (i = 0; i < MISC_IMPULSES; i++) {
 		const misc_impulse *p = &m->misc.imp[i];
-		unsigned len = 0, k;
-		const uint8_t *mouth;
-		if (!p->used || p->obj < 0 || (unsigned)p->obj >= m->objects->count || m->tick < p->start_tick || m->tick >= p->end_tick) continue;
-		mouth = mouth_find(m->ow.mouth, p->tag, p->variant, &len);
-		k = m->tick - p->start_tick;
-		if (mouth && k < len) m->objects->obj[p->obj].face.talk = mouth[k];
+		if (p->used && p->obj >= 0 && (unsigned)p->obj < m->objects->count && p->obj < OBJ_MAX) tgt[p->obj] = 0;
+	}
+	if (m->ow.mouth) {
+		for (i = 0; i < MISC_IMPULSES; i++) {
+			const misc_impulse *p = &m->misc.imp[i];
+			unsigned len = 0, k;
+			const uint8_t *mouth;
+			if (!p->used || p->obj < 0 || (unsigned)p->obj >= m->objects->count || p->obj >= OBJ_MAX || m->tick < p->start_tick || m->tick >= p->end_tick) continue;
+			mouth = mouth_find(m->ow.mouth, p->tag, p->variant, &len);
+			k = m->tick - p->start_tick;
+			if (mouth && k < len && mouth[k] > tgt[p->obj]) tgt[p->obj] = mouth[k];
+		}
+	}
+	for (i = 0; i < MISC_IMPULSES; i++) {                                    /* the jaw follows the mouth data through a low pass: fast to open, slower to close */
+		const misc_impulse *p = &m->misc.imp[i];
+		object_face *f;
+		float cur, goal, a;
+		if (!p->used || p->obj < 0 || (unsigned)p->obj >= m->objects->count || p->obj >= OBJ_MAX) continue;
+		f = &m->objects->obj[p->obj].face;
+		cur = (float)f->talk_s; goal = (float)tgt[p->obj]; a = goal > cur ? TALK_ATTACK : TALK_RELEASE;
+		cur += (goal - cur) * a;
+		f->talk_s = (goal == 0.0f && cur < 1.5f) ? 0u : (uint8_t)(cur + 0.5f);          /* a closing mouth reaches zero (the rounding alone would stick at 1) */
+		f->talk = f->talk_s;
 	}
 }
 
@@ -1020,6 +1079,16 @@ void misc_tick(mission_t *m)
 		if (object_frame(m, m->misc.cam_anchor_obj1 - 1, &f)) cine_cam_set_anchor(&m->cine->cam, &f);
 	}
 	misc_nav_refresh(m);
+	if (m->cine) {                                          /* the veil: the filter's first pair lerped over its duration (XBE 0x61aa0), gone when the effect stops */
+		cine_screen *sc = &m->cine->screen;
+		if (sc->effect && sc->filter) {
+			float t = sc->filter_ticks ? (float)sc->filter_elapsed / (float)sc->filter_ticks : 1.0f;
+			if (t > 1.0f) t = 1.0f;
+			sc->veil = sc->filter_from + (sc->filter_to - sc->filter_from) * t;
+			if (sc->veil < 0.0f) sc->veil = 0.0f;
+			if (sc->filter_elapsed < 0xFFFFFFu) sc->filter_elapsed++;
+		} else sc->veil = 0.0f;
+	}
 }
 
 void hs_host_register_misc(hs_machine *m)

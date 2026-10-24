@@ -27,6 +27,7 @@ void rb_set_pending(u64 pair);
 u64  rb_object_tex0(unsigned index, const tex_image_t *img, u64 tfx);
 /* GS TEX0 of texture `index` of a reserved key range (bsp_render_reserve_keys), 0 if it cannot be drawn this frame. */
 u64  rb_extra_tex0(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx);
+u64  rb_extra_tex0_pinned(unsigned key_base, unsigned index, const tex_image_t *img, u64 tfx);
 /* Is texture `index` of that key range in the GS texture cache now (no touch)? */
 int  rb_extra_resident(unsigned key_base, unsigned index);
 /* Fog constants in the F16 form of bsp.vsm (abs 9 / model abs 4): k, b. */
@@ -34,5 +35,8 @@ void rb_fog_params(float *k, float *b);
 /* VU1 entry address (MSCAL operand) of the model program. */
 u32  rb_model_entry(void);
 const u32 *rb_zbuf_page_ptr(void);
+/* VRAM word address of the colour buffer the frame being built will be drawn into (set by the host before bsp_render_build; 0 = unknown): the tutorial's blur reads it back as a texture. */
+void bsp_render_set_blur_target(u32 fb_word_address);
+u32  rb_blur_target(void);
 
 #endif

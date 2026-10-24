@@ -91,7 +91,8 @@ times element size must fit the section; tables are padded to 16 bytes):
 
 **Material, 32 B**: `u32 shader tag id`, `u16 lightmap page` (`0xFFFF` none), `u16 reserved`
 (was `first_batch`; batches are no longer contiguous per material), `u16 batch count`, `u16 uv shift`
-(texture uv stored as s16 = uv x 2^shift), `u32 triangle count`, 16 reserved. Materials keep the order
+(texture uv stored as s16 = uv x 2^shift), `u32 triangle count`, `f32 uv_world` (+0x10: world units per uv unit, sqrt(world area / uv area); 0 = unknown; the streamed texture
+variants' density test, docs/37), 12 reserved. Materials keep the order
 of the Xbox lightmap materials that have surfaces and vertices (same as `read_materials`), so a
 material that ends up without batches keeps its slot.
 

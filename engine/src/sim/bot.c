@@ -5,11 +5,64 @@
 
 #define PICKUP_REACH 1.4f
 
+static void bot_report(const bot_t *b, const mission_t *m, const char *what, const float from[3], const float to[3])
+{
+	const game_t *g = m->game;
+	phys_hit h;
+	float down[3];
+	int hit = 0;
+	if (!m->log) return;
+	down[0] = to[0]; down[1] = to[1]; down[2] = to[2] - 60.0f;
+	if (g->has_phys) hit = g->phys.ray(g->phys.user, to, down, &h);
+	{
+		unsigned i;
+		printf("[bot] awaited volumes at tick %u:", (unsigned)m->tick);
+		for (i = 0; i < 8; i++) if (m->awaited_volume[i].active) printf(" %u(age %u hits %u)", (unsigned)m->awaited_volume[i].volume, (unsigned)(m->tick - m->awaited_volume[i].last_tick), (unsigned)m->awaited_volume[i].hits);
+		printf("\n");
+	}
+	printf("[bot] %s: tick %u from %.2f %.2f %.2f to %.2f %.2f %.2f goal kind %d id %u at %.2f %.2f %.2f route %d start %d goal %d floor below target %s %.2f\n",
+	       what, (unsigned)m->tick, (double)from[0], (double)from[1], (double)from[2], (double)to[0], (double)to[1], (double)to[2], b->goal_kind, (unsigned)b->goal_id,
+	       (double)b->goal[0], (double)b->goal[1], (double)b->goal[2], b->route_status, b->route_start, b->route_goal, hit ? "yes" : "NONE", hit ? (double)(to[2] - 60.0f * h.t) : 0.0);
+}
+
+#define BOT_PIN_TICKS 20u      /* scripts poll their volume tests (sleep_until) every few ticks: hold a floorless hop target for a couple of polls */
+static int floor_below(const game_t *g, const float p[3], float depth)
+{
+	phys_hit h;
+	float down[3];
+	down[0] = p[0]; down[1] = p[1]; down[2] = p[2] - depth;
+	return !g->has_phys || g->phys.ray(g->phys.user, p, down, &h);
+}
+
+/* Skip a volume until tick `until`. A volume already listed is extended; otherwise the slot that expires first is reused (the scripts wait on a dozen volumes
+ * at once and most lie in other BSPs, so a handful of slots would be overwritten before they expire). */
+static void ignore_volume(bot_t *b, const mission_t *m, uint16_t vol, uint32_t until)
+{
+	unsigned q, pick = 0;
+	for (q = 0; q < BOT_IGNORE_MAX; q++) {
+		if (b->ignore_vol[q] == vol && b->ignore_until[q] > m->tick) { b->ignore_until[q] = until; return; }
+		if (b->ignore_until[q] < b->ignore_until[pick]) pick = q;
+	}
+	b->ignore_vol[pick] = vol; b->ignore_until[pick] = until;
+}
+
+/* Teleport the player onto `to` (an assist, counted). A target with no floor under it is held for BOT_PIN_TICKS so the scripts can see the player inside the volume. */
+static void bot_hop(bot_t *b, mission_t *m, const char *what, const float to[3])
+{
+	game_t *g = m->game;
+	bot_report(b, m, what, g->player.pos, to);
+	game_teleport(g, to, g->player.yaw);
+	b->hop_tick = m->tick;
+	if (!floor_below(g, to, 80.0f)) { memcpy(b->pin_pos, to, sizeof b->pin_pos); b->pin_until = m->tick + BOT_PIN_TICKS; }
+	b->assists++; b->stuck_ticks = 0; b->unreach_ticks = 0; b->replan_at = 0; b->wp_n = 0; b->progress_dist = 0.0f;
+}
+
 static float dist2d(const float a[3], const float b[3]) { float dx = a[0] - b[0], dy = a[1] - b[1]; return sqrtf(dx * dx + dy * dy); }
 
 void bot_init(bot_t *b)
 {
 	memset(b, 0, sizeof *b);
+	b->safe_pos[2] = -1e30f;
 	b->enabled = 1;
 	b->target_unit = -1;
 }
@@ -28,7 +81,7 @@ static int find_enemy(bot_t *b, mission_t *m, const float eye[3], float out_pos[
 		unsigned q;
 		int shunned = 0;
 		if (!u->active || u->obj < 0 || !units_teams_hostile(1, u->team) || !units_alive(m->units, g, (int)i)) continue;
-		for (q = 0; q < 4; q++) if (b->shun_unit[q] == (int16_t)i && b->shun_until[q] > m->tick) shunned = 1;
+		for (q = 0; q < BOT_SHUN_MAX; q++) if (b->shun_unit[q] == (int16_t)i && b->shun_until[q] > m->tick) shunned = 1;
 		if (shunned) continue;
 		if (m->objects->obj[u->obj].flags & (OBJ_F_INACTIVE | OBJ_F_FREE)) continue;
 		t[0] = u->body.pos[0]; t[1] = u->body.pos[1]; t[2] = u->body.pos[2] + 0.45f;
@@ -49,9 +102,9 @@ static int pick_goal(bot_t *b, mission_t *m)
 	float best = 1e30f;
 	int found = 0;
 	const float *pp = m->game->player.pos;
-	{                                                           /* unarmed: the nearest weapon lying about comes first */
+	{                                                           /* unarmed: the nearest weapon lying about comes first (not on a10, which starts unarmed: its script gives the pistol) */
 		const game_slot_t *s0 = game_cur_slot(m->game);
-		if (!s0 || s0->weapon < 0) {
+		if ((!s0 || s0->weapon < 0) && !m->game->unarmed_start) {
 			unsigned k;
 			float bd = 1e30f;
 			for (k = 0; k < m->objects->count; k++) {
@@ -72,7 +125,7 @@ static int pick_goal(bot_t *b, mission_t *m)
 		unsigned q;
 		int skip = 0;
 		if (!a->active || m->tick - a->last_tick > 90 || !m->dev || a->volume >= m->dev->volume_count) continue;
-		for (q = 0; q < 4; q++) if (b->ignore_vol[q] == a->volume && b->ignore_until[q] > m->tick) skip = 1;
+		for (q = 0; q < BOT_IGNORE_MAX; q++) if (b->ignore_vol[q] == a->volume && b->ignore_until[q] > m->tick) skip = 1;
 		if (skip) continue;
 		v = devdef_get_volume(m->dev, a->volume);
 		volume_center(&v, c);
@@ -99,10 +152,18 @@ static void follow(bot_t *b, mission_t *m, const path_bsp *path, path_scratch *s
 		b->wp_n = path_route(path, scratch, &q, pos, b->goal, b->wp, BOT_WP_MAX, &info);
 		b->route_status = (int)info.status; b->route_start = info.start_sector; b->route_goal = info.goal_sector;
 		if (info.status == PATH_ROUTE_NO_GOAL && b->goal_kind == 1) {            /* the volume lies in another BSP: ignore it for 10 s */
-			unsigned q = b->explore_phase++ & 3u;
-			b->ignore_vol[q] = (uint16_t)b->goal_id; b->ignore_until[q] = m->tick + 300;
-			b->has_goal = 0;
+			b->nogoal_n++;                    /* any off-mesh volume: with several awaited ones the bot alternates between them */
+			if (b->nogoal_n >= 3) {          /* nothing nearer kept the bot busy for three off-mesh goals in a row: the scripts wait on this volume, so hop onto it (an assist) */
+				float to[3] = { b->goal[0], b->goal[1], b->goal[2] };
+				b->nogoal_n = 0;
+				ignore_volume(b, m, (uint16_t)b->goal_id, m->tick + 900);
+				bot_hop(b, m, "assist off-mesh volume", to);
+			} else {
+				ignore_volume(b, m, (uint16_t)b->goal_id, m->tick + 300);
+				b->has_goal = 0;
+			}
 		}
+		if (info.status != PATH_ROUTE_NO_GOAL) b->nogoal_n = 0;
 		b->wp_i = 0;
 		b->replans++;
 		{ static unsigned dbg; if (dbg++ < 6 && m->log) printf("[bot] route from %.2f %.2f %.2f to %.2f %.2f %.2f: status %d start %d goal %d sectors %u count %d\n", (double)pos[0], (double)pos[1], (double)pos[2], (double)b->goal[0], (double)b->goal[1], (double)b->goal[2], (int)info.status, (int)info.start_sector, (int)info.goal_sector, (unsigned)info.sector_count, b->wp_n); }
@@ -127,6 +188,24 @@ void bot_tick(bot_t *b, mission_t *m, const path_bsp *path, path_scratch *scratc
 	int enemy, moving = 0;
 	memset(in, 0, sizeof *in);
 	if (!b->enabled || !g || !m->units || vitals_dead(&g->vitals) || m->cinematic) return;
+	if (m->tick < b->pin_until) {                               /* held on a floorless volume: no falling, no input */
+		game_teleport(g, b->pin_pos, g->player.yaw);
+		b->stuck_ticks = 0; b->unreach_ticks = 0;
+		return;
+	}
+	if (m->cur_bsp != b->safe_bsp) { b->safe_bsp = m->cur_bsp; b->safe_pos[2] = -1e30f; }   /* positions of another BSP are no rescue target */
+	if (g->player.on_ground) memcpy(b->safe_pos, g->player.pos, sizeof b->safe_pos);
+	else if (g->has_phys && m->tick - b->hop_tick >= 4 && b->safe_pos[2] > -1e6f) {
+		/* An assisted hop can land on a volume that lies over no floor of the loaded BSP (its centre is in the next BSP's space): the scripts see the
+		 * player inside it for the tick(s) they need, then the player must not fall for ever (the renderer then has no cluster and draws everything).
+		 * No floor within 80 wu below: put the player back where it last stood. A drop that ends on a floor is left alone. */
+		if (!floor_below(g, g->player.pos, 80.0f)) {
+			float to[3] = { b->safe_pos[0], b->safe_pos[1], b->safe_pos[2] + 0.05f };
+			bot_report(b, m, "rescue (no floor below)", g->player.pos, to);
+			game_teleport(g, to, g->player.yaw);
+			b->rescues++; b->assists++; b->stuck_ticks = 0; b->unreach_ticks = 0; b->replan_at = 0; b->wp_n = 0;
+		}
+	}
 	game_eye(g, eye, fwd);
 	right[0] = sinf(g->player.yaw); right[1] = -cosf(g->player.yaw); right[2] = 0.0f;
 	sl = game_cur_slot(g);
@@ -139,8 +218,7 @@ void bot_tick(bot_t *b, mission_t *m, const path_bsp *path, path_scratch *scratc
 		float hp = gu->vitals.health + gu->vitals.shield;
 		if (b->engage_unit != enemy || hp < b->engage_hp - 0.5f) { b->engage_unit = enemy; b->engage_start = m->tick; b->engage_hp = hp; }
 		if (m->tick - b->engage_start > 300) {
-			b->shun_unit[b->explore_phase++ & 3u] = (int16_t)enemy;
-			b->shun_until[(b->explore_phase - 1) & 3u] = m->tick + 1800;
+			{ unsigned q = b->shun_next++ % BOT_SHUN_MAX; b->shun_unit[q] = (int16_t)enemy; b->shun_until[q] = m->tick + 1800; }
 			b->engage_unit = -1; enemy = -1;
 		}
 	}
@@ -226,7 +304,18 @@ void bot_tick(bot_t *b, mission_t *m, const path_bsp *path, path_scratch *scratc
 			if (sec >= 0 && dist2d(snap, g->player.pos) < 1.0f && dist2d(b->goal, g->player.pos) > 1.5f) sec = -1;   /* the mesh ends here: the goal is off it, go straight there */
 			if (sec >= 0) { hop[0] = snap[0]; hop[1] = snap[1]; hop[2] = snap[2] + 0.05f; }
 			else { hop[0] = b->goal[0]; hop[1] = b->goal[1]; hop[2] = b->goal[2]; }
+			bot_report(b, m, "assist unreachable", g->player.pos, hop);
+			if (b->goal_kind == 1) {                                 /* a volume that two hops in a row did not satisfy (needs something else first): try the other awaited ones for a while */
+				if (b->hop_goal == b->goal_id && b->hop_goal_n) b->hop_goal_n++; else { b->hop_goal = b->goal_id; b->hop_goal_n = 1; }
+				if (b->hop_goal_n >= 3) {
+					ignore_volume(b, m, (uint16_t)b->goal_id, m->tick + 1800);
+					b->hop_goal_n = 0; b->has_goal = 0;
+					if (m->log) printf("[bot] volume %u was not satisfied by 3 hops: set aside for 60 s\n", (unsigned)b->goal_id);
+				}
+			}
 			game_teleport(g, hop, g->player.yaw);
+			b->hop_tick = m->tick;
+			if (!floor_below(g, hop, 80.0f)) { memcpy(b->pin_pos, hop, sizeof hop); b->pin_until = m->tick + BOT_PIN_TICKS; }
 			b->assists++; b->unreach_ticks = 0; b->replan_at = 0; b->wp_n = 0; b->progress_dist = 0.0f;
 		}
 	} else b->unreach_ticks = 0;
@@ -244,7 +333,10 @@ void bot_tick(bot_t *b, mission_t *m, const path_bsp *path, path_scratch *scratc
 			float hop[3];
 			unsigned k = (unsigned)(b->wp_i + 1 < b->wp_n ? b->wp_i + 1 : b->wp_n - 1);
 			hop[0] = b->wp[k].pos[0]; hop[1] = b->wp[k].pos[1]; hop[2] = b->wp[k].pos[2] + 0.05f;
+			bot_report(b, m, "assist stuck", g->player.pos, hop);
 			game_teleport(g, hop, g->player.yaw);
+			b->hop_tick = m->tick;
+			if (!floor_below(g, hop, 80.0f)) { memcpy(b->pin_pos, hop, sizeof hop); b->pin_until = m->tick + BOT_PIN_TICKS; }
 			b->assists++; b->stuck_ticks = 0; b->replan_at = 0;
 		}
 	}

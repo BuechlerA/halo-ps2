@@ -15,8 +15,8 @@ a10 hits: no built-in of these domains is left unregistered), plus the cheap one
    -> **`hs_host_obj_post(m)`** -> `cine_tick`. `pre` feeds the running recordings to their units (`units_apply_cinedef`, flag `UF_NO_AI` while a
    recording runs, the unit is released when it ends) and latches the player's input for `player_action_test_*`; `post` moves attached objects with
    their parent's marker, keeps `unit_suspended` units in place and hands a swapped animation graph back. `mfix_tick` in the fixture is this order.
-2. `hs_host_register_objects(hs)` before `hs_init`. H2 registers its own domains; **`object_beautify` and `player_effect_*` exist in both** (H2's
-   `player_effect_*` is the full one, H1 deliberately does not register them; `object_beautify` is an identical no-op): register H1 first, H2 second.
+2. `hs_host_register_objects(hs)` before `hs_init`. H2 registers its own domains; **`player_effect_*` exist in both** (H2's
+   is the full one, H1 deliberately does not register them; `object_beautify` is H1's only since ADR-085): register H1 first, H2 second.
 3. Flags the main loop must honour (`m->hobj`): `player_input_disabled` (`player_enable_input false`: feed neutral input), `player_look_disabled`
    (`player_camera_control false`: ignore the look stick), `pitch_inverted` (`player0_look_invert_pitch`), `joystick_not_normal`. Zero = enabled.
 4. Anything other than the scripts that destroys an object (AI erase, BSP switch cleanup) should call `hs_host_obj_forget(m, slot)` first (attachments,
@@ -57,7 +57,8 @@ Value types and argument orders were checked against all ten maps (constant type
 | `object_set_permutation` | partial | MODL regions have no names: the permutation name is set in every region that has one. |
 | `object_cannot_take_damage` `object_can_take_damage` `unit_impervious` | full | `UF_INVULNERABLE` on the unit **and** the game vitals are parked (`has_vitals = 0`, restored by `can_take`), so projectile hits (`game_damage_object`) and `units_damage` both do nothing. |
 | `object_set_melee_attack_inhibited` `_ranged_` `unit_set_enterable_by_player` `unit_doesnt_drop_items` | partial | flags only (see wiring 5); no module reads the first three yet except `UF_NO_DROP`. |
-| `object_set_collideable` `object_beautify` | no-op | |
+| `object_set_collideable` | no-op | |
+| `object_beautify` | player only | the player's body becomes a drawn unit (`true`) / the player takes over where it stands (`false`), ADR-085; other objects: no-op |
 | `unit` | full | object -> unit conversion (a handle, `NONE` when unresolved). |
 | `unit_get_health` `unit_get_shield` `object_get_health` | full | fraction of the maximum (1 for an object without vitals, 0 when dead); the player uses `game_t.vitals`. |
 | `unit_get_total_grenade_count` `unit_has_weapon_readied` | full | counts of the unit (the player: the game's); tag id of the readied weapon (WEAP) against the argument. |
@@ -66,11 +67,12 @@ Value types and argument orders were checked against all ten maps (constant type
 | `custom_animation` `unit_custom_animation_at_frame` `custom_animation_list` | full | exact name search in the graph given (`anim_find_graph(tag)`, then `anim_find_name`), unit: `units_custom_animation` (graph swap and return are the unit layer's), non-unit object: graph swapped for the duration and restored in `post`; unknown graph / name: nothing happens (counted in `missing_noted`). The interpolate flag is ignored. |
 | `unit_stop_custom_animation` `unit_get_custom_animation_time` | full | stop; **remaining ticks** (scripts `sleep` on it: the built-in's use as `(sleep (...time...))` is what the call sites show). |
 | `recording_play` `_and_delete` `_and_hover` `recording_kill` `recording_time` | full | recording index = CINE table index; `cine_play_begin` with the object slot as owner, `pre` applies the control with `units_apply_cinedef`, `UF_NO_AI` for the duration; at the end the unit is released (or the object destroyed for `_and_delete`, left under control for `_and_hover`); `recording_time` = **remaining ticks** (0 when none), same `sleep` use. The player cannot be recorded. |
-| `unit_set_seat` | no-op | no vehicle argument: nothing to sit in. |
-| `unit_enter_vehicle` `vehicle_load_magic` | partial | the unit is attached to the vehicle's origin (it travels with it), the seat label is remembered (16-bit hash). No seat animation, no vehicle logic. |
-| `unit_exit_vehicle` `vehicle_unload` | partial | detach (all riders or those of the seat label); units stay where they are. |
+| `unit_set_seat` | partial | `"alert"` sets `UF_ALERT` (the alert animation block, ADR-083); a `pchair...` / `pilot...` custom animation seats the unit on the `seat` marker of the chair pod within 0.15 units (ADR-082); other strings do nothing. |
+| `unit_enter_vehicle` `vehicle_load_magic` | partial | the player: on the seat's marker in the seat's idle pose (ADR-085); other units: the unit is attached to the vehicle's origin (it travels with it), the seat label is remembered (16-bit hash). No seat animation, no vehicle logic. |
+| `unit_exit_vehicle` `vehicle_unload` | partial | detach (all riders or those of the seat label); units stay where they are. The player: plays the seat's `exit` animation attached to the marker, `object_beautify false` places him at its pelvis (ADR-085). |
 | `vehicle_riders` `vehicle_test_seat_list` | full | riders as a list; whether any unit of a list sits in the vehicle (in the seat). |
-| `unit_open` `unit_close` `unit_set_emotion` `vehicle_hover` `units_set_desired_flashlight_state` `unit_solo_player_integrated_night_vision_is_active` (false) `player_add_equipment` (starting profiles are not in SCEN) `device_group_change_only_once_more_set` | no-op | |
+| `unit_open` `unit_close` | partial | a vehicle's `open` animation forwards / backwards (the cryo pod, ADR-085) |
+| `unit_set_emotion` `vehicle_hover` `units_set_desired_flashlight_state` `unit_solo_player_integrated_night_vision_is_active` (false) `player_add_equipment` (player0: the biped's default weapons into empty hands; starting profiles are not in SCEN) `device_group_change_only_once_more_set` | no-op | |
 | `unit_suspended` | partial | the unit is teleported back to where it was when the call was made, every tick. |
 | `player_enable_input` `player_camera_control` `player0_look_invert_pitch` `player0_look_pitch_is_inverted` `player0_joystick_set_is_normal` | full | flags in `hobj` (wiring 3). |
 | `player_action_test_*` (10 tests) and `player_action_test_reset` | full | latched since the reset from the input of `hs_host_obj_pre`: accept = jump, primary trigger = fire, grenade trigger, action = switch / pick up, back = move_y < -0.5, look up / down / left / right = look stick beyond 0.3 in screen sense, all directions = all four. |

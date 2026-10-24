@@ -17,7 +17,7 @@ static int alloc_slot(object_table_t *t)
 }
 
 /* Fills slot `slot` for definition `def` at `pos` with Halo-order rotation `rot` (yaw, pitch, roll). Returns 0 or -1 (no model). */
-static int make_object(object_table_t *t, const object_world_t *w, int slot, unsigned def, const float pos[3], const float rot[3], const char *variant,
+static int make_object(object_table_t *t, const object_world_t *w, int slot, unsigned def, const float pos[3], const float rot[3], const char *variant, unsigned desired,
                        int placement, uint32_t bsp_mask)
 {
 	scen_def d = scen_get_def(w->scen, def);
@@ -48,7 +48,8 @@ static int make_object(object_table_t *t, const object_world_t *w, int slot, uns
 	mi = model_get(w->models, (uint32_t)model);
 	o->radius = d.radius > 0.0f ? d.radius : mi.radius;
 	o->region_count = mi.region_count > OBJ_MAX_REGIONS ? OBJ_MAX_REGIONS : mi.region_count;
-	model_select_permutations(w->models, &mi, variant, o->perm);
+	if (variant && variant[0]) model_select_permutations(w->models, &mi, variant, o->perm);
+	else model_select_variant(w->models, &mi, desired, (uint32_t)(placement >= 0 ? placement : slot) * 2654435761u ^ (uint32_t)def * 40503u, o->perm);
 	for (r = 0; r < o->region_count; r++) if (o->perm[r] >= mi.permutation_count) o->perm[r] = 0;
 	/* stagger animation phase by position so identical idles do not move in lockstep */
 	o->frame = (float)((unsigned)(fabsf(pos[0] * 7.0f + pos[1] * 13.0f)) % 64u);
@@ -64,7 +65,7 @@ int objects_spawn_placement(object_table_t *t, const object_world_t *w, unsigned
 	p = scen_get_placement(w->scen, placement);
 	slot = alloc_slot(t);
 	if (slot < 0) { t->skipped_cap++; return -1; }
-	if (make_object(t, w, slot, p.def, p.pos, p.rot, p.variant, (int)placement, p.bsp_mask) != 0) {
+	if (make_object(t, w, slot, p.def, p.pos, p.rot, p.variant, p.permutation, (int)placement, p.bsp_mask) != 0) {
 		t->obj[slot].flags = OBJ_F_FREE; t->obj[slot].model = -1;
 		if ((unsigned)slot + 1 == t->count) t->count--;
 		t->skipped_no_model++;
@@ -212,7 +213,11 @@ static void apply_face(const object_world_t *w, const model_info *mi, int model,
 	anim_graph g;
 	if (!f || f->graph <= 0 || !w->anims || (unsigned)(f->graph - 1) >= w->anims->graph_count) return;
 	g = anim_get_graph(w->anims, (uint32_t)(f->graph - 1));
-	if (f->emotion && f->emo_anim > 0) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emotion - 1), 1.0f, local, n);
+	if (f->emo_anim > 0) {
+		float b = (float)f->emo_blend * (1.0f / 255.0f);          /* easing between two emotion frames: the previous one fades out as the new one fades in */
+		if (f->emo_from && f->emo_from != f->emotion && b < 1.0f) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emo_from - 1), 1.0f - b, local, n);
+		if (f->emotion) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emotion - 1), (f->emo_from && f->emo_from != f->emotion) || f->emo_blend < 255 ? b : 1.0f, local, n);
+	}
 	if (f->talk && f->talk_anim > 0) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->talk_anim - 1u, 0.0f, (float)f->talk * (1.0f / 255.0f), local, n);
 }
 
@@ -220,7 +225,7 @@ void objects_set_face_graph(object_t *o, const object_world_t *w, int graph)
 {
 	anim_graph g;
 	int emo, talk;
-	o->face.graph = o->face.emo_anim = o->face.talk_anim = 0;
+	o->face.graph = o->face.emo_anim = o->face.talk_anim = 0; o->face.emo_blend = 255; o->face.emo_from = 0;
 	if (graph < 0 || !w->anims || (unsigned)graph >= w->anims->graph_count) return;
 	g = anim_get_graph(w->anims, (uint32_t)graph);
 	emo = anim_find_name(w->anims, &g, "stand emotions");
@@ -237,8 +242,44 @@ unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsig
 	return objects_pose_model_face(w, model, graph, anim, frame, root, out, NULL);
 }
 
+/* inverse(bind-pose world) of every node of a model, direct mapped by model index (BIND_CACHE entries, 64 nodes each): recomputing the bind chain and one inverse per node for every posed
+ * object was most of the cost of a pose. An entry is valid for one opening of the model section (its generation) and one model index; a colliding model replaces it. */
+#define BIND_CACHE 24
+static struct { uint32_t generation; int model; unsigned n; mat4 inv[SKEL_MAX_NODES]; } s_bind[BIND_CACHE];
+
+static const mat4 *bind_inverse(const object_world_t *w, int model, const model_info *mi, const int16_t *parent, unsigned n)
+{
+	unsigned i, e = (unsigned)model % BIND_CACHE;
+	if (s_bind[e].generation == w->models->generation && s_bind[e].model == model && s_bind[e].n == n) return s_bind[e].inv;
+	{
+		skel_xform bind[SKEL_MAX_NODES];
+		static mat4 def[SKEL_MAX_NODES];
+		mat4 ident;
+		for (i = 0; i < n; i++) {
+			model_node nd = model_get_node(w->models, mi, i);
+			memcpy(bind[i].rot, nd.rotation, sizeof bind[i].rot);
+			memcpy(bind[i].trans, nd.translation, sizeof bind[i].trans);
+			bind[i].scale = nd.scale;
+		}
+		mat4_identity(&ident);
+		if (skel_world(def, bind, parent, n, &ident) != 0) return NULL;
+		for (i = 0; i < n; i++) mat4_rigid_inverse(&s_bind[e].inv[i], &def[i]);
+		s_bind[e].generation = w->models->generation; s_bind[e].model = model; s_bind[e].n = n;
+	}
+	return s_bind[e].inv;
+}
+
+static unsigned pose_impl(const object_world_t *w, int model, int graph, unsigned anim, float frame,
+                          const mat4 *root, object_nodes_t *out, const object_face *face, int skin);
+
 unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, unsigned anim, float frame,
                                  const mat4 *root, object_nodes_t *out, const object_face *face)
+{
+	return pose_impl(w, model, graph, anim, frame, root, out, face, 1);
+}
+
+static unsigned pose_impl(const object_world_t *w, int model, int graph, unsigned anim, float frame,
+                          const mat4 *root, object_nodes_t *out, const object_face *face, int skin)
 {
 	model_info mi;
 	skel_xform local[SKEL_MAX_NODES];
@@ -274,23 +315,11 @@ unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, 
 	if (face && (face->emotion || face->talk)) apply_face(w, &mi, model, local, n, face);
 	if (n == 0) { out->count = 0; return 0; }
 	if (skel_world(out->world, local, parent, n, root) != 0) { out->count = 0; return 0; }
-	{
-		/* skinning matrices: vertices are stored in bind-pose model space (docs/11) */
-		skel_xform bind[SKEL_MAX_NODES];
-		static mat4 def[SKEL_MAX_NODES];
-		mat4 ident, inv;
-		for (i = 0; i < n; i++) {
-			model_node nd = model_get_node(w->models, &mi, i);
-			memcpy(bind[i].rot, nd.rotation, sizeof bind[i].rot);
-			memcpy(bind[i].trans, nd.translation, sizeof bind[i].trans);
-			bind[i].scale = nd.scale;
-		}
-		mat4_identity(&ident);
-		if (skel_world(def, bind, parent, n, &ident) != 0) { out->count = 0; return 0; }
-		for (i = 0; i < n; i++) {
-			mat4_rigid_inverse(&inv, &def[i]);
-			mat4_mul(&out->skin[i], &inv, &out->world[i]);
-		}
+	if (skin) {
+		/* skinning matrices: vertices are stored in bind-pose model space (docs/11); inverse(bind world) is constant per model, so it is kept (bind_inverse) */
+		const mat4 *inv = bind_inverse(w, model, &mi, parent, n);
+		if (!inv) { out->count = 0; return 0; }
+		for (i = 0; i < n; i++) mat4_mul(&out->skin[i], &inv[i], &out->world[i]);
 	}
 	out->count = n;
 	return n;
@@ -299,6 +328,11 @@ unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, 
 unsigned objects_pose(const object_t *o, const object_world_t *w, object_nodes_t *out)
 {
 	return objects_pose_model_face(w, o->model, o->graph, o->anim, o->frame, &o->root, out, &o->face);
+}
+
+unsigned objects_pose_world(const object_t *o, const object_world_t *w, object_nodes_t *out)
+{
+	return pose_impl(w, o->model, o->graph, o->anim, o->frame, &o->root, out, &o->face, 0);
 }
 
 unsigned objects_pose_static(const object_t *o, const object_world_t *w, object_nodes_t *out)
@@ -320,7 +354,7 @@ int objects_spawn_def(object_table_t *t, const object_world_t *w, unsigned def, 
 	if (def >= w->scen->def_count) return -1;
 	slot = alloc_slot(t);
 	if (slot < 0) return -1;
-	if (make_object(t, w, slot, def, pos, rot, NULL, -1, 0) != 0) {
+	if (make_object(t, w, slot, def, pos, rot, NULL, 0, -1, 0) != 0) {
 		t->obj[slot].flags = OBJ_F_FREE; t->obj[slot].model = -1;
 		if ((unsigned)slot + 1 == t->count) t->count--;
 		return -1;

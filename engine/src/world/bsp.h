@@ -25,6 +25,7 @@ typedef struct {
 	uint32_t shader_id;
 	uint16_t lightmap_page, uv_shift;
 	uint32_t batch_count, triangles;
+	float    uv_world;            /* world units per texture uv unit (+0x10; 0 = unknown): the streamed texture variants' texel density test, docs/37 */
 } bsp_material;
 
 typedef struct {

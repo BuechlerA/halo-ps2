@@ -523,7 +523,42 @@ the tracker top right and everything flush with the screen edges; a gameplay fra
 in their bottom-left corner. **Consequences**: HUD packs must be rebuilt (`hudconv.py` per map, 0.3 s each; the reader rejects version 1); the velocity-sensitivity rule
 (still enemies hidden) and blip fading are not modelled; `motion scale` is exported but the radar radius comes from the centre offset. Details: docs/20-hud-section.md.
 
-## ADR-061 Intro parity with the Xbox: sky node pose and palette, additive blends, lightmap tone curve and chroma, cinematic near plane
+## ADR-061 HUD offsets count inward from right anchors, meter bitmaps are flat masks, digits keep their cell size, weapon overlays are drawn
+**Decision**: `hudconv.py` places right-anchored elements at `x = anchor - off_x - w` (the offset counts inward, like the motion sensor centre already did; y stays down,
+bottom anchors keep their unverified mirror); the a8y8 meter bitmaps (`hud_unit_meters`, `hud_ammo_meters`) are converted to white alpha masks (their luminance is the tag's
+fill-order ramp, not a colour), so a meter is one flat tint clipped by its value; `ui/hud.c` draws a digit sprite at its own cell size (18 x 12) centred on the 9 px advance
+instead of squeezing the cell into the advance, and draws the weapon HUD's overlay sub elements (role 9: the "x" and clip icon after the ammo count). **Why**: the HUD of the
+a10 game scene was a "buggy mess" (no readable ammo digits, health segments 60 px right of the shield plate, shield fill 13 px past the panel, black-to-blue luminance
+gradients on the bars); an Xbox attract-demo frame (xemu, 3.5 px per virtual pixel) shows the shield / health plate, the "540 x" panel and the three-row ammo bar, and the
+corrected layout lands within 2 px of it. **Consequences**: `HUD0` stays version 2, so a pack built before this change is accepted but wrong: rebuild every HUD pack
+(`hudconv.py` per map). Meters clip by width, not by the Xbox's per-pixel luminance threshold (partial segments show, the ammo bar empties right to left rather than
+row by row); meter translucency / opacity and the grenade type of the panel colour are not modelled. Details: docs/20-hud-section.md.
+
+## ADR-062 Falling out of the world kills the player; the bot holds floorless hops and is rescued; the world is not drawn around a void camera
+**Decision**: (1) `main.c` kills an airborne player who is more than 30 wu below the loaded BSP's lowest vertex (`FALL_KILL_MARGIN`); the existing death path reverts to the last checkpoint after 3 s.
+(2) While the player is airborne with no floor within 80 wu below, a camera that lies in no BSP cluster draws no world (`bsp_render_set_void_view`, `vis_t.skip_outside`); the free camera (no game) still draws every cluster in view.
+(3) The mission bot's assisted hop onto a volume with no floor under it (volumes of the next BSP lie in its space, beyond the loaded BSP's collision) holds the player there for 20 ticks so the scripts can poll the volume,
+then puts the player back on the last standing position (`rescues`, counted as assists); a volume that three hops in a row do not satisfy is set aside for 60 s; three awaited volumes in a row that are off the navigation mesh
+make the bot hop onto the current one; the ignore list holds 16 volumes and the shun list 12 hostiles (4 slots were overwritten before they expired). **Why**: the a10 mission run (2026-10-18) spent about 100 s of
+its 750 s with the player falling forever after a hop onto such a volume (BSP 0's floor ends at x = -33.1, volume 91 lies at x = -29.4): the renderer found no cluster and drew every cluster in view (up to 55k triangles,
+2441 batches, EE 35-50 ms), 1635 of 20749 frames (7.88 %) were late, and the scripts only advanced because the falling player happened to cross the next volumes. **Consequences**: the same run now
+wins at 773 s with 60 assists (24 of them rescues), no fall, no void frame, 712 of 24256 frames late (2.94 %); a human who clips out of the map dies instead of falling for ever. The remaining late frames are real scene load, not
+the bot: the BSP 6 finale (EE 29-52 ms, 173 consecutive frames) and the crowd scenes of BSP 0 / 8 (EE 16.5 ms but the GS finishes late: 21k object triangles, 964 batches). Diagnostics added: `[bot]` lines for every assist
+and rescue (target, floor below, awaited volumes), `prof2 1` (EE prep split into sim / object animation / render build per 60 frames), unit body integrations and airborne units in the mission status line.
+
+## ADR-063 Frame pacing no longer loses a vblank to the stream pump; carried units are pinned, not integrated; objects draw nearest first under a batch cap that follows the LOD level
+**Decision**: (1) The vsync burn before the flip (`main.c`) recomputes the elapsed vblanks after `stream_ee_pump` and only then waits for a vsync; a pump that ran across the vblank it was about to wait for used to make `graph_wait_vsync` catch the *next* one, so the frame landed three vblanks (50 ms) after the last flip instead of two.
+(2) `units_pin` holds a unit that a script suspended (`unit_suspended`) or an attachment carries (`objects_attach`): position and yaw are set, velocity zeroed, `on_ground` kept at 1 and the settle count kept, so `step_body` skips the capsule sweeps (they used `units_teleport` every tick, which cleared `on_ground`, so every carried unit swept for nothing and ran the airborne action).
+(3) `mission_sync_devices` decodes each device's placement and animation once (static table) instead of every tick. (4) The object pass culls first, ranks by nearest surface, poses and draws nearest first and stops at the batch cap (objects beyond it cost no pose, light or model walk), and the cap is
+900 x 100/100/100/85/60 % at the LOD controller's levels 0-4 (`lodctl_batch_cap`). (5) Two options, both **off by default** because they change the simulation: `unitlod <wu>` (bodies farther than that from the player integrate every other tick, the existing distance LOD that nothing enabled) and `cinelod 1`
+(all bodies integrate every other tick while a cinematic runs). (6) Diagnostics: `prof2 1` splits the sim tick (mapp, serve, bspsw, stream, fx, audio, hud: avg/peak per 60 frames), `[prof] DROP` lines carry the EE time, the GPU wait, the vsync burn and the present time, `airlog 1` lists units that are not on the ground.
+**Why**: measured on the a10mission run (2026-10-18), not guessed. The "crowd scenes of BSP 0 / 8" were not GS-bound: their drop lines read EE 16.6 ms, GPU wait 0.0, burn 16.8, present 16.7, i.e. the pacing race above (EE work ends within a pump of the vblank); 470 of the 703 late frames were of this kind. The BSP 6 finale
+(EE 29-52 ms) was EE-bound: sim 11-17 ms of which `units` 5 ms (18 body integrations per tick at about 0.27 ms each, mostly carried or cutscene units), `ai` 1.5, `post` 1.2, devices 1.2 (the per-tick decode), `stream` 1.4; render build 15-28 ms with the object pass at its 900-batch cap after posing every visible object.
+**Consequences**: the same run (same seed, same bot) now ends with identical simulation results - `game_won` at tick 23210, 60 assists of which 24 rescues, 24256 frames - and **90 of 24256 frames late (0.37 %, was 703 = 2.90 %)** on the recompiler at normal speed; `a10game` 0 of 1081. 60 of the 90 are still the finale (EE 34-41 ms: sim 9-15 ms, build 15-20 ms), 14 more the BSP 6 load (one 2.4 s stall per BSP switch, 8 for BSP 0 / 7), the rest single stalls. Budget decision for the finale: it stays over budget by 1-8 ms for about 2 s
+at the top LOD level; the way to buy that back is `cinelod 1` (about 2.5 ms of `units`), but a run with it (and with `unitlod 20`) takes a different path through the mission (win at tick 24201-24600, 73-89 assists instead of 60, 0.7-0.9 % late), so the Gate M4 numbers are quoted without them until the bot's route is stable against sim changes.
+`vis` in the profiler now counts drawn objects only (objects past the cap are in `skip`). Carried and suspended units now play the ground idle animation instead of the airborne one.
+
+## ADR-064 Intro parity with the Xbox: sky node pose and palette, additive blends, lightmap tone curve and chroma, cinematic near plane
 **Decision**: (1) `obj_render_sky` skins the sky model with the bind-pose inverse of its node (a sky has no animation, so Halo poses its nodes with the identity and
 the skin matrix `world(pose) * inverse(world(default))` reduces to the inverse); a10's `sky_x10`/`space` node is yawed 90 degrees by default, which turns the dome, galaxy and
 planets by -90 degrees: without it the intro's planet stood behind the camera. (2) `SKY0` carries the model of the scenario's second sky (u32 at +60, was padding); the sky pass
@@ -542,7 +577,7 @@ so linear gain and full chroma doubled every lit surface to white and tinted it 
 orange on the Xbox, near-black here; Keyes' uniform and the marines too), Cortana's purple hologram (multi-stage `sotr` colours), screen effects (desaturation, convolution), the
 exhaust and galaxy glow (additive sprites / bloom), the halo ring in the first shot (edge-on here), marines' rifles, and the intro's pacing at the end of the bridge (about 4 s early: `sound_impulse_time`).
 
-## ADR-062 Colour change (`CCHG`, a second pass per part), object lighting on the BSP's tone curve, XBE analysis
+## ADR-065 Colour change (`CCHG`, a second pass per part), object lighting on the BSP's tone curve, XBE analysis
 **Decision**: (1) Object tags carry up to four change colours (object tag +0x164, each with up to eight permutations of cumulative weight and a lower / upper rgb bound); a `shader_model`
 with a colour change source a..d (+0x4C) and a multipurpose map (+0xBC, blue channel = mask) gets a second texture in its `OTEX` binding (the base map with the mask as alpha,
 `tex_binding.change` / `texture2`, the 16-bit field that was reserved at +10 and the first of the free bytes at +24), and `objpack.py` writes a `CCHG` section (`chgconv.py`,
@@ -556,7 +591,7 @@ The tag data answered colour change completely; the executable showed that Halo 
 of doubling it.
 **Consequences**: object packs must be rebuilt (`objpack.py` / `build-world.sh`; the `OTEX` and `SCEN` sections change, a `CCHG` section is new, a pack without it still loads with no tints);
 models are not duplicated (the second pass reuses the part's batches), the cost is one more draw of the tinted parts (crew, marines' faces, props with a change colour) and ~0.4 MiB of `OTEX` on a10.
-Marine armour, rifles, Cortana's hologram colour and the screen filters are still open (ADR-061).
+Marine armour, rifles, Cortana's hologram colour and the screen filters are still open (ADR-064).
 
 ## ADR-063 Halo's euler convention, widescreen camera, observer interpolation, declared sound lengths, held weapons
 **Decision**: (1) Scenario placements and camera points use Halo's `euler_angles3d_to_matrix` (XBE 0xb67f0: yaw about z, then pitch and roll about the *world* y and x), implemented as
@@ -756,6 +791,216 @@ the direction is the probe's (negated); a per channel fill term `clamp(2 x A + 0
 flagged objects) against the BSP from the object's position, takes the hit triangle's lightmap vertex data barycentrically (`FUN_00091d60` decodes it), and falls back to a default record (0x1e9c90) when the object has no cluster. So the Xbox lights an object from the lightmap of the surface
 under it, not from a per cluster average. Not decoded: the scale of A (the lightmap's HDR range), the pixel / vertex shader that consumes the record, and `FUN_000523d0`'s ray set. Our probes (scenconv `cluster_lights`) average the cluster's lightmap; the cinematic gain of ADR-074 (2.5 / 2.3 / 2.6, ambient x 1.3) stays a fit
 for the missing HDR range; a faithful version would sample the lightmap under each object at run time (a downward ray into the BSP's lightmap pages, which the EE has) and apply 0.4 A + 0.03.
+
+## ADR-077 Intro fixes: size-aware draw distance (escorts blinked out), dithered sky and framebuffer, relief-baked Pillar hull, cheaper object posing
+(Numbered 077 because another branch already uses 076.)
+**Decision**: (1) `obj_render_pass` no longer culls an object only for being past `objdist` (200 units x the LOD controller's scale): the distance cut applies to objects smaller than
+`objfarpx` (20 px across on the 640 px scale) and not at all while a cinematic camera runs (`hide_fp`); the frustum test stays first and the sub-pixel test (3 px) stays. (2) The colour
+buffer is CT16S, so `video_add_setup_env` turns the GS dithering on (`DTHE`, 4x4 matrix); sky bitmaps (`objtex.convert_object_texture`) are quantised at full colour precision
+(`MASK_RGB8`, no 5-6-5 reduction before the median cut) and mapped with Floyd-Steinberg error diffusion (`Quantiser.dithered`, `texconv.convert_rgba(smooth=True)`). (3) The Pillar of
+Autumn's hull is BSP geometry of the `poa-*` environment shaders (512 x 512 sources, base map only; the Xbox lights them through their bump map, a p8-bump height field): for
+bitmaps under `texconv.BUMP_BAKE` the height field is baked into the colour map as fixed-light relief shading (`bake_relief`, light from the upper left, strength 1.1, gain 0.9: the lit hull measured 10 .. 13 % brighter than the video at ticks 1050 / 1060, 0.99 .. 1.02 after) at source
+resolution before the shrink, and the result is a 256 colour dithered texture; `poa-registry` (the ship's name, 1024 x 128) is a hero bitmap at 512 x 64. (4) `objects_pose_world` poses
+the node world matrices only; marker lookups (`marker_world`: held weapons, attachments, fx) and the collision poses (`game.c`) use it, and the skinning matrices of `objects_pose` use a
+per model cache of inverse bind matrices (`bind_inverse`, 24 entries, keyed by `model_section.generation`) instead of rebuilding the bind chain for every posed object. (5) A streamed hi-res texture whose upload fails (no room in the GS texture cache) is not read from the disk again for 90 frames (`HIRES_RETRY`, `hires_tex0`); the 4x4 GS dither matrix is `-4 3 -2 1 / 2 -1 0 -3 / -1 0 -4 3 / 1 -3 2 -2` (the usual one left a column pattern: stripe energy 2.58 -> 1.03). (6) `update_held_weapons`
+keeps the marker indices (a string search each) and, for a weapon with no animation of its own, the inverse grip matrix; the unused first grip pose is gone.
+**Why**: (1) trace of the intro (`objtrace "first last step"`, new): the three escort Pelicans (objects 499 .. 505, radius 12) sit 100 .. 570 units from the camera and cover 20 .. 110 px,
+so each blinked out whenever its distance crossed about 210 (only one of the three drew at tick 820); the same cut hid distant debris, ships and engines everywhere in cinematics
+(visible objects at ticks 600 .. 1100: 3 .. 11 before, 15 .. 25 after). (2) the nebula (128 x 128 source, magnified) showed large flat patches: a 5-bit framebuffer plus a 5-6-5 reduced palette
+turned a dark gradient into a few levels. (3) the hull textures are dark blocky mottle; the Xbox's crisp plate pattern is the bump map. (4)/(5) the mission tick's post hook cost 11.7 ms
+of every 33.3 ms frame (the bridge crew: 3 skeleton poses per armed unit, each with bind chain and an inverse per node).
+**Measured at real speed (1x), whole a10 intro, pre-change ELF against this one, same packs and config**: dropped frames 927 of 3701 (25.1 %) -> 16 (0.43 %); EE prep at ticks 300 / 600 / 900: 19.7 / 23.2 / 26.5 ms -> 11.8 / 16.3 / 19.5 ms; the bay shot at tick ~1200 (a hi-res variant that could not be uploaded was re-read every frame) object pass 20 ms -> 4.5 ms, `hires 0` gave the same, which is how the cause was found.
+**Also measured** (a10 mission, PCSX2 recompiler at SPEED=8, EE ms are the engine's own timers and only comparable run to run): post hook 11.67 -> 4.11 ms per tick; EE prep at frame 420 22.1 -> 14.2 ms,
+at 660 24.5 -> 16.7 ms (with the escorts and far objects drawn again: objects 5.6 ms at ticks 900 .. 960 against 4.4 before). GS cost of the dithering and of the 256 colour hull textures is
+unmeasured (PCSX2 does not model it; ADR-022). `a10.tex.hp2` grows 1.5 -> 1.8 MiB (hull textures PSMT8, registry 512 wide).
+**Consequences**: TEX and OBJ packs must be rebuilt (`scripts/build-world.sh a10`; sky textures are 256 colours with dithering, `a10.tex` has the baked hull). Other bump maps are not baked
+(`BUMP_BAKE` lists prefixes). New debug keys: `objtrace "first last step"` (every live object's cull inputs, `[obj]` lines), `objfarpx`.
+Sky banding, measured at identical ticks: flat-neighbour fraction 0.87 -> 0.37 (tick 300), 0.73 -> 0.23 (tick 600); at 4x zoom the dither shows as a faint column pattern, invisible at 1x. Relief light direction (`texconv.BUMP_LIGHT`): all four diagonals rendered at tick 1050 look alike next to each other and the 360p video resolves no directional relief, so the current one stays (the Xbox's dot3 follows the lightmap and is not decoded); GS cost of the dither and the 256 colour hull is unmeasured.
+
+## ADR-078 Model triangles are clipped on the EE near the lens (the captain's face), facial animation is eased; what the captain's walk is not
+**Decision**: (1) `model.vsm` collapses every triangle with a vertex nearer than the camera's near plane or beyond the guard band, as `bsp.vsm` does. People never come that close, but the
+intro's extreme close-up of the captain (ticks ~3210 .. 3290, camera point 50, near clip 0.03) has his face 0.028 .. 0.035 from the lens: the nose and the cheek's silhouette lost whole triangles
+(`cinenear` only sets a floor under the script's near clip, which is why lowering it changed nothing, and widening the guard band changed nothing either). `obj_render.c` now decodes a batch on the EE
+when the object is within 2 units + its radius of the lens and a conservative test says a vertex may be out (`batch_unsafe`: the batch's box sphere under the palette nodes its vertices use),
+clips the triangles the VU1 would drop with the BSP's clipper (`clip_polygon`, `clip_pack_vertex`) and sends them through PATH2 right after the batch (`emit_batch_clipped`: two node skinning,
+ambient + sun x n.l, uv, fog as the VU1 program computes them). The clip position is computed first and colour / uv only for triangles that need clipping; the work is capped at `objclipms` (3)
+ms a frame, nearest objects first; `objclip 0` switches it off. (2) Facial animation is eased: `unit_set_emotion` blends from the previous emotion frame to the new one over 6 ticks
+(`object_face.emo_from / emo_blend`, applied in `apply_face`), and the jaw follows the mouth data through a low pass (attack 0.65, release 0.35 per tick, `object_face.talk_s`).
+(3) `animlog 1` prints every `custom_animation` call and whether its graph and name resolve.
+**Why**: (1) the VU1 probe that replayed the model program's tests on the EE named the cause (all dropped triangles: `near`, vertices at w 0.028 .. 0.035 against a near of 0.030); about 96 triangles
+a frame are clipped in the bridge shots, so the jagged edges were not only on the captain. Cost measured at real speed over the whole intro: the first version (every batch tested against all
+its palette nodes, all vertices decoded) dropped 825 of 3701 frames, this one 24 (0.65 %), 16 with `objclip 0`. (2) a frame-to-frame measurement of the eye region over ticks 3216 .. 3296 showed the face
+frozen (difference 0.0) except one jump of 8.1 at the emotion change; now three steps of about 3.
+**Findings** (user reports on the same scene; (a) is resolved by ADR-080): (a) The captain's hands-behind-back walk is NOT what "stand unarmed move-front" / "stand unarmed idle%1" give: forward kinematics of their
+data and the engine's own node positions (`nearlog` + `nearnodes`) agree, and put the hands at the hips' sides. The graph also has `stand unarmed aim-still` (an overlay of 9 frames driving the arms and
+the body); the unit layer drops overlay animations (`is_overlay` -> -1), so it is never applied. Applying frame 4 of it on top of the base (either composition order) raises the arms over the head, replacing the
+rotations turns the whole body over: its semantics (and the frame for a neutral aim) are not understood, so the experiment was removed. (b) The bridge pilots' seated pose and the bridge screens
+(video: lit blue displays; here dark or missing) were not investigated. (c) 'Exact' camera and transform recovery: the camera points, the ticks and the near clip are taken from the scenario / script as they are;
+the shot puts the lens 3 cm from the nose, which the Xbox clips the same way (not verified against it).
+**Consequences**: no pack changes. New cfg keys: `objclip`, `objclipms`, `animlog`; `objtrace` / `nearlog` / `nearnodes` stay the debug tools.
+
+## ADR-079 Self illumination of environment shaders: an additive glow pass (the bridge screens were dark)
+**Decision**: a `shader_environment` has a self illumination map (+0x254: `monitors glow`, `light glow`, `poa-a glow` .. `poa-d glow`, `tech rack mount glow`, `vending machines glow`) that the converter ignored (ADR-004/005),
+so every screen, lamp and lit window drew as its dull base map. The glow map is a mask per colour channel (the screens' glow is red only on the red border and blue only on the blue picture, a lamp's is pure red; 337 distinct
+values on `monitors glow`): the emission is the base map times the glow map per channel. `texconv.glow_texture` bakes that product at the base map's converted size and stores it as an extra texture whose index goes in the
+binding's `texture2` (BSP materials have no colour change; the field is the one ADR-065 added for objects). `bsp_render_build` has a pass 3 after the lightmap multiply: every visible material with `tex2 >= 0` is drawn again with
+that texture, additive (`Cs + Cd`), Z tested and read only, so the lightmap does not dim it (cfg `glow 0` switches the pass off). `GLOW_BUDGET` caps the glow textures of a map at 384 KiB.
+**Why**: the Xbox shows the bridge's wall and ceiling displays as bright blue pictures with red labels and the consoles lit; here they were dark. Measured on a10: 9 glow textures, TEXS 1.80 -> 1.85 MiB, level arena
+high water 24731 -> 25063 KB of 25600 (about 540 KB of margin), GS texture window 137 of 271 pages free (was 159); the whole intro at real speed drops 24 of 3701 frames, as before.
+**Not done**: the shader's animation (self illumination colour A / B and its function: flicker of the fluorescent lights, the pulse of alert lights; the fields at +0x230 .. +0x254 are read as 1.0 / 0 and not used), the same
+for object shaders (`soso` self illumination), the other maps' packs (rebuild with `scripts/build-world.sh`; b30 has no arena margin, the budget may drop its glows).
+**Consequences**: `a10.tex.hp2` must be rebuilt; a pack without glow textures draws as before.
+
+## ADR-080 Unarmed non-player units stand in the `alert` animation block: the captain's and the crew's hands behind their backs
+**Decision**: a unit's animation graph has one block per posture / state (`stand`, `crouch`, `alert`, `flee`, ... in `characters\marine\marine`; the captain's has `stand` and `alert`). The unit layer only ever used `stand` and `crouch`.
+`units.c` now gives an unarmed unit that is not the player and not crouched a third posture, 2 = `alert` (`unit_t.posture`, `find_action` looks the action up in the `alert` block, falling back to `stand`), when the graph has an
+`alert` block (`unit_t.alert_state` caches the lookup). `alert unarmed idle%1` / `alert unarmed move-front` are the poses with the forearms tucked behind the back and the elbows out that the Xbox shows for Keyes walking across the bridge (video
+60 .. 68 s) and for the crew standing at their consoles.
+**Why**: `stand unarmed move-front` / `idle%1` hang the arms at the sides (confirmed on the engine's own node positions, `nearlog` + `nearnodes`, and by posing each candidate: `forceanim`); rendering the captain with every candidate animation at tick 1860
+(stand walk, alert walk, alert idle, think_1, think_2, stand idle) showed only the `alert` ones with the hands behind the back. The aim-still overlay, the first suspect (ADR-078), is the identity at its neutral frame (frame 4 of 9: every node's
+rotation is the identity, angle 0), so it cannot hold the pose; the experiment that applied it was removed. Checked at ticks 1800, 1860, 1920, 1980, 2040, 2100 against the video: the walk and the console pose match; the intro still drops 23 of 3701 frames at real speed.
+**Open**: which state the Xbox really uses (an AI actor's alert state, a placement flag, the cinematic) is not known: this is a rule that reproduces the video for unarmed non-player units, so unarmed units in gameplay (a10 crew in the corridors) also take it;
+armed units keep `stand`. Debug: `forceanim "obj anim frame"`, `scripttrace 1|2` (every built-in call with its first arguments), `animlog`.
+
+## ADR-081 Opening cutscene audit against the Xbox video: the cinematic score was silent, its tracks play once and layer; hangar and cryo lighting per BSP
+**Decision**: (1) The reference video's clock is the engine's tick / 30 + **1.18 s** (the recording's lead-in, fitted on `x10_music01`: spectral correlation 0.98 at a constant start of 1.17 s) and, after the bridge cut, about 0.23 s more (7 ticks; the Xbox's
+BSP load at tick 1306 shows as black from video 44.6 to 47.0 s, a hard pop, with script time running on: not reproduced). With that offset every dialogue line, cut and music start of the first 7300 ticks agrees within 0.25 s (earlier sheets that used offset 0 compared
+shots 1.4 s apart). (2) `sound_looping` tags with the tag's **"not a loop" flag** (`STRM_LOOP_NOT_A_LOOP`, 18 on a10: the `x10` / `x20` / `x30` score and foley, `a10_02`, `a10_cryoexit_foley`) play through once (`stream_voice.once`)
+and are never stopped by the script, so each start layers over the ones still running: music01 (114 s from tick 1), foley1 (2177), music02 (3364), foley2 (3484), music03 (5673), foley3 (6087), music04 (6102), cryo foley (6987). The stream player has **6 voices**
+(kind slots 0 .. 2, layers `STREAM_SLOT_LAYER0 .. +2`), `stream_free_slot`, `stream_slot_owner` (a stop or alternate only reaches the voice that belongs to the loop tag), `MISC_LOOPS` 16. Overlapping `sound_impulse_start` lines take a free layer (the marines' cheer,
+a line over the foley); only when every voice is busy does a new line replace the dialogue slot's. (3) `sound_class_set_gain "music" 0` at tick 1 no longer mutes a play-once track started afterwards (it silenced the whole bridge score until tick 3364; the Xbox video has it from the first
+second at the converted level, -1 dB overall). (4) Mono streamed impulses are trimmed by 1/sqrt(2) (`MONO_CENTRE_TRIM`): measured on isolated lines the Xbox dialogue sits at 0.45 .. 0.6 of the player's unity, 0.47 median in 10 s band-power fits, i.e. equal-power centring.
+(5) Lightmap tone is per BSP (`texconv.BSP_TONE`, used by the LM pages and by the object probes of `scenconv.map_lights`): the hangar (`x10hangar`) is linear gain 0.8 with object gain 0.65, the cryo bay (`a10a`) linear 1.0 with object gain 1.0; the other BSPs keep the bridge's curve (gamma 0.5, gain 1.7).
+**Why**: (1) the 1.18 s offset was found by matching the decoded stream of the loop against the video's audio, not by eye. (3) `scripttrace 2` (new knowledge: every built-in call of the intro) showed `sound_class_set_gain(music, 0.0)` and `sound_looping_start(music01)` in the same tick, and the engine multiplied the loop's gain by the class gain. Predicted mix (engine events, decoded sources placed at
+their ticks) against the video, log-mel correlation in 6 s windows: mean 0.22 -> 0.40, the first 14 s 0.00 -> 0.84. (5) Aligned frames, luminance percentiles p5 .. p80 (video / before / after): hangar 2 7 13 22 32 42 55 71 87 against 14 23 37 52 66 76 88 99 111 (mean error 25.9) and 3 8 13 20 30 40 51 66 81 against 0 7 15 24 33 43 56 65 91 (2.0); with the
+object probes 31 -> 3.5 (walls) and 27 -> 5.8 (marines, warthogs); cryo bay 22 -> 9. The lightmaps of the hangar are not darker than the bridge's (mean luma 99 against 94): the Xbox shades them darker, the bridge-fitted curve lifted every shadow.
+**Measured, not changed**: the video has a continuous floor of about 55 dB in 25 .. 100 Hz in every window (the predicted mix falls to 20 .. 45 dB between music passages): `ambience\a10\battleship` (the `shipambience` loop, every cluster of BSPs 0 .. 6 and 8 has it as its
+background sound, BSP 7 has none) at about 0.35 of unity. The engine reads the clusters' background sound index but not the palette (BSP +0x1FC), so the ship's hum is not played yet. Sound scenery (`a10`: 39 computer ambience placements, bridge) is not played either.
+**Open (found by the same comparison)**: the formation marines (ticks 4700 .. 5700) hold their rifles horizontally with the arms out, the Xbox diagonally across the chest (`stand rifle idle`, the rifle's pose follows the hand marker; forced `alert` / `aim-still` / `celebrate` on one marine showed nothing usable); Sergeant Johnson's head and cap are a
+generic marine's; the crew jumpsuits are red / yellow where the Xbox shows brown-orange; Chief is not visible stepping out of the pod (ticks 7020 .. 7200); the fade to white at tick 7290 is flat grey; the hangar window shot (1170 .. 1300) is lit green and shows no crew;
+cameras at ticks 2430 / 2520 and 6300 .. 6480 frame the scene differently; Cortana's hologram, the marine's light wands (3420), the red alert lighting and the engine bloom behind the hull (720 .. 900) differ.
+**Consequences**: `a10.tex.hp2` and `a10.obj.hp2` must be rebuilt (`scripts/build-world.sh a10`); no format change. New debug keys `nearaxes 1` (root axes in `nearlog`), `[camset] ... loop / loopstop` lines, and the `[stream]` statistics line at the end of every run. Host tests: `test_stream` (play-once, layering, owners), `test_host_misc` (overlapping impulses), `test_texconv` (`bsp_tone`).
+
+## ADR-082 Generic streamed textures: the BSP's textures stream too, reads are asynchronous, the pack decoder is 4x faster, bridge pilots sit on their chairs
+**Decision**: (1) The streamed high resolution variants (ADR-074, objects only) become a generic system (docs/37): `<map>.thires.hp2` carries variants of the BSP's textures at the source's size (up to 1024
+per side: `TEX_MAX_DIM` and `MAX_TEX_FORMAT` 512 -> 1024), written by `texconv.py` next to `<map>.tex.hp2`; the BSP material record carries `uv_world` (+0x10, `bspconv.uv_world`); `bsp_render.c` asks for a
+material's variant when one screen pixel covers 0.7 of a texel of the resident copy (`bhires_want`, texel density from the nearest visible batch), starts the read from 0.35, and draws it through the same texture
+cache keys (a reserved range per set). (2) One staging ring and one request path for both sets (`hires_ring_t`, `hires_request`), and the reads are **asynchronous**: `stream/aread.[ch]` runs them on an IO thread
+(blocking fio calls, the audio stream's pattern), a request returns the resident texture until the variant has arrived. (3) `hp2_crc32` is slicing-by-4 (was bit by bit: ~30 cycles a byte over every decoded
+section, 1.2 s of a 1.6 s BSP load) and the LZ4 match copy moves words when source and destination are 8 bytes apart: decoding the 3.7 MB BSP 1 took 1253 ms, now 287 ms; the BSP 1 load 2.4 s -> 0.9 s (BSP 0: 1.7 -> 0.7 s,
+the level boot is shorter by the same factor). (4) `unit_set_seat` and a `pchair...` / `pilot...` custom animation seat the unit on the `seat` marker of the "chair pod" vehicle within 0.15 units of it (the pod model's marker is
+0.38 behind its origin and 0.19 up; the pilot's pelvis sits on the unit's origin in these animations); the seat is retried each tick (the chair and the crew are not co-located when the script calls) and bound to the
+object's serial. (5) Pilot #507's colour permutation is 0 (brown-orange) in `a10intro.cfg` / `a10mission.cfg`, was 4 (red).
+**Why**: the bridge's console panels (`tech rack mount` 512 x 512 -> 256 x 256, `monitors` 1024 x 256 -> 512 x 128) were blurred at close range (tick 2250); ADR-074 only streamed object textures, and its reads blocked the game
+thread: real speed, ticks 1000 .. 1500 of the intro dropped frames 1175 1176 1221 1230 1265 1266 1306 1315 1320 1355 1356 with 38 .. 40 ms of EE time each, the transition from the Pillar's exterior to the bridge. After:
+the only dropped frame is the BSP switch (1306: 2431 ms -> 991 ms, under the fade to black; the Xbox's own load hitch is the 2.4 s black gap of the video), peak EE prep 39 -> 25 ms, averages unchanged (23 ms: the per material density test costs nothing
+measurable). The pilot who sits in front of the camera in the Xbox video at ticks 2057 .. 2177 stood at the chair's origin, behind the lens.
+**Measured / not changed**: no opaque cockpit glass was needed: the exterior-to-interior frames were EE bound by the reads, not by overdraw (GS 7 .. 9 ms). `[bsp] load` and `[pack]` log lines show the load phases (read / decode / render setup / game data).
+Streaming lightmaps, the glow pass texture and sky bitmaps, per-surface density and a cut prefetch hook are not done. The crewman at the console beside Keyes at ticks ~2340 still stands where the Xbox seats him (he plays other animations).
+**Consequences**: `scripts/build-world.sh a10` (bspconv writes `uv_world`, texconv the `thires` pack and removes a stale one); the BSP pack's material record keeps version 2 (older packs read `uv_world` 0 = no streaming).
+Host tests: `test_hires` (asynchronous ring: latency, one flight, lifetimes, unclaimed variants, failures, two sets), `test_hp2` (CRC at every alignment), `test_bsp`, `test_bspconv` (`uv_world`), `test_texconv` (`build_hires_pack`, 1024 wide textures).
+
+## ADR-083 Cutscene marines: Johnson and the head pool, speed follows the animation, the alert posture is a script's, objects draw whole or not at all
+**Decision**: (1) The scenario's *desired permutation* of a biped (+0x06; Sergeant Johnson 100, marine 101 the cap) is carried in the SCEN placement (`+50`, `Placement.permutation`, was padding) and selects, per
+region, the model permutation whose name ends in `-<number>` (`model_name_number`, `model_select_variant`); a placement without one draws from the random pool `-1 .. -99` (the marines' heads `-10 .. -14`), stable per object, and
+never takes `-100` (Johnson), `-101` (the cap) or `-102` (the damaged torso). Variant names (`sky`, first person) keep `model_select_permutations`. (2) A unit moves at the ground speed of the move animation its posture, weapon
+and graph select (`refresh_move_speeds`, root motion over one cycle of `stand rifle move-front` 2.10, `alert rifle move-front` 0.42, `alert pistol move-front` 0.67 wu/s), not at the standing speed of the biped tag; a direction
+whose animation has no root motion keeps the tag's speed. Debug: cfg `unitspeeds 1` restores the tag speeds. (3) The alert posture of an armed unit is set by the script (`unit_set_seat unit "alert"` sets `UF_ALERT`; a
+unit created anew starts without it); unarmed non-player units stay alert (ADR-080). The global "every unit in a cinematic is alert" of the first version of this work is gone. The `FORCE_ALERT` bit of a recording is not a
+posture. (4) The held weapon sits on the unit's `right hand` marker. (5) `pick_lod` only takes a level at which every region that has parts at some level has parts, and `obj_render_pass` draws a model whole: when its batches
+do not fit what is left of the frame's budget the next level down is tried, else the object is skipped (parts used to be dropped one by one, leaving a head and a rifle floating over nothing: marine #533 at tick 4970).
+(6) Colour permutations of crewmen #223, #224 (brown-orange, the cryo console) and #546 (yellow, the cryo bay) in `a10intro.cfg` / `a10mission.cfg`.
+**Why**: recordings carry controls, not positions (docs/28): the speed of a recorded walk is the unit's physics. Johnson's 134 ticks of throttle (`johnson_enter`) at the tag's 2.10 wu/s carried him 9 wu past the camera
+that the script cuts to (`you_heard_1a`, 0.5 wu from where he stops); at the alert animation's 0.42 wu/s he stops at x = -24.0, next to the camera point, as in the Xbox video (ticks 4380 .. 4470, 4700 .. 4800: he was
+invisible before). The six `pep_run` marines are created anew, have no `unit_set_seat`, stand and run at 2.10: they pass the low camera 118 in the Xbox video (boots at ticks 4540 .. 4700) and stayed behind it at 0.42.
+Johnson's model was a generic marine because the placement's permutation was dropped.
+**Measured**: the parity frames of ticks 3420 .. 7300 (`scripts/cmp-intro.sh` with offset 1.41): Johnson, the formation, the marching marines and the close-ups line up with the video; host tests `test_units` (speed of
+every species equals the ground speed of the animation it plays, alert posture speed and animation names, the permutation pool) and `test_scenconv` (permutation round trip) cover it.
+**Open**: the video's hangar is lit green-grey, ours neutral and darker (the marines' base maps are right: the armour's brown plates are in the texture and get the sage reflection of ADR-029; `soso` of the marine has no
+colour change source, so `a` / `b` do not tint it); Johnson's skin is lighter than the video's; the crew at the cryo console (ticks 6420 .. 6500) is closer to the camera than in the video; Chief does not step out of the pod
+(7020 .. 7200); the scorpions are tan, the video's olive.
+**Consequences**: SCEN placements carry the permutation (`scripts/build-world.sh a10` rebuilds the object pack, no version change: the field was padding); debug keys `forcemodel`, `trackperm N`, `nearlog` prints name,
+permutations and screen position; `unitspeeds 1`.
+
+## ADR-084 The camera observer is the Xbox's: exact port of 0x11c500 .. 0x11cda0, verified against the Xbox code run under an emulator
+**Decision**: `cine.c` keeps the observer state of `XBE 0x11dd30` (position, field of view, forward and up, and the velocity and acceleration of the offset from the target) and runs its update at
+`camera_set` (dt 1e-4 s, like the director) and every tick, instead of ADR-063's history of the last three poses and a quaternion offset: the quintic is refitted every update from the analytic velocity and
+acceleration (`c3 = A s/2 - 10 D s^3 - 4 V s^2`, `c4 = 15 D s^4 + 7 V s^3 - A s^2`, `c5 = A s^3/2 - 6 D s^5 - 3 V s^4`, `s = 1 / T`), the orientation offset is the rotation vector turning the state's forward
+and up into the target's, the state is rotated by `D + e(t - dt)`, an acceleration beyond 1500 (positions) or 1e5 snaps, forward and up are re-orthonormalised past 1e-3, and the field of view is clamped to
+[0.001, pi/2]. `tools/xbe/observer_oracle.py` runs the executable's own code (0x11c760 .. 0x11d2d0) under the unicorn x86 emulator with the director's records and writes
+`engine/tests/cine_observer_golden.h` (behaviour only, no code); `test_cine_observer` replays four scripts, mid-flight retargets included, and compares position, forward and up every 5th tick.
+**Why**: the earlier port got a move from rest right (agreement 1e-4) but not a retarget in mid flight: random scripts of one to three moves differed from the Xbox by up to 1.3 units and 1.3 in the
+forward vector (finite differences of the last three poses instead of the analytic velocity and acceleration; the quaternion offset instead of one rotation vector summed with the velocity terms).
+Now every random script agrees with the oracle to 1e-3 .. 1e-2 units (float against x87) and 1e-4 in the vectors. Also verified in the same pass, against the decompile: the camera point's field offsets, `euler_angles3d_to_matrix`,
+and `forward = row 0, up = row 2`; the engine's basis (`camera_basis` with roll) reproduces the Xbox's forward, up and left to 1e-15 for random angles, so a settled pose looks exactly where the Xbox's does.
+**Projection, the same pass (changed)**: the executable builds the view's field of view in 0xbc260 as `vfov = 2 atan(0.6375 tan(fov / 2))` (0.6375 = 0.75 x 0.85, the 4:3 window and a fixed
+0.85) and 0x5c5e0 scales x by the view window's 544 x 408 (the title-safe rectangle of 640 x 480, set at start up), so the horizontal half tangent is `0.85 tan(fov / 2)`: 62 degrees for the camera points' 70
+(0x5c0a0 returns the same `0.85 tan(fov / 2)` for its culling). `main.c` now renders with exactly that (`widescreen 0`, the default; 4:3 aspect); the old behaviour (70 degrees across the 4:3 buffer) is
+`widescreen 3`, 1 and 2 are the 16:9 variants. ADR-073's measurement against the video preferred the old one (mean correlation 0.63 against 0.50 for the Xbox projection over 20 frames), but the video
+is only an approximation (it may not be a 4:3 Xbox capture at all); the executable decides. Every shot is therefore about 17 % tighter than before, the cryo console shot (ticks 6100 .. 6240) included:
+its panel now overflows the frame, so the 15 % mismatch against the video there is not the field of view.
+**Also verified**: `camera_ticks` (ADR-066) is untouched; the director's seconds are an integer division (`ticks / 30`), which explains `200 -> 180` of its table but not `300 -> 270`.
+**Consequences**: host test `cine` gains `test_cine_observer`; `test_cine` tolerances allow for the update at `camera_set`. No pack rebuild.
+
+## ADR-085 The player is a unit in the cryo pod: seat, idle, open, exit animation, hand-off at the pelvis
+**Decision**: `object_beautify (player0) true` turns the player's body object into a drawn unit (`hs_host_obj.c`, `stand_in`: a `units_attach` on `player_obj`, `UF_NO_AI`, `UF_HIDE_BODY` cleared, vitals
+and hit model parked), and `false` hands the player back: the unit is detached, hidden again and the player stands where the body is. `unit_enter_vehicle (player0) pod "ct-driver"` puts the body on the
+pod's `driver` marker (the label after the last dash of the seat), the player's feet and eyes with it (he can look around, not walk), plays `ct-driver unarmed idle`; `unit_exit_vehicle` plays
+`ct-driver exit` (250 frames) while the body **stays attached** to the marker, so the animation runs in the pod's frame (the pod's node 0 stands it up by a 90 degree rotation in `stand opening`, and the
+marker with it). `unit_open` / `unit_close` play the vehicle's `open` animation forwards / backwards (`mission_pose`, one frame per tick, the object is `OBJ_F_POSED`). While a stand-in exists
+`mission_sync_player` no longer copies the player over the body. `object_teleport (player0)` takes the stand-in along and ends its animation (the tutorial teleports to its exit flag in the white fade).
+**Why**: both a10 starts run through the pod: `fast_setup` (not normal difficulty and coop: enter, `cinematic_start`, `object_beautify`, `unit_open` at +15, `unit_exit_vehicle` at +60, fade to white at
++265, `object_beautify false` at +300, the player continues) and `tutorial_setup` (normal: the player sits in the pod in first person, `tutorial_introduction` opens it, `tutorial_action` runs the same
+exit cinematic for 170 ticks and teleports to flag 14). All of it was a no-op: the pod stayed shut and empty, and the game started in the corridor (the bot's flag 83) after a white screen.
+Compared with the Xbox video (ticks 6990 .. 7230): the Chief lies in the opening pod, sits up, stands and steps out beside the technician in the same poses and the same frames; with the bot off the first
+person view after the fade (grated floor, the long wall) is the video's.
+**Pelvis rule**: the exit animation has no frame info (no root motion): the Chief walks 0.92 wu out of the pod inside the node data. A unit that leaves a seat is placed at the animation's end pose,
+so `stand_in_end` puts the player at the pelvis node of the exit animation at the current frame (the last frame once it has run out), feet at the pod's floor.
+**Also changed**: `object_beautify` was registered twice (H1 and H2 no-ops, the later one won): H2's is gone. The white fade rect was drawn at 128 (half intensity: an untextured GS quad takes 255 as
+white), so every fade to white was grey. `hud_state_t.hidden` carries `show_hud` / `hud_show_crosshair|health|shield|motion_sensor` to `hud_build` (the tutorial starts with the HUD hidden; the bits
+were stored and never read).
+**Unarmed start and tutorial veil (same ADR, second pass)**: a10's `player0_starting_profile` is unarmed (the pistol comes with `bridge0_profile` at the weapon room, `player_add_equipment (player0) <19:3>` in
+`mission_shoot`), so cfg `startunarmed 1` (a10 configs) empties the hands (`game_drop_weapons`) and `player_add_equipment` gives the biped's default weapons into empty hands (`game_give_default_weapons`;
+SCEN has no profiles, so the table itself is not read). `cinematic_screen_effect_set_filter` raises a pale veil (`cine_screen.veil`, drawn in `hud_render`) whose strength is the filter's first pair lerped over its duration, as the executable does it (0xee1b0 -> 0x61c40 stores `a b c d on seconds`, the update 0x61aa0 lerps (a -> b) and (c -> d) over the seconds after the call): the tutorial's `1 0 1 0 true 5` clears in 5 s by itself, not when the effect is stopped. It stands in for the filter and the convolution (`1 2 10 0.001 5`: a blur amount falling from 10 to 0.001 over the same 5 s) while the effect is on: a
+stand-in for the Xbox's blur and desaturation of the pod's first sight, not a copy of it (no framebuffer blur on the PS2). Run through on normal difficulty with scripted input (look sweeps and Triangle,
+`bot 0`): seated at 6680, the HUD pieces appear as `tutorial_*` shows them, the exit cinematic runs 7802 .. 8067 (`CT-driver exit` seen from the camera points, white fade), the player appears at flag 14
+(-55.08, 0.54, yaw -1.64) in control with empty hands.
+**Mission bot**: with empty hands the bot used to walk to the nearest weapon lying about; on a10 that is an unreachable ledge pickup (the bot stood still for 700 s), so `game_t.unarmed_start` turns the hunt off (the script gives the pistol at volume 85). The gate run then matches the armed run until the frame cap (BSP 1 at 441-461 s, 19 assists, 7 rescues; the run is capped at 21700 frames, `won 0`).
+**Starting profile ammunition**: the profile table is read as far as the player needs it: `scenconv.read_player` keeps the rounds loaded / carried of the profile that gives the default weapon
+(a10: `bridge0_profile`, the pistol with 6 + 48, where the weapon's own defaults are 12 + 100) in the SCEN player record's reserved bytes (+72, +74; no version change, old packs read 0 0 = the weapon's defaults) and
+`player_add_equipment (player0)` applies them (`scen_player.weapon_loaded / weapon_total`). Rebuild the object pack (`scripts/build-world.sh a10`, or `objpack.py` alone) to get them. The grenade counts of the first profile (the start: 0 + 0 on a10, applied with `startunarmed`) and of the weapon's profile (added by `player_add_equipment`: 0 + 0) travel the same way (+76 .. +79); the
+engine used to start with 2 + 2.
+**Checked**: host test `test_player_equipment` (drop the weapons, `player_add_equipment`: the pistol with 6 + 48 and the profile's grenades; again: unchanged). In a playthrough: `mission_shoot` is woken by `mission_a10` only
+after the bridge cutscene (`$mark_bridge_cutscene`), which the bot cannot play, so a debug key forces that one global (`setglobal 8000` + `setglobalname mark_bridge_cutscene`: a shortcut, to be named in any report);
+then the bot walks to the weapon room and the log shows `t12815 player_add_equipment: hands were empty, weapon slot 0, profile ammo 6 + 48`. From the closed pod's eye position (cinematic camera locked there with
+`camlock -56.41 0.41 1.04 0 0`, tick 6980) the pod's glass shows as a haze over the room: it is drawn from inside.
+**Full run**: `a10mission.cfg` (difficulty 3, bot, `startunarmed`, nothing forced, frame cap raised from 21700 to 26000 because the level needs 22540) ends at `game_won` after 738 s: pod sequence, unarmed start, `player_add_equipment` at tick 16372
+("hands were empty, weapon slot 0, profile ammo 6 + 48", by the script, after the bridge cutscene), and the rest of the level to the win; the bot used 95 assists (42 rescues) and does not cover
+the tutorial path (difficulty 1 was run separately with scripted input, see above). There is no Xbox capture of the gameplay after the intro, so that part is the scenario's own scripts and data running, not a comparison.
+**Post-hand-off comparison with the video (ticks 7330 .. 7470, bot off)**: the Xbox video does contain the gameplay that follows the pod (it runs 467 s; the first minute after the white fade shows the corridor, Keyes' technician
+walking up, the checkpoint line): so the hand-off was compared against it, and four differences were fixed. (1) Empty hands drew the first person arms (two gauntlets); the Xbox shows nothing: the arms are drawn only with a
+weapon. (2) The HUD text (help line `» Find Captain Keyes on the Bridge`, `Checkpoint... done`) did not appear at all with the bot off: the overlay pass runs last and the font atlas (PSMT8 256 x 256 = 8 contiguous
+pages) found no free run in the texture window (`TC_FULL`, free pages 11 but scattered) for hundreds of frames; the font is now claimed early in the frame (`hud_render_prefetch`, called from the sky pass) and pinned
+(`tc_entry.pinned`, `rb_extra_tex0_pinned`), and the other HUD sprites are touched early too. (3) The text is the HUD's pale blue (white was invisible against the bright wall), the objective is not drawn on the HUD (it is
+only in the pause menu: the Xbox shows the help line), the line is `»` (Latin-1 0xBB, was `?`), and the checkpoint message is the tag data's own `Checkpoint... done`, shown under the help line for 150 ticks.
+(4) The HUD itself: the extra bar at the top left was the grenade HUD drawn with zero grenades (the Xbox's first minutes show only the shield / health widget at the top right and a small crosshair), so the grenade HUD
+needs a grenade now, and the empty-handed default weapon HUD draws its crosshair only (no ammo statics). The `hud_state_t.hidden` bits written for the tutorial had not reached the bar, meter and tracker loops (a patch of
+`ui/hud.c` that silently did not apply): now they do, and the tutorial starts with no HUD at all, as `tutorial_setup` asks (checked: ticks 6900 .. 7700 of a normal difficulty run show only the help text).
+Still different: the tracker (a grey ring where the Xbox has a blue glowing disc) and the player's movement (the bot off stands still, the video walks).
+**Motion tracker (measured)**: on a dark corridor frame of the video (256 s) the tracker's disc is (10, 28, 48) .. (15, 33, 54) over black and its centre (127, 157, 178); the tag's colours are (3, 10, 20) for the disc and
+(53, 67, 80) for the centre, so the executable adds them (modulate x2, full alpha) instead of blending with the tag's alpha: now `hud.c` does the same for the two sprites. Comparing our corridor frame (tick 9000, a different place, its
+floor shows through the additive disc) with the video's: disc size 3895 against 4142 blue-dominant pixels, hue the same, 28 .. 31 levels brighter because of the floor behind it.
+**Lightmap tone of the first BSP (measured)**: luminance percentiles (p5 .. p95 of the middle 64 % of the frame) of the aligned frames: ours was 1.6 .. 2.1 times as bright as the video at the hand-off (ticks 7330 / 7380, p40 86 against 41,
+p60 110 against 64, p80 128 against 80) and 1.1 .. 1.8 times in the pod shots. `BSP_TONE` of `a10a` goes from lightmap gain 1.0 to 0.65 and the object gain to 0.82 (final: the pod shots then read p80 75 .. 76 against 78 and p95 156 .. 157 against 152 .. 156, p60 25 .. 27 against 37 .. 38; the intermediate step below kept the object gain 1.0 (scaling the objects too left the pod shots 20 .. 35 % dark:
+p60 24 against 37; with the walls alone they read p60 30 .. 32 against 37 .. 38, p80 83 against 78, p95 about 195 against 156, so the bright pod and armour are a little too bright, the walls right, p95 too high): the hand-off frames now read p40 54
+against 41, p60 71 against 64, p80 83 against 80. Needs `texconv.py` and `objpack.py` (or `scripts/build-world.sh a10`) to take effect.
+**Tutorial blur (third pass)**: while the filter's veil is up the overlay pass also draws four copies of the picture offset by 1 .. 6 pixels (alpha 0.5, 0.33, 0.25, 0.2), reading the colour buffer back as a PSMCT16S 512 x 512 texture
+(`bsp_render_set_blur_target`: the frame being built is drawn into `fb[back ^ 1]`, because the kick comes after the flip). The offset follows the filter pair, `1 + 5 x veil`, so the pod's first sight starts blurred and washed out and
+is sharp after 5 s (ticks 6700 .. 6860 of a normal difficulty run). It is an approximation of the executable's convolution (10 -> 0.001 over the same 5 s) built from sprites, checked on PCSX2 only (ADR-022): reading the buffer being
+drawn is a GS hazard whose behaviour on a console is a Phase 6 check.
+**Not done**: reproducing the executable's own convolution kernel and desaturation exactly, matching any gameplay of the video beyond the first seconds (a person steers it), the pause menu.
+**Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
+exit and release of the player body.
 
 ## Open decisions
 None.

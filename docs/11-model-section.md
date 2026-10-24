@@ -120,7 +120,7 @@ clear is an alpha-test shader (blend 1) **only when its base map really carries 
 blend 2. A shader without a decodable base map (`smet`, `spla`, a soso with no base map, cube or 3D bitmaps) is untextured
 (flat grey, flag 8); objects draw those flat. Part `flags` follow the binding's blend (1 -> alpha-tested, >= 2 -> blended).
 Detail, multipurpose (specular / colour-change mask), reflection and self-illumination maps are dropped (ADR-004/005), so
-armour that Halo tints through the colour-change channel shows its grey base map. **Colour change is now converted** (ADR-062): the binding of a shader_model with a change source carries a second texture (base map with the multipurpose blue channel as alpha) and the part is drawn twice with the object's change colour.
+armour that Halo tints through the colour-change channel shows its grey base map. **Colour change is now converted** (ADR-065): the binding of a shader_model with a change source carries a second texture (base map with the multipurpose blue channel as alpha) and the part is drawn twice with the object's change colour.
 Textures are converted once per (bitmap, alpha class) with texconv's quantiser, half resolution, power of two. **Budget:** the
 side cap starts at 256 and halves (down to 32) until the *estimated* size (every texture as PSMT8 with its mip chain, an
 upper bound) fits `--tex-budget` (default 3 MiB of the 6 MiB pool; BSP textures need <= 1.1 MiB, lightmaps <= 0.45 MiB).
