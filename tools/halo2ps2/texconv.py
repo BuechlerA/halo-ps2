@@ -113,7 +113,7 @@ LM_WHITE = 249.0                     # the brightest lightmap texel of the retai
 # of the aligned frames 31 -> 3.5 .. 5.8) and the cryo bay (1.0, 22 -> 9) he is not. BSPs not listed keep the defaults.
 BSP_TONE: dict[str, tuple[float, float, float, float]] = {
     "x10hangar": (0.8, 1.0, 0.65, 1.0),
-    "a10a": (0.65, 1.0, 1.0, 1.0),
+    "a10a": (0.65, 1.0, 0.82, 1.0),
 }
 
 
