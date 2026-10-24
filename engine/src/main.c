@@ -851,6 +851,25 @@ int main(int argc, char *argv[])
 					printf("[track] t%u #%u at %.2f %.2f %.2f yaw %.2f anim %u frame %.1f flags %02x\n", (unsigned)s_tick, ti, (double)to->pos[0], (double)to->pos[1], (double)to->pos[2], (double)atan2f(to->root.m[0][1], to->root.m[0][0]), (unsigned)to->anim, (double)to->frame, to->flags);
 				}
 			}
+			if (s_have_objects) {                              /* debug (cfg trackall "first last step"): every live biped's pose, to see which animation a unit plays while its yaw changes */
+				float ta[3];
+				if (cfg_floats(&s_cfg, "trackall", ta, 3) == 3 && ta[2] >= 1.0f && s_tick >= (unsigned)ta[0] && s_tick <= (unsigned)ta[1] && ((s_tick - (unsigned)ta[0]) % (unsigned)ta[2]) == 0) {
+					unsigned ti;
+					for (ti = 0; ti < s_objects.count; ti++) {
+						const object_t *to = &s_objects.obj[ti];
+						if (to->model < 0 || (to->flags & (OBJ_F_FREE | OBJ_F_INACTIVE)) || to->graph < 0) continue;
+						printf("[trackall] t%u #%u ty%d m%d p%d at %.2f %.2f %.2f yaw %.1f anim %u g%d frame %.1f\n", (unsigned)s_tick, ti, (int)to->type, to->model, (int)to->perm[0], (double)to->pos[0], (double)to->pos[1], (double)to->pos[2],
+						       (double)(atan2f(to->root.m[0][1], to->root.m[0][0]) * 57.29578f), (unsigned)to->anim, (int)to->graph, (double)to->frame);
+					}
+				}
+			}
+			{                                                  /* debug (cfg forcelook "object yaw pitch"): turn the head of one object through its look overlay (-1 .. 1 of the aiming screen) every frame */
+				float fl[3];
+				if (s_have_objects && cfg_floats(&s_cfg, "forcelook", fl, 3) == 3 && fl[0] >= 0.0f && (unsigned)fl[0] < s_objects.count) {
+					object_face *ff = &s_objects.obj[(unsigned)fl[0]].face;
+					ff->look_yaw = (int8_t)(fl[1] * 127.0f); ff->look_pitch = (int8_t)(fl[2] * 127.0f);
+				}
+			}
 			{                                                  /* debug (cfg forcemodel "model anim frame"): pose every object of this model with that animation of its graph every frame (compare candidates for a whole crowd) */
 				float fm[3];
 				if (s_have_objects && cfg_floats(&s_cfg, "forcemodel", fm, 3) == 3 && fm[0] >= 0.0f) {

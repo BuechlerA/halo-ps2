@@ -309,7 +309,7 @@ BI(cinematic_screen_effect_set_filter)
 		cine_screen *sc = &m->cine->screen;
 		float secs = argf(a, n, 5, 0.0f);
 		sc->filter = 1; sc->filter_from = argf(a, n, 0, 1.0f); sc->filter_to = argf(a, n, 1, 0.0f);
-		sc->filter_ticks = secs > 0.0f ? (uint32_t)(secs * 30.0f + 0.5f) : 0u; sc->filter_elapsed = 0;
+		sc->filter_ticks = secs > 0.0f ? (uint32_t)((secs > 3600.0f ? 3600.0f : secs) * 30.0f + 0.5f) : 0u; sc->filter_elapsed = 0;
 	}
 	return 0;
 }

@@ -541,4 +541,5 @@ void anim_root_motion(const anim_section *s, const anim_graph *g, uint32_t k, ui
 	blk = s->pool + rd32(a + A_ROOT_OFF);
 	for (c = 0; c < comps; c++)
 		out[c] = (float)rds16(blk + 16u + 2u * (frame * comps + c)) * (1.0f / 32767.0f) * rdf(blk + 4u * c);
+	if (rtype == 2) { out[3] = out[2]; out[2] = 0.0f; }          /* frame info type 2 is dx dy dyaw: the yaw is out[3] whatever the type (it was left in out[2] and the units ignored it, ADR-086) */
 }

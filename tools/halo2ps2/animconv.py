@@ -797,11 +797,18 @@ class ErrStats:
 
 
 FACE_OVERLAYS = ("stand emotions", "stand talk")
+AIM_OVERLAYS = (" look", " aim-still", " aim-move")      # name suffixes of the aiming overlays: a (right + left + 1) x (up + down + 1) grid of pose deltas (`look` drives the head only, `aim-still` the spine, arms and hands)
 
 
 def is_face_overlay(a: Anim) -> bool:
     """The two overlays a talking unit's face plays (`unit_set_emotion` picks a frame of the first, the sound's mouth data scales the second)."""
     return a.type == 1 and a.name.strip().lower() in FACE_OVERLAYS
+
+
+def is_aim_overlay(a: Anim) -> bool:
+    """The aim / look pose grids (type 1): frame (row, column) of the 3 x 3 grid is a delta of the nodes the tag flags as animated; the centre frame is the identity."""
+    n = a.name.strip().lower()
+    return a.type == 1 and n.endswith(AIM_OVERLAYS) and a.frame_count == 9
 
 
 def encode_animation(d: Decoded, rest: RestPose, overlay: bool = False) -> tuple[bytes, ErrStats]:
@@ -996,7 +1003,7 @@ def build_section_from_graphs(graphs: list[GraphSource], stats: BuildStats | Non
                 blob, est = bytes(_pad4(a.node_count)), ErrStats()      # every channel mode 0: the graph's rest pose
             else:
                 d = decode(a)
-                blob, est = encode_animation(d, g.rest, is_face_overlay(a))
+                blob, est = encode_animation(d, g.rest, is_face_overlay(a) or is_aim_overlay(a))
             if d.nn > g.node_count:
                 raise ConvertError(f"{g.path}: animation {a.name!r} has {d.nn} nodes, graph {g.node_count}")
             stats.errors.add(est)
@@ -1344,13 +1351,14 @@ def measure_errors(sec: Section, graphs: list[GraphSource], frames: str = "all")
         gi = sec.graph_index(gs.tag_id)
         for ai, a in enumerate(gs.anims):
             d = decode(a)
+            ov = is_face_overlay(a) or is_aim_overlay(a)             # an overlay only carries the channels it drives
             for f in range(d.fc):
                 pose = sec.sample(gi, ai, float(f)) if frames == "all" else None
                 for n in range(d.nn):
                     r = d.rot[n][min(f, len(d.rot[n]) - 1)]
                     t = d.trans[n][min(f, len(d.trans[n]) - 1)]
-                    er = qangle(pose[n][0], r)
-                    et = _dist3(pose[n][1], t) * WU_MM
+                    er = qangle(pose[n][0], r) if not ov or n in d.driven_rot else 0.0
+                    et = _dist3(pose[n][1], t) * WU_MM if not ov or n in d.driven_trans else 0.0
                     st.rot_max, st.trans_max = max(st.rot_max, er), max(st.trans_max, et)
                     st.rot_sum2 += er * er
                     st.rot_n += 1

@@ -71,6 +71,10 @@ typedef struct {
 	float     hp_prev;                      /* health at the end of the last tick (flinch detection) */
 	float     anim_rate;                    /* playback rate of the current animation (1 = as authored) */
 	float     turn_speed;                   /* rad/s */
+	float     turn_threshold;               /* rad: a stationary scripted unit's body turns only once its aim is this far off its facing (the biped tag's stationary turning threshold); below it the head and arms look (ADR-086) */
+	uint8_t   turning;                      /* a stationary turn animation is playing: 0 none, 1 turn-left, 2 turn-right (the body follows its root yaw, 90 degrees per play, ADR-086) */
+	int16_t   turn_k;                       /* its animation index in the unit's graph */
+	uint16_t  turn_f;                       /* frames of it applied to the body */
 	float     hit_dir[2];                   /* unit vector (x, y) towards the last attacker, 0 0 unknown */
 	uint16_t  anim_key;                     /* what the current animation was chosen for (0xFFFF: choose again) */
 	uint16_t  event_at;                     /* melee blow / grenade release: action_ticks value at which it happens, 0 done */
@@ -122,6 +126,7 @@ typedef struct {
 	unit_event_t ev[UNIT_EVENTS];
 } units_t;
 
+extern int g_units_turn_gate, g_units_look;           /* debug switches (cfg turngate, lookoverlay) */
 void units_init(units_t *s);
 /* Creates a unit for object slot `obj` (an existing biped object: spawned from a placement or objects_spawn_def). Reads the biped tag
  * (unitdef) of its definition, sets team (0 = the biped's default), weapon (weapon tag id, 0 = the biped's first default weapon, -1 =

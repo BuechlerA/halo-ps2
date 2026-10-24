@@ -76,7 +76,7 @@ void        anim_blend(const anim_pose *a, const anim_pose *b, float t, anim_pos
 /* ADDED by animconv: root motion (the tag's "frame info"). out = { dx, dy, dz, dyaw } of the given frame:
  * the displacement the animation makes during that frame, in the object's frame, world units and radians
  * (a walk cycle's dx sums to one stride, a 90 degree turn's dyaw to 1.5708). Components the animation does
- * not have, and animations without frame info (anim_info.root_motion == 0), give 0. Frames past the end clamp. */
+ * not have, and animations without frame info (anim_info.root_motion == 0), give 0 (a type 2 animation, dx dy dyaw, has its yaw in out[3], dz is 0). Frames past the end clamp. */
 void        anim_root_motion(const anim_section *s, const anim_graph *g, uint32_t k, uint32_t frame, float out[4]);
 
 #endif

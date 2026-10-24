@@ -1002,5 +1002,19 @@ drawn is a GS hazard whose behaviour on a console is a Phase 6 check.
 **Consequences**: `mission_hostobj` grows (`pose`, `stand_*`); host test `host_obj` gains `test_player_stand_in`; `host_misc` no longer lists `object_beautify`; debug: `animlog 1` prints the seat,
 exit and release of the player body.
 
+## ADR-086 Scripted units look instead of spinning: the stationary turn threshold, turn animations drive the body, the `look` head overlay, root yaw of type 2 animations
+**Decision**: (1) A unit that a script or a recording drives (`UF_NO_AI`) and that stands still keeps its body while its aim stays inside the biped tag's *stationary turning threshold* (+0x2f8: 90 degrees on the captain, the crew and the marines, 60 degrees on elites and grunts); past it the unit plays
+`turn-left` / `turn-right` of its posture block and the body follows the animation's root yaw (exactly 90 degrees per play: 14 frames standing, 20 in the alert block), repeating while the aim is still past the threshold. The biped's *moving turning speed* (+0x2f0, 300 degrees per second) now only
+turns units that move (and the AI's units, whose behaviour is unchanged). (2) The head follows the rest of the aim through the unit-level `stand look` overlay: a 3 x 3 grid of head deltas (columns the yaw, 70 degrees one way and the other, rows the pitch, 45 degrees, the centre frame is the identity),
+the aim relative to the body picks the four neighbouring frames and they are blended bilinearly per node (`apply_grid` in `objects.c`, `object_face.look_anim / look_yaw / look_pitch`, set every tick by `units.c`; not for the player, not during scripted animations or death). Column 0 is the unit's right (negative yaw),
+row 2 is up, checked on Keyes and Johnson with `forcelook`. (3) `animconv` converts the 9-frame aiming overlays (`<posture> look`, `aim-still`, `aim-move`) like the face overlays (only the driven channels, the engine reads the modes back as the mask); `measure_errors` compares only those.
+(4) **`anim_root_motion` of a frame info type 2 animation (dx dy dyaw) returned the yaw in out[2], the units only read out[3]**: every scripted animation with a root yaw (the turn animations, cinematic turns and steps) moved its unit without turning it. The yaw is now always out[3] (dz is 0 for type 2).
+**Why**: the Xbox shows Keyes and the marines glancing around with their heads while the recordings' small aim changes (the recorded `aim` is the facing, aiming and looking vector at once) leave the body where it is; the port turned the whole body at 300 degrees per second to every change. The decompile (0x488a0) requests a turn animation only when the facing is further
+than the threshold (cosine cached at +0x4c8) from the desired facing; the turn animations carry 90 degrees of root yaw each.
+**Measured**: Keyes at ticks 1700 .. 1880 against the video (offset 1.41 s): he now stays at the window, then turns over 20 ticks (`alert unarmed turn-left`) and walks off, as in the video; the old version had turned 125 degrees within 20 ticks. Host test `test_units` gains `test_turn_threshold` (the aim inside the threshold keeps the body, one play turns 90 degrees,
+the AI's unit follows the aim); `test_anim` expects the yaw in out[3].
+**Not done**: the aim-still overlay (arms and spine follow the aim of an armed unit: the grid, the data and the converter are in, nothing selects it yet), the overlay for first-person weapons, other maps' packs (`objpack.py` for a30 / b40 / c10 to get the look grids).
+**Consequences**: `a10.obj.hp2` must be rebuilt (`objpack.py`); debug keys `trackall first last step` (every live object's anim index, yaw and position), `forcelook obj yaw pitch`, `turngate 0` (the old spinning), `lookoverlay 0`, `lookflipyaw`, `lookflippitch`, `lookswap`; `unit_t` gains `turn_threshold`, `turning`, `turn_k`, `turn_f`.
+
 ## Open decisions
 None.

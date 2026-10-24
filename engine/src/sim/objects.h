@@ -27,7 +27,7 @@
  * lips and jaw on top of whatever it plays. graph = graph index + 1 (0 = no face), emo_anim / talk_anim = animation index + 1 of
  * "stand emotions" / "stand talk", emotion = frame + 1 of the emotions overlay (`unit_set_emotion`, 0 = none), talk = the sound's
  * mouth amplitude of this tick (0..255, the jaw overlay scaled by it). */
-typedef struct { int16_t graph, emo_anim, talk_anim; uint8_t emotion, talk, talk_s, emo_from, emo_blend; } object_face;   /* talk_s: the low-passed jaw amplitude (the engine eases it: ADR-078); emo_from / emo_blend (255 = done): the previous emotion frame and how far the switch to `emotion` has gone */
+typedef struct { int16_t graph, emo_anim, talk_anim, look_anim; uint8_t emotion, talk, talk_s, emo_from, emo_blend; int8_t look_yaw, look_pitch; } object_face;   /* talk_s: the low-passed jaw amplitude (the engine eases it: ADR-078); emo_from / emo_blend (255 = done): the previous emotion frame and how far the switch to `emotion` has gone */
 
 typedef struct {
 	int16_t  def;                         /* scen definition */
@@ -94,10 +94,12 @@ unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsig
 /* Same with a face (NULL = none): the emotion / talk overlays are composed onto the face nodes of the posed skeleton. */
 unsigned objects_pose_model_face(const object_world_t *w, int model, int graph, unsigned anim, float frame,
                                  const mat4 *root, object_nodes_t *out, const object_face *face);
-/* Fill o->face from the unit's own graph (the face overlays of the graph, none when it has neither). */
+/* Fill o->face from the unit's own graph (the face overlays and the `stand look` head overlay of the graph, none when it has neither). look_yaw / look_pitch (-127..127 = the unit's aim
+ * relative to its body as a fraction of the aiming screen, 0 = straight ahead) turn the head through the look overlay's 3 x 3 grid; g_look_flip_yaw / _pitch flip the grid's directions (debug). */
 void objects_set_face_graph(object_t *o, const object_world_t *w, int graph);
 /* Debug: 0 = overlay * base (the overlay turns in the parent's frame), 1 = base * overlay (in the bone's own frame). */
 extern int g_face_compose;
+extern int g_look_flip_yaw, g_look_flip_pitch, g_look_swap;
 /* Fast path for objects that are not animated: every skinning matrix is the placement matrix (bind pose x root);
  * out->world is NOT filled. Returns the node count. */
 unsigned objects_pose_static(const object_t *o, const object_world_t *w, object_nodes_t *out);

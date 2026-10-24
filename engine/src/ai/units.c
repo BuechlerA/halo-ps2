@@ -17,6 +17,9 @@
 #define MELEE_CONE_COS 0.5f                /* +-60 degrees in front of the body */
 #define MELEE_HEIGHT 0.75f
 #define MOVING_SPEED 0.25f                 /* wu/s above which a unit counts as moving (animation, UA_MOVE) */
+int g_units_turn_gate = 1;               /* debug (cfg turngate 0): scripted units turn their bodies to every aim change, as before ADR-086 */
+int g_units_look = 1;                    /* debug (cfg lookoverlay 0): no head / arm overlays */
+#define TURN_DONE_ANGLE 0.05f              /* radians: a threshold turn ends when the body is this close to the aim */
 #define TURN_ANIM_ANGLE 0.12f              /* radians the body must still have to turn before the turn animation plays */
 #define FLINCH_FRACTION 0.12f              /* a hit takes this fraction of the maximum health for a flinch */
 #define FLINCH_COOLDOWN 120                /* ticks between two flinches */
@@ -505,6 +508,7 @@ int units_attach(units_t *s, game_t *g, int obj, int team, int32_t weapon_tag)
 	player_init(&u->body, o->pos, yaw);
 	u->body.pos[2] += 0.02f;                                    /* a placement stands exactly on the floor: start a hair above it */
 	params_for(g, &b, &u->pp, &u->turn_speed);
+	u->turn_threshold = b.turn_threshold; u->turning = 0;
 	u->mv_have = 0;                                                  /* the speeds of the new tag are the base of refresh_move_speeds */
 	u->ctl.aim_yaw = yaw; u->ctl.weapon_slot = -1;
 	u->spawn_tick = g->tick;
@@ -952,6 +956,19 @@ static int no_ray(void *u, const float a[3], const float b[3], phys_hit *h) { (v
 static int no_sweep(void *u, const float a[3], const float b[3], float r, phys_hit *h) { (void)u; (void)a; (void)b; (void)r; (void)h; return 0; }
 static const phys_world k_empty_world = { NULL, no_ray, no_sweep, NULL };
 
+/* the animation of a stationary turn (turn-left / turn-right class slot of the unit's posture block), -1 when the graph has none */
+static int turn_anim_for(const game_t *g, const unit_t *u, int right)
+{
+	ansm_graph gr;
+	weap_weapon w;
+	const char *wl;
+	int cls = -1, k;
+	if (!get_graph(g, u, &gr)) return -1;
+	wl = weapon_label(g, u, &w);
+	k = find_action(g->ansm, &gr, u->posture, wl, right ? ANSM_C_TURN_RIGHT : ANSM_C_TURN_LEFT, &cls);
+	return (k >= 0 && !is_overlay(g->ansm, &gr, k)) ? k : -1;
+}
+
 /* the physics step of a living or dying body: turn towards the aim, then player_tick with the throttle as a stick */
 static unsigned s_sweeps;                                           /* player_tick calls since the last units_take_sweeps (diagnostics) */
 unsigned units_take_sweeps(void) { unsigned n = s_sweeps; s_sweeps = 0; return n; }
@@ -965,9 +982,38 @@ static void step_body(unit_t *u, const game_t *g, int turn, float throttle_scale
 	if (turn) {
 		float delta = wrap_pi(u->ctl.aim_yaw - u->body.yaw), step = u->turn_speed * DT;
 		if (u->action == UA_FLINCH) step *= 0.5f;
+		/* a scripted or recorded unit that stands still keeps its body until the aim is past the biped's stationary turning threshold (the Xbox requests a turn animation only then,
+		 * XBE 0x488a0 against the cosine cached at +0x4c8); closer aims are the head's and the arms' (apply_grid). The turn is its animation: the body follows the root yaw of
+		 * `turn-left` / `turn-right` (90 degrees over 14 frames standing, 20 alert), not the turning speed, which is the moving one (+0x2f0). */
+		if ((u->flags & UF_NO_AI) && !(u->flags & UF_PLAYER) && u->turn_threshold > 0.0f && g_units_turn_gate && tf * tf + tl * tl < 1e-4f && speed2d(u) <= MOVING_SPEED) {
+			if (!u->turning && fabsf(delta) > u->turn_threshold) {
+				int k = turn_anim_for(g, u, delta < 0.0f);
+				if (k >= 0) { u->turning = delta < 0.0f ? 2u : 1u; u->turn_k = (int16_t)k; u->turn_f = 0; }
+				else goto fallback_turn;                      /* a graph without turn animations: the turning speed */
+			}
+			if (u->turning) {
+				anim_graph ag;
+				float d[4] = { 0, 0, 0, 0 };
+				uint32_t frames = 0;
+				if (u->base_graph >= 0 && g->ow.anims && (unsigned)u->base_graph < g->ow.anims->graph_count) {
+					ag = anim_get_graph(g->ow.anims, (uint32_t)u->base_graph);
+					if ((unsigned)u->turn_k < ag.anim_count) {
+						frames = anim_get(g->ow.anims, &ag, (uint32_t)u->turn_k).frame_count;
+						anim_root_motion(g->ow.anims, &ag, (uint32_t)u->turn_k, (uint32_t)u->turn_f, d);
+					}
+				}
+				u->body.yaw = wrap_pi(u->body.yaw + d[3]);
+				if (++u->turn_f >= frames) u->turning = 0;
+				*turn_left = u->turning ? (u->turning == 1u ? 1.0f : -1.0f) : 0.0f;
+			}
+			goto no_turn;
+		}
+		u->turning = 0;
+fallback_turn:
 		*turn_left = delta;
 		u->body.yaw = wrap_pi(u->body.yaw + clampf(delta, -step, step));
 	}
+no_turn:
 	mag = sqrtf(tf * tf + tl * tl);
 	if (mag > 1.0f) { tf /= mag; tl /= mag; }
 	memset(&cmd, 0, sizeof cmd);
@@ -1180,6 +1226,12 @@ static void tick_unit(units_t *s, unit_t *u, game_t *g, object_t *o)
 		}
 		custom_root_motion(u, o, g);
 	} else anim_update(u, o, g, spd, turn_left);
+	if (o->face.look_anim > 0) {                       /* the head's share of the aim: the aim relative to the body, as a fraction of the aiming screen (apply_grid) */
+		if (g_units_look && !(u->flags & UF_PLAYER) && u->action != UA_CUSTOM && u->action != UA_DEAD && !u->dying) {
+			float fy = clampf(wrap_pi(u->ctl.aim_yaw - u->body.yaw) * (1.0f / AIM_YAW_LIMIT), -1.0f, 1.0f), fp = clampf(u->ctl.aim_pitch * (1.0f / AIM_PITCH_LIMIT), -1.0f, 1.0f);
+			o->face.look_yaw = (int8_t)(fy * 127.0f); o->face.look_pitch = (int8_t)(fp * 127.0f);
+		} else o->face.look_yaw = o->face.look_pitch = 0;
+	}
 
 	u->prev_flags = c->flags;
 	sync_object(u, o);

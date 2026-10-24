@@ -164,6 +164,7 @@ static const node_remap *remap_for(const object_world_t *w, const model_info *mi
 }
 
 int g_face_compose = 1;
+int g_look_flip_yaw = 0, g_look_flip_pitch = 0, g_look_swap = 0;
 
 static void quat_mul4(const float a[4], const float b[4], float o[4])     /* Hamilton product a * b, x y z w */
 {
@@ -208,6 +209,54 @@ static void apply_overlay(const object_world_t *w, const model_info *mi, int mod
 	}
 }
 
+/* The aim / look overlays are a 3 x 3 grid of pose deltas (columns the yaw, rows the pitch, frame 4 at the centre is the identity: docs/19 1.4). The unit's aim relative to its body
+ * (fy, fp in -1 .. 1 of the aiming screen) picks the four neighbouring frames, blended bilinearly per node (quaternions: signs aligned, normalised), and the driven nodes compose with the posed skeleton like a face overlay. */
+static void apply_grid(const object_world_t *w, const model_info *mi, int model, int gi, const anim_graph *g, unsigned k, float fy, float fp,
+                       skel_xform *local, unsigned n)
+{
+	static anim_pose ov[4];
+	uint8_t mode[ANIM_MAX_NODES];
+	const node_remap *rm;
+	float cx, ry, tx, ty, wt[4];
+	int c0, r0, fr[4], j, used[4], nu = 0;
+	unsigned i;
+	if (k >= g->anim_count || !anim_overlay_modes(w->anims, g, k, mode)) return;
+	if (g_look_swap) { float t = fy; fy = fp; fp = t; }
+	if (g_look_flip_yaw) fy = -fy;
+	if (g_look_flip_pitch) fp = -fp;
+	cx = 1.0f + (fy > 1.0f ? 1.0f : fy < -1.0f ? -1.0f : fy);
+	ry = 1.0f + (fp > 1.0f ? 1.0f : fp < -1.0f ? -1.0f : fp);
+	c0 = cx >= 2.0f ? 1 : (int)cx; r0 = ry >= 2.0f ? 1 : (int)ry;
+	tx = cx - (float)c0; ty = ry - (float)r0;
+	fr[0] = r0 * 3 + c0;       wt[0] = (1.0f - tx) * (1.0f - ty);
+	fr[1] = r0 * 3 + c0 + 1;   wt[1] = tx * (1.0f - ty);
+	fr[2] = (r0 + 1) * 3 + c0; wt[2] = (1.0f - tx) * ty;
+	fr[3] = fr[2] + 1;         wt[3] = tx * ty;
+	for (j = 0; j < 4; j++) if (wt[j] > 1e-3f) { anim_sample(w->anims, g, k, (float)fr[j], &ov[nu]); wt[nu] = wt[j]; used[nu] = j; nu++; }
+	if (!nu) return;
+	rm = remap_for(w, mi, model, gi, n);
+	for (i = 0; i < n; i++) {
+		int jn = rm->identity ? (int)i : rm->map[i];
+		if (jn < 0 || (unsigned)jn >= g->node_count || (unsigned)jn >= ANIM_MAX_NODES) continue;
+		if (mode[jn] & ANIM_OV_ROT) {
+			float q[4] = { 0, 0, 0, 0 }, d[4], l;
+			for (j = 0; j < nu; j++) {
+				const float *r = ov[j].node[jn].rot;
+				float s = (j && r[0] * ov[0].node[jn].rot[0] + r[1] * ov[0].node[jn].rot[1] + r[2] * ov[0].node[jn].rot[2] + r[3] * ov[0].node[jn].rot[3] < 0.0f) ? -1.0f : 1.0f;
+				q[0] += s * wt[j] * r[0]; q[1] += s * wt[j] * r[1]; q[2] += s * wt[j] * r[2]; q[3] += s * wt[j] * r[3];
+			}
+			l = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+			if (l > 1e-12f) { q[0] /= l; q[1] /= l; q[2] /= l; q[3] /= l; } else continue;
+			if (g_face_compose) quat_mul4(local[i].rot, q, d); else quat_mul4(q, local[i].rot, d);
+			memcpy(local[i].rot, d, sizeof d);
+		}
+		if (mode[jn] & ANIM_OV_TRANS) {
+			for (j = 0; j < nu; j++) { local[i].trans[0] += ov[j].node[jn].trans[0] * wt[j]; local[i].trans[1] += ov[j].node[jn].trans[1] * wt[j]; local[i].trans[2] += ov[j].node[jn].trans[2] * wt[j]; }
+		}
+	}
+	(void)used;
+}
+
 static void apply_face(const object_world_t *w, const model_info *mi, int model, skel_xform *local, unsigned n, const object_face *f)
 {
 	anim_graph g;
@@ -219,21 +268,24 @@ static void apply_face(const object_world_t *w, const model_info *mi, int model,
 		if (f->emotion) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->emo_anim - 1u, (float)(f->emotion - 1), (f->emo_from && f->emo_from != f->emotion) || f->emo_blend < 255 ? b : 1.0f, local, n);
 	}
 	if (f->talk && f->talk_anim > 0) apply_overlay(w, mi, model, f->graph - 1, &g, (unsigned)f->talk_anim - 1u, 0.0f, (float)f->talk * (1.0f / 255.0f), local, n);
+	if ((f->look_yaw || f->look_pitch) && f->look_anim > 0) apply_grid(w, mi, model, f->graph - 1, &g, (unsigned)f->look_anim - 1u, (float)f->look_yaw * (1.0f / 127.0f), (float)f->look_pitch * (1.0f / 127.0f), local, n);
 }
 
 void objects_set_face_graph(object_t *o, const object_world_t *w, int graph)
 {
 	anim_graph g;
-	int emo, talk;
-	o->face.graph = o->face.emo_anim = o->face.talk_anim = 0; o->face.emo_blend = 255; o->face.emo_from = 0;
+	int emo, talk, look;
+	o->face.graph = o->face.emo_anim = o->face.talk_anim = o->face.look_anim = 0; o->face.emo_blend = 255; o->face.emo_from = 0; o->face.look_yaw = o->face.look_pitch = 0;
 	if (graph < 0 || !w->anims || (unsigned)graph >= w->anims->graph_count) return;
 	g = anim_get_graph(w->anims, (uint32_t)graph);
 	emo = anim_find_name(w->anims, &g, "stand emotions");
 	talk = anim_find_name(w->anims, &g, "stand talk");
-	if (emo < 0 && talk < 0) return;
+	look = anim_find_name(w->anims, &g, "stand look");
+	if (emo < 0 && talk < 0 && look < 0) return;
 	o->face.graph = (int16_t)(graph + 1);
 	o->face.emo_anim = (int16_t)(emo + 1);
 	o->face.talk_anim = (int16_t)(talk + 1);
+	o->face.look_anim = (int16_t)(look + 1);
 }
 
 unsigned objects_pose_model(const object_world_t *w, int model, int graph, unsigned anim, float frame,
@@ -312,7 +364,7 @@ static unsigned pose_impl(const object_world_t *w, int model, int graph, unsigne
 			}
 		}
 	}
-	if (face && (face->emotion || face->talk)) apply_face(w, &mi, model, local, n, face);
+	if (face && (face->emotion || face->talk || face->look_yaw || face->look_pitch)) apply_face(w, &mi, model, local, n, face);
 	if (n == 0) { out->count = 0; return 0; }
 	if (skel_world(out->world, local, parent, n, root) != 0) { out->count = 0; return 0; }
 	if (skin) {
