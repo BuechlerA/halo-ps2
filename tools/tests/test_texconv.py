@@ -216,10 +216,13 @@ def test_bsp_tone() -> None:
     # per BSP calibration (ADR-081): the table is keyed by the BSP tag path's last component, either slash, and a BSP without an entry keeps the default curve
     assert tc.bsp_tone("levels\\a10\\x10hangar") == tc.BSP_TONE["x10hangar"] and tc.bsp_tone("levels/a10/a10a") == tc.BSP_TONE["a10a"]
     assert tc.bsp_tone("levels\\a10\\a10b") is None and tc.bsp_tone("") is None
-    for gain, gamma, ogain, ogamma in tc.BSP_TONE.values():
+    for tone in tc.BSP_TONE.values():
+        gain, gamma, ogain, ogamma = tone[:4]
         assert 0.0 < gain <= 2.0 and 0.0 < ogain <= 4.0 and gamma in (0.5, 1.0) and ogamma in (0.5, 1.0)
+        assert len(tone) in (4, 5) and (len(tone) == 4 or 0.0 <= tone[4] <= 1.0)
+    assert tc.bsp_chroma("levels\\a10\\a10a") == tc.CHROMA_STRENGTH and tc.bsp_chroma("levels\\a10\\a10b") == tc.CHROMA_STRENGTH      # no entry carries a fifth number: the global strength
     # the hangar's linear curve keeps dark texels dark where the default lifts them (a texel of 13 -> index 10 against 38)
-    gain, gamma, _, _ = tc.BSP_TONE["x10hangar"]
+    gain, gamma = tc.BSP_TONE["x10hangar"][:2]
     assert tc.lightmap_curve(13, gain, gamma) < tc.lightmap_curve(13, 1.7) // 3 and tc.lightmap_curve(226, gain, gamma) > 150
 
 

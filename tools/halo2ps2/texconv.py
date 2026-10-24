@@ -111,15 +111,21 @@ LM_WHITE = 249.0                     # the brightest lightmap texel of the retai
 # 111 before). A linear gamma 1.0 with gain 0.8 fits the hangar's walls and floors, gain 1.0 the cryo bay's. The object probes (scenconv.cluster_lights) take the
 # last two numbers: on the bridge a character is lit 1.8 times as brightly as the walls around him; in the hangar (0.65 against 0.8 of the walls, percentile error
 # of the aligned frames 31 -> 3.5 .. 5.8) and the cryo bay (1.0, 22 -> 9) he is not. BSPs not listed keep the defaults.
-BSP_TONE: dict[str, tuple[float, float, float, float]] = {
+BSP_TONE: dict[str, tuple[float, ...]] = {          # (lightmap gain, lightmap gamma, object gain, object gamma[, chroma strength])
     "x10hangar": (0.8, 1.0, 0.65, 1.0),
     "a10a": (0.65, 1.0, 0.82, 1.0),
 }
 
 
-def bsp_tone(path: str) -> tuple[float, float, float, float] | None:
+def bsp_tone(path: str) -> tuple[float, ...] | None:
     """The BSP_TONE entry of a BSP tag path (``levels\\a10\\x10hangar``), None for the default curve."""
     return BSP_TONE.get(path.replace("/", "\\").rsplit("\\", 1)[-1])
+
+
+def bsp_chroma(path: str) -> float:
+    """How much of the lightmap colour reaches the vertices and the object lighting of a BSP: the fifth BSP_TONE number, CHROMA_STRENGTH without one."""
+    t = bsp_tone(path)
+    return t[4] if t and len(t) > 4 else CHROMA_STRENGTH
 
 
 # Streamed high resolution variants of the BSP's textures (docs/37, <map>.thires.hp2): the source at full size (the resident copy is half of it), up to HIRES_CAP per side,

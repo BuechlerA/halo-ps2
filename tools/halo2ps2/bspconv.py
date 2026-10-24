@@ -180,6 +180,7 @@ def _unpack(fmt: int, imm: int, num: int, data: bytes) -> bytes:
 
 
 CHROMA_PAGES: dict | None = None     # lightmap page index -> full-resolution RGBA page of the BSP being baked
+CHROMA_STRENGTH_BSP: float = 0.4     # its chroma strength (texconv.bsp_chroma)
 
 
 def vertex_colour(material: Material, vertex: int) -> tuple[int, int, int, int]:
@@ -192,7 +193,7 @@ def vertex_colour(material: Material, vertex: int) -> tuple[int, int, int, int]:
         page = CHROMA_PAGES.get(material.lightmap_page)
         if page is not None:
             from halo2ps2 import texconv
-            r, g, b = texconv.vertex_chroma(page, material.lmuv[vertex])
+            r, g, b = texconv.vertex_chroma(page, material.lmuv[vertex], CHROMA_STRENGTH_BSP)
             return r, g, b, 0x80
     return 0x80, 0x80, 0x80, 0x80
 
@@ -626,7 +627,7 @@ def convert_block(block: bytes, loc: bsp.BspLocation) -> bytes:
 
 
 def convert_map(path: Path, bsp_indices: list[int] | None = None, chroma: bool = True) -> bytes:
-    global CHROMA_PAGES
+    global CHROMA_PAGES, CHROMA_STRENGTH_BSP
     tmap = tinfos = None
     if chroma:
         from halo2ps2 import texconv
@@ -644,6 +645,7 @@ def convert_map(path: Path, bsp_indices: list[int] | None = None, chroma: bool =
                 continue
             f.seek(loc.file_offset)
             CHROMA_PAGES = texconv.lightmap_pages_rgba(tmap, tinfos[i]) if chroma and i in tinfos else None
+            CHROMA_STRENGTH_BSP = texconv.bsp_chroma(tinfos[i].path) if chroma and i in tinfos else texconv.CHROMA_STRENGTH
             try:
                 sections.append((section_tag(i), convert_block(f.read(loc.size), loc)))
             finally:
