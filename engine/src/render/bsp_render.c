@@ -342,6 +342,7 @@ static u64 resident_tex0(unsigned key, const tex_image_t *img, u64 tfx)
 	if (t4 && (s_opt.debug & 16)) { clut_w = 16; clut_h = 1; }
 	if ((px_bytes & 15) || img->clut_bytes < clut_bytes || img->pixel_bytes < px_bytes) return 0;
 	pages = pages_for(img->w, img->h, img->psm);
+	if (t4 && img->w >= 512) pages += 1;                /* a 512 wide PSMT4 texture reaches one page past its 16 (two of them side by side drew white boxes over Keyes, the hologram atlas, ticks 2500 .. 2580): cause not found, one spare page is enough */
 	r = tc_acquire(&s_tc, key, pages, px_bytes + clut_bytes, &e);
 	if (r != TC_HIT && r != TC_UPLOAD) return 0;
 	tbw = (img->w + 63) / 64;

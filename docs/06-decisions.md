@@ -1016,5 +1016,12 @@ the AI's unit follows the aim); `test_anim` expects the yaw in out[3].
 **Not done**: the aim-still overlay (arms and spine follow the aim of an armed unit: the grid, the data and the converter are in, nothing selects it yet), the overlay for first-person weapons, other maps' packs (`objpack.py` for a30 / b40 / c10 to get the look grids).
 **Consequences**: `a10.obj.hp2` must be rebuilt (`objpack.py`); debug keys `trackall first last step` (every live object's anim index, yaw and position), `forcelook obj yaw pitch`, `turngate 0` (the old spinning), `lookoverlay 0`, `lookflipyaw`, `lookflippitch`, `lookswap`; `unit_t` gains `turn_threshold`, `turning`, `turn_k`, `turn_f`.
 
+## ADR-087 Two glitches of the intro: the lime exterior bridge, the white boxes over Keyes' briefing
+**Decision**: (1) `texconv.vertex_chroma` fades the lightmap colour towards neutral for dark texels (`CHROMA_FULL_LUMA` 40): a shadow texel such as (0, 4, 0) is a full saturation green once divided by its luminance, and the chroma-only vertex tint made the bridge seen through its window from outside (ticks 1180 .. 1300, BSP 7) lime and yellow;
+`a10.hp2` needs `bspconv.py` again. (2) A 512 wide PSMT4 texture is given one page more than its 16 in the GS texture cache (`resident_tex0`): the two 512 x 512 16-colour variants of the command display's hologram atlas (streamed hires textures) sat on adjacent runs and the second one's draw came out as solid white boxes over Keyes and
+a white ring (ticks 2500 .. 2580); a spare page between them removes it. The cause of the overrun is not found (the page arithmetic, TBW 8, TW / TH 9, the transfer size and the CLUT slots all check out; the software renderer shows the same, so it is not a hardware renderer artefact); `hiresskip N` (cfg) and `RENDERER=13 scripts/run-headless.sh` (software GS) are the tools used.
+(3) `anim_root_motion`, the cinematic filter duration (`cinematic_screen_effect_set_filter`) and the host test run clean of undefined behaviour.
+**Measured**: ticks 1180 .. 1340 and 2500 .. 2640 against the video. **Still different**: the bridge seen from outside is brighter than the video's (the video sees it through tinted glass, ours has no glass: the `cryo glass` / `monitor glass` cube map shaders are skipped, ADR-057), its crew is missing in that shot, the hologram of the briefing is less luminous than the video's (glow).
+
 ## Open decisions
 None.

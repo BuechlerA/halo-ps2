@@ -35,6 +35,9 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/data/PCSX2/inis" "$WORK/run"
 cp "$DATA/inis/PCSX2.ini" "$WORK/data/PCSX2/inis/PCSX2.ini"
 sed -i '' -E 's/^HostFs = false/HostFs = true/' "$WORK/data/PCSX2/inis/PCSX2.ini"
+if [ -n "${RENDERER:-}" ]; then          # development only: GS renderer of the scratch ini (13 = software, the reference for GS behaviour; the default -1 is the hardware renderer)
+	sed -i '' -E "s/^Renderer = .*/Renderer = $RENDERER/" "$WORK/data/PCSX2/inis/PCSX2.ini"
+fi
 if [ -n "${SPEED:-}" ]; then          # development only: emulator speed scalar (timing statistics are then meaningless)
 	sed -i '' -E "s/^NominalScalar = .*/NominalScalar = $SPEED/" "$WORK/data/PCSX2/inis/PCSX2.ini"
 fi

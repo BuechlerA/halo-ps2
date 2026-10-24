@@ -102,6 +102,7 @@ GLOW_KEY = 1 << 42
 GLOW_BUDGET = 384 * 1024   # bytes of glow textures (pixels + CLUTs) per map: the resident arena has little room (b30 none), later glows are dropped
 LM_BUDGET_BYTES = 512 * 1024         # per BSP, after conversion (see docs/09-tex-section.md)
 LM_DEFAULT_GAIN = 1.0
+CHROMA_FULL_LUMA = 40.0              # lightmap luminance (0..255) at which a texel's colour reaches the vertices at full CHROMA_STRENGTH; darker texels fade to neutral
 CHROMA_STRENGTH = 0.4                # how much of the lightmap colour reaches the vertices and the object lighting (1.0 = all of it)
 LM_GAMMA = 0.5                       # lightmap luminance tone curve exponent (1.0 = linear: index = luma x gain)
 LM_WHITE = 249.0                     # the brightest lightmap texel of the retail maps (a10: 249): the curve's 1.0
@@ -929,6 +930,7 @@ def vertex_chroma(page: Rgba | tuple[int, int, bytes], lm_uv: tuple[float, float
     y = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
     if y < 1.0:
         return 128, 128, 128
+    strength *= min(1.0, y / CHROMA_FULL_LUMA)       # a shadow texel's colour (0, 4, 0 is a full saturation green once divided by its luminance) tints nothing: the exterior bridge floor came out lime
     return tuple(max(0, min(255, int((1.0 + strength * (c / y - 1.0)) * 128 + 0.5))) for c in rgb)  # type: ignore[return-value]
 
 

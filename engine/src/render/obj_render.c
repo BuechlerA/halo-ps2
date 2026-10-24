@@ -211,6 +211,7 @@ static int model_has_blend(const obj_render_t *o, int model, const uint16_t *per
 #define HIRES_RETRY 90u
 #define HIRES_RETRY_MAX 512u
 static uint32_t s_hires_retry[HIRES_RETRY_MAX];
+int g_hires_skip = -1;                          /* debug (cfg hiresskip N): never draw object texture N's streamed variant */
 
 static u64 hires_tex0(obj_render_t *o, int tex)
 {
@@ -218,7 +219,7 @@ static u64 hires_tex0(obj_render_t *o, int tex)
 	tex_image_t img;
 	int was_resident;
 	u64 t0;
-	if (!o->hires || tex < 0 || hires_info(o->hires, (unsigned)tex, &v) != 0) return 0;
+	if (!o->hires || tex < 0 || tex == g_hires_skip || hires_info(o->hires, (unsigned)tex, &v) != 0) return 0;
 	was_resident = rb_extra_resident(o->hires_key_base, (unsigned)tex);
 	if (!was_resident) {
 		if ((unsigned)tex < HIRES_RETRY_MAX && o->frame_no < s_hires_retry[tex]) return 0;

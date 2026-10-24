@@ -511,6 +511,7 @@ int main(int argc, char *argv[])
 			s_objr.dbg_obj = (int)cfg_int(&s_cfg, "objdbg", -1);
 			{ float tr[3]; s_objr.trace_lo = s_objr.trace_hi = 0; s_objr.trace_step = 1; if (cfg_floats(&s_cfg, "objtrace", tr, 3) == 3 && tr[2] >= 1.0f) { s_objr.trace_lo = (unsigned)tr[0]; s_objr.trace_hi = (unsigned)tr[1]; s_objr.trace_step = (unsigned)tr[2]; } }
 			s_objr.unlit_add = (int)cfg_int(&s_cfg, "unlitadd", 1);
+			{ extern int g_hires_skip; g_hires_skip = (int)cfg_int(&s_cfg, "hiresskip", -1); }
 			{
 				float v[3] = { 1.0f, 1.0f, 1.0f };
 				s_objr.dl_gain = 1.0f; cfg_floats(&s_cfg, "dlobj", &s_objr.dl_gain, 1);
