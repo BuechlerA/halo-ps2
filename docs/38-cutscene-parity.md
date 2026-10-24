@@ -53,9 +53,9 @@ Ground truth is the Xbox executable and the tag data, **not** the reference vide
     player at the hand-off (bot off): nothing shows up (the effect spawned straight up at 0.4 wu above the floor sits over the black floor grate of that view, which is itself drawn black where the video shows a metal grating:
     two things to look at before any claim about explosion size).
 
-16. **The first gameplay view has a black floor patch** (bottom centre, about 3 wu ahead of the pod exit; `cfg player -55.5 0.4 0.05 0` + `fp 0` + `campitch -25` reproduces it without the intro): it is BSP geometry (with `debug 2`,
-    no lightmap pass, it is a recessed floor panel with grey-green walls), and the video shows a metal grating there with lit bars. So our lightmap of that surface is black (or the grating's alpha-tested layer is missing):
-    open, worth a look at the lightmap conversion of that cluster (ADR-081's tone curves are per BSP, not per surface). It is not an object (`cryo vis test` is hidden, `hideobj` changes nothing).
+16. **Fixed: the first gameplay view had a black floor patch** (bottom centre, about 3 wu ahead of the pod exit; `cfg player -55.5 0.4 0.05 0` + `fp 0` + `campitch -25` reproduces it without the intro). The surface is the
+    shader `levels\a10\shaders\alpha test` (a grating, alpha tested) over a recessed floor panel; the lightmap multiply pass has no alpha test of its own, so it darkened the grating's holes and bars with a dark lightmap
+    page. Alpha tested materials now skip the lightmap pass (`LM_SKIP` in `bsp_render.c`, they keep their vertex lighting): the hand-off frame shows the video's dark grating with lighter bars.
 
 ## Open (see ADR-081 .. 085)
 The hangar's colour grade and Johnson's skin tone, the cryo console crew framing (ticks 6420 .. 6500), the tutorial's exact convolution kernel (a sprite blur and a veil stand in, ADR-085), the scorpions' colour, the ship hum, the title-safe

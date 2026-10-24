@@ -594,20 +594,23 @@ static void gather_clipped(const camera_t *cam, const float clip[4][4])
 }
 
 /* Group the clipped polygons by `key` (material or lightmap page). Fills s_cgroup_start/count. */
+/* A material that is blended or alpha tested takes no lightmap multiply: the multiply has no alpha test of its own, so over a grating it darkened the holes as well (the first gameplay view of a10 had a black floor patch where the Xbox shows a lit metal grating); such surfaces keep their vertex lighting. */
+#define LM_SKIP(flags) (((flags) & (MAT_BLEND | MAT_ALPHA_TEST)) != 0)
+
 static void group_clipped(int by_page)
 {
 	u32 keys = by_page ? s_page_slots : s_bsp->material_count, i, pos = 0;
 	memset(s_cgroup_count, 0, 4u * (keys + 1));
 	for (i = 0; i < s_cpoly_count; i++) {
 		u32 k = by_page ? s_cpoly[i].page : s_cpoly[i].material;
-		if (by_page && (s_cpoly[i].page == BSP_NO_LIGHTMAP || (s_bind[s_cpoly[i].material].flags & MAT_BLEND))) continue;
+		if (by_page && (s_cpoly[i].page == BSP_NO_LIGHTMAP || LM_SKIP(s_bind[s_cpoly[i].material].flags))) continue;
 		s_cgroup_count[k]++;
 	}
 	for (i = 0; i < keys; i++) { s_cgroup_start[i] = pos; pos += s_cgroup_count[i]; }
 	for (i = 0; i < keys; i++) s_cgroup_count[i] = 0;
 	for (i = 0; i < s_cpoly_count; i++) {
 		u32 k = by_page ? s_cpoly[i].page : s_cpoly[i].material;
-		if (by_page && (s_cpoly[i].page == BSP_NO_LIGHTMAP || (s_bind[s_cpoly[i].material].flags & MAT_BLEND))) continue;
+		if (by_page && (s_cpoly[i].page == BSP_NO_LIGHTMAP || LM_SKIP(s_bind[s_cpoly[i].material].flags))) continue;
 		s_cpoly_sorted[s_cgroup_start[k] + s_cgroup_count[k]++] = (u16)i;
 	}
 }
@@ -818,7 +821,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 		for (i = 0; i < nused; i++) {
 			unsigned m = s_used[i];
 			bsp_material bm = bsp_get_material(s_bsp, m);
-			if (bm.lightmap_page != BSP_NO_LIGHTMAP && !(s_bind[m].flags & MAT_BLEND)) s_page_count[bm.lightmap_page] += s_mat_count[m];
+			if (bm.lightmap_page != BSP_NO_LIGHTMAP && !LM_SKIP(s_bind[m].flags)) s_page_count[bm.lightmap_page] += s_mat_count[m];
 		}
 		for (p = 0, pos = 0; p < np; p++) { s_page_start[p] = s_page_cursor[p] = pos; pos += s_page_count[p]; }
 		group_clipped(1);
@@ -826,7 +829,7 @@ void bsp_render_build(u32 frame, const camera_t *cam, const text_batch_t *overla
 			unsigned m = s_used[i];
 			bsp_material bm = bsp_get_material(s_bsp, m);
 			u32 k;
-			if (bm.lightmap_page == BSP_NO_LIGHTMAP || (s_bind[m].flags & MAT_BLEND)) continue;
+			if (bm.lightmap_page == BSP_NO_LIGHTMAP || LM_SKIP(s_bind[m].flags)) continue;
 			for (k = 0; k < s_mat_count[m]; k++) s_sorted2[s_page_cursor[bm.lightmap_page]++] = s_sorted[s_mat_start[m] + k];
 		}
 		for (p = 0; p < np; p++) {
