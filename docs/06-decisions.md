@@ -1024,5 +1024,11 @@ a white ring (ticks 2500 .. 2580); a spare page between them removes it. The cau
 (3) `anim_root_motion`, the cinematic filter duration (`cinematic_screen_effect_set_filter`) and the host test run clean of undefined behaviour.
 **Measured**: ticks 1180 .. 1340 and 2500 .. 2640 against the video. **Still different**: the bridge seen from outside is brighter than the video's (the video sees it through tinted glass, ours has no glass: the `cryo glass` / `monitor glass` cube map shaders are skipped, ADR-057), its crew is missing in that shot, the hologram of the briefing is less luminous than the video's (glow).
 
+## ADR-088 Blended BSP materials do not write Z: the bridge seen from outside has its crew, the cryo bay its pod
+**Decision**: the BSP's material pass draws a blended (additive or alpha) material that is not alpha tested with Z writes off (`GS_ZBUF` mask), like the object pass already did. The a10 glass (`cryo glass`, `monitor glass`: sotr shaders whose base map is a cube map) is converted to an 8 x 8 blank texture that adds / blends nothing (ADR-057 .. 060), but it wrote depth, so everything behind a pane was rejected: the
+crew, Keyes, the chairs and the command display of the bridge (ticks 1120 .. 1300, they stand 3 .. 5 wu behind the window and are placed correctly), and in the cryo bay the pod and the far room behind the control window (ticks 6600 .. 6700). Found by bisecting the BSP batches (`onlybatch 0 N`): the objects were drawn up to batch 337 and gone with the first glass batches.
+**Measured**: ticks 1000 .. 1300 against the video: the bridge's contents appear as the camera closes in (first visible about tick 1120 at 3 px, as the object pass's size rule allows), and the cryo pod is in view at 6660 as in the video. **Still different**: the video's interior is dark and teal behind tinted glass, ours is lit like the bridge itself (the exterior BSP's lightmaps and the missing glass reflection), the cryo bay is still brighter in the video.
+**Consequences**: no pack rebuild; any scene with glass or additive BSP surfaces now shows the objects behind them (the tutorial's cryo glass, the hangar's lights).
+
 ## Open decisions
 None.
