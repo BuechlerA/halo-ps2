@@ -558,21 +558,37 @@ static void update_held_weapons(mission_t *M)
  * (the object's origin when the marker name is empty or unknown), along the marker's forward axis. */
 /* The power of the device an object is the model of (a machine placed in the scenario), -1 when it is no device. A fixture's light follows it: the alert lights of the cryo bay are
  * unpowered until the alarm (the Xbox video shows the bay neutral at the hand-off, ours was red). */
+static int16_t s_dev_of_slot[OBJ_MAX];                  /* object slot -> device index, -1 (rebuilt each tick from a cache of the devices' placements: decoding them per tick cost milliseconds) */
 static float object_device_power(const mission_t *M, int slot)
 {
-	uint32_t i;
-	if (!M->devices || !M->dev) return -1.0f;
-	for (i = 0; i < M->devices->count && i < DEV_MAX_DEVICES; i++) {
-		devdef_device pd = devdef_get_device(M->dev, i);
-		if (pd.scen_index != DEVDEF_NONE && pd.scen_index < OBJ_MAX_PLACEMENTS && M->objects->by_placement[pd.scen_index] == slot) return devices_power(M->devices, i);
+	return (slot >= 0 && slot < OBJ_MAX && s_dev_of_slot[slot] >= 0) ? devices_power(M->devices, (unsigned)s_dev_of_slot[slot]) : -1.0f;
+}
+
+static void index_devices(const mission_t *M)
+{
+	static const devdef_section *sec;
+	static unsigned cnt;
+	static uint32_t scen[DEV_MAX_DEVICES];
+	unsigned i;
+	memset(s_dev_of_slot, 0xFF, sizeof s_dev_of_slot);
+	if (!M->devices || !M->dev) return;
+	if (sec != M->dev || cnt != M->devices->count) {
+		sec = M->dev; cnt = M->devices->count > DEV_MAX_DEVICES ? DEV_MAX_DEVICES : M->devices->count;
+		for (i = 0; i < cnt; i++) scen[i] = devdef_get_device(M->dev, i).scen_index;
 	}
-	return -1.0f;
+	for (i = 0; i < cnt; i++) {
+		int slot;
+		if (scen[i] == DEVDEF_NONE || scen[i] >= OBJ_MAX_PLACEMENTS) continue;
+		slot = M->objects->by_placement[scen[i]];
+		if (slot >= 0 && slot < OBJ_MAX) s_dev_of_slot[slot] = (int16_t)i;
+	}
 }
 
 static void update_object_fx(mission_t *M)
 {
 	unsigned i;
 	if (!M->fx || !M->fx->attach_count || !M->ow.scen) return;
+	index_devices(M);
 	for (i = 0; i < M->objects->count && i < 1280u; i++) {
 		object_t *o = &M->objects->obj[i];
 		uint32_t first, k, n;
