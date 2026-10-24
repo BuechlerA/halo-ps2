@@ -15,6 +15,7 @@ typedef struct {
 	const tex_source_t   *tex;          /* HUDT textures */
 	unsigned              key_base;     /* bsp_render_reserve_keys result */
 	const game_t         *game;
+	const hud_frame_t    *overlay;      /* extra quads drawn over the HUD with the same texture source (the main menu: ui/menu.c); NULL: none */
 	const cine_state     *cine;         /* letterbox, fades, titles and messages (NULL: none) */
 	uint32_t              tick;
 	int                   enabled;

@@ -39,6 +39,8 @@
 #include "sim/save.h"
 #include "world/gamedata.h"
 #include "sim/objects.h"
+#include "ui/menu.h"
+#include <kernel.h>
 #include "render/selftest.h"
 #include "world/world.h"
 #include "world/hires.h"
@@ -105,6 +107,150 @@ static void overlay_pass(void *u, struct render_ctx *rc)
 	fx_render_pass(&s_fxr, rc);          /* particles and decals are depth tested: before the HUD */
 	hud_render_pass(&s_hudr, rc);
 }
+/* ---- the main menu (docs/39-main-menu.md) ------------------------------------------------------------------------------------------------------------ */
+static const char *const k_campaign[MENU_LEVELS] = { "a10", "a30", "a50", "b30", "b40", "c10", "c20", "c40", "d20", "d40" };
+static menu_t        s_menu;
+static menudef_t     s_menud;
+static huddef_fonts  s_menu_fonts;
+static huddef_strings s_menu_strs;
+static texset_t      s_menu_tex;
+static tex_source_t  s_menu_source;
+static hud_frame_t   s_menu_frame;
+static int           s_menu_on;
+static const char   *s_argv0 = "host:engine/halo-ps2.elf";
+#define MENU_THEME_TAG 0xe54903d3u            /* sound\music\title1\title1, the menu's looping score */
+
+/* "play:<level>:<difficulty>" (argv[1] of a restart from the menu): the campaign level's packs and the difficulty replace the menu's. */
+static void apply_play_args(int argc, char **argv)
+{
+	int level = -1, diff = -1;
+	char v[CFG_ARG_LEN];
+	const char *a = NULL;
+	int ai;
+	for (ai = 1; ai < argc; ai++) if (argv[ai] && strncmp(argv[ai], "play:", 5) == 0) { a = argv[ai]; break; }      /* LoadExecPS2 puts the ELF's path first */
+	if (!a) return;
+	if (sscanf(a + 5, "%d:%d", &level, &diff) != 2 || level < 0 || level >= MENU_LEVELS || diff < 0 || diff > 3) return;
+	cfg_set(&s_cfg, "menu", "0");
+	snprintf(v, sizeof v, "assets/hp2/%s.hp2", k_campaign[level]); cfg_set(&s_cfg, "pack", v);
+	snprintf(v, sizeof v, "assets/hp2/%s.tex.hp2", k_campaign[level]); cfg_set(&s_cfg, "tex", v);
+	snprintf(v, sizeof v, "assets/hp2/%s.obj.hp2", k_campaign[level]); cfg_set(&s_cfg, "obj", v);
+	snprintf(v, sizeof v, "assets/hp2/%s", k_campaign[level]); cfg_set(&s_cfg, "game", v);
+	snprintf(v, sizeof v, "%d", diff); cfg_set(&s_cfg, "difficulty", v);
+	cfg_set(&s_cfg, "mission", "1");
+	printf("[menu] playing level %d (%s) on difficulty %d\n", level, k_campaign[level], diff);
+}
+
+/* The menu's own packs replace the game's for this run: the ui scenario is the background. */
+static void apply_menu_cfg(void)
+{
+	if (!cfg_int(&s_cfg, "menu", 0)) return;
+	cfg_set(&s_cfg, "pack", cfg_str(&s_cfg, "menu_pack", "assets/hp2/ui.hp2"));
+	cfg_set(&s_cfg, "tex", cfg_str(&s_cfg, "menu_tex", "assets/hp2/ui.tex.hp2"));
+	cfg_set(&s_cfg, "obj", cfg_str(&s_cfg, "menu_obj", "assets/hp2/ui.obj.hp2"));
+	cfg_set(&s_cfg, "game", cfg_str(&s_cfg, "menu_game", "assets/hp2/ui"));
+	cfg_set(&s_cfg, "mission", "1");
+	cfg_set(&s_cfg, "skyyaw", "0"); cfg_set(&s_cfg, "skyplanet", "1");        /* the a10 intro tunes its space sky: the ui scenario's ring sky keeps the tag's own look */
+}
+
+static uint16_t menu_level_mask(void)
+{
+	uint16_t mask = 0;
+	unsigned i;
+	for (i = 0; i < MENU_LEVELS; i++) {
+		char p[96];
+		snprintf(p, sizeof p, "assets/hp2/%s.hp2", k_campaign[i]);
+		if (file_size_of(p) < 0) continue;
+		snprintf(p, sizeof p, "assets/hp2/%s.obj.hp2", k_campaign[i]);
+		if (file_size_of(p) < 0) continue;
+		mask |= (uint16_t)(1u << i);
+	}
+	return mask;
+}
+
+static int menu_load(const char *prefix)
+{
+	char path[160];
+	size_t n;
+	uint8_t *p;
+	menudef_status st;
+	snprintf(path, sizeof path, "%s.menu.hp2", prefix);
+	if (file_size_of(path) < 0) { printf("[menu] no %s\n", path); return -1; }
+	if (!(p = world_load_section(&s_arena, path, "MENU", &n, 1))) { printf("[menu] no MENU section in %s\n", path); return -1; }
+	if ((st = menudef_open(&s_menud, p, n)) != MENUDEF_OK) { printf("[menu] bad MENU section in %s: status %d, %u bytes\n", path, (int)st, (unsigned)n); return -1; }
+	if (!(p = world_load_section(&s_arena, path, "FONT", &n, 1)) || huddef_fonts_open(&s_menu_fonts, p, n) != HUDDEF_OK) return -1;
+	if (!(p = world_load_section(&s_arena, path, "STRS", &n, 1)) || huddef_strings_open(&s_menu_strs, p, n) != HUDDEF_OK) return -1;
+	if (!(p = world_load_section(&s_arena, path, "HUDT", &n, 1)) || tex_open(&s_menu_tex.tex, p, n) != TEX_OK) return -1;
+	s_menu_tex.has = 1;
+	world_texset_source(&s_menu_source, &s_menu_tex);
+	printf("[menu] %s: %u sprites, %u textures\n", path, (unsigned)s_menud.sprite_count, (unsigned)s_menu_tex.tex.texture_count);
+	return 0;
+}
+
+static unsigned menu_keys_of(unsigned down)
+{
+	unsigned k = 0;
+	if (down & PAD_BTN_UP) k |= MENU_KEY_UP;
+	if (down & PAD_BTN_DOWN) k |= MENU_KEY_DOWN;
+	if (down & PAD_BTN_LEFT) k |= MENU_KEY_LEFT;
+	if (down & PAD_BTN_RIGHT) k |= MENU_KEY_RIGHT;
+	if (down & PAD_BTN_CROSS) k |= MENU_KEY_ACCEPT;
+	if (down & (PAD_BTN_CIRCLE | PAD_BTN_TRIANGLE)) k |= MENU_KEY_BACK;
+	if (down & PAD_BTN_START) k |= MENU_KEY_START;
+	return k;
+}
+
+/* cfg `menukey <tick> <up|down|left|right|accept|back|start>` lines: scripted menu input for runs without a pad. */
+static unsigned menu_scripted_keys(unsigned tick)
+{
+	unsigned k = 0;
+	int i;
+	const char *v;
+	for (i = 0; (v = cfg_nth(&s_cfg, "menukey", i)) != NULL; i++) {
+		unsigned t = (unsigned)strtoul(v, NULL, 10);
+		const char *name = strchr(v, ' ');
+		if (t != tick || !name) continue;
+		while (*name == ' ') name++;
+		if (!strncmp(name, "up", 2)) k |= MENU_KEY_UP; else if (!strncmp(name, "down", 4)) k |= MENU_KEY_DOWN;
+		else if (!strncmp(name, "left", 4)) k |= MENU_KEY_LEFT; else if (!strncmp(name, "right", 5)) k |= MENU_KEY_RIGHT;
+		else if (!strncmp(name, "accept", 6)) k |= MENU_KEY_ACCEPT; else if (!strncmp(name, "back", 4)) k |= MENU_KEY_BACK;
+		else if (!strncmp(name, "start", 5)) k |= MENU_KEY_START;
+	}
+	return k;
+}
+
+/* One menu tick: keys in, camera and music requests to the mission host, the launch (a restart of the engine on the chosen level) out. */
+static void menu_step(unsigned down)
+{
+	mission_t *mm = mapp_mission();
+	int point, hold, level, diff;
+	unsigned ticks;
+	menu_key(&s_menu, menu_keys_of(down) | menu_scripted_keys(s_tick));
+	menu_tick(&s_menu);
+	{
+		unsigned sd = menu_take_sounds(&s_menu);
+		if (sd & MENU_SND_CURSOR) mission_menu_sound(mm, 0xe54703d1u);
+		if (sd & MENU_SND_FORWARD) mission_menu_sound(mm, 0xe4f3037du);
+		if (sd & MENU_SND_BACK) mission_menu_sound(mm, 0xe4f2037cu);
+		if (sd & MENU_SND_FAIL) mission_menu_sound(mm, 0xe54803d2u);
+	}
+	if (menu_take_camera(&s_menu, &point, &ticks, &hold)) {
+		mission_menu_camera_hold(mm, hold);
+		if (point >= 0) mission_menu_camera(mm, point, ticks);
+	}
+	menu_build(&s_menu, &s_menu_frame);
+	if (menu_launch(&s_menu, &level, &diff) && !s_mission_done) {
+		char arg[24];
+		char *args[1];
+		s_mission_done = 1;
+		printf("[menu] launch level %d (%s) difficulty %d at tick %u\n", level, k_campaign[level], diff, s_tick);
+		if (cfg_int(&s_cfg, "menuexit", 0)) return;                    /* test runs end here */
+		snprintf(arg, sizeof arg, "play:%d:%d", level, diff);
+		args[0] = arg;
+		LoadExecPS2(s_argv0, 1, args);
+		printf("[menu] LoadExecPS2 failed\n");
+	}
+}
+
 static int        s_vblanks = 2;                /* vblanks per frame: 2 = 30 fps (default), 1 = 60 fps */
 #define VBLANK_S (1.0f / 59.94f)
 #define VBLANK_MS (1000.0f / 59.94f)
@@ -414,6 +560,10 @@ int main(int argc, char *argv[])
 	setbuf(stdout, NULL);   /* ps2sdk stdout is not a tty: unbuffered so TTY logs appear immediately */
 	printf("halo-ps2 phase 1 boot\n");
 	load_config();
+	if (argc > 0 && argv[0] && argv[0][0]) s_argv0 = argv[0];
+	{ int ai; printf("[boot] argc %d:", argc); for (ai = 0; ai < argc && ai < 4; ai++) printf(" '%s'", argv[ai] ? argv[ai] : "(null)"); printf("\n"); }
+	apply_play_args(argc, argv);
+	apply_menu_cfg();
 
 	arena_bytes = (size_t)cfg_int(&s_cfg, "arena_mb", 25) * 1024u * 1024u;
 	heap = malloc(arena_bytes);                         /* the one boot-time allocation (ADR-006) */
@@ -650,6 +800,17 @@ int main(int argc, char *argv[])
 			me.gd = &s_gd; me.game = &s_game; me.objects = &s_objects; me.ow = s_objr.world; me.fx = s_fx.def ? &s_fx : NULL; me.hud = &s_hs;
 			me.ga = &s_ga; me.sp = s_stream_on ? &s_sp : NULL; me.cfg = &s_cfg; me.arena = &s_arena; me.bsp = s_world.bsp_index;
 			if (mapp_init(&me) == 0) { s_hudr.cine = mapp_mission()->cine; mapp_set_bsp(s_world.bsp_index); mapp_checkpoint_save(); }
+			if (s_hudr.cine && cfg_int(&s_cfg, "menu", 0) && menu_load(cfg_str(&s_cfg, "game", "assets/hp2/ui")) == 0) {
+				mission_t *mm = mapp_mission();
+				s_hudr.hud = NULL; s_hudr.tex = &s_menu_source; s_hudr.fonts = &s_menu_fonts; s_hudr.overlay = &s_menu_frame;
+				s_hudr.key_base = bsp_render_reserve_keys(s_menu_tex.tex.texture_count);
+				s_hudr.enabled = 1;
+				menu_init(&s_menu, &s_menud, &s_menu_fonts, &s_menu_strs, (uint16_t)((menu_level_mask() | (uint16_t)cfg_int(&s_cfg, "menu_levels_or", 0)) & (uint16_t)cfg_int(&s_cfg, "menu_levels", 0xFFFF)), (int)cfg_int(&s_cfg, "menu_skiptitle", 0));
+				mission_menu_begin(mm);
+				mission_menu_loop(mm, MENU_THEME_TAG, 1);
+				s_menu_on = 1;
+				printf("[menu] ready: levels %04x, screen %d\n", (unsigned)s_menu.level_mask, (int)s_menu.screen);
+			}
 		}
 		input_script_parse(&s_script, &s_cfg);
 		if (s_script.count) printf("[game] scripted input: %d keys\n", s_script.count);
@@ -667,7 +828,7 @@ int main(int argc, char *argv[])
 		fly_input in;
 		unsigned down = pad_poll(&in);
 
-		if (down & PAD_BTN_START) s_prof.overlay ^= 1;
+		if ((down & PAD_BTN_START) && !s_menu_on) s_prof.overlay ^= 1;
 		if (s_game_on) {
 			if (s_vblanks == 2 || (frame & 1) == 0) {            /* the 30 Hz simulation tick */
 				raw_input_t raw;
@@ -689,6 +850,7 @@ int main(int argc, char *argv[])
 				if (s_paused) { s_game.ev_count = 0; s_game.prev_held = gin.held; game_camera(&s_game, &s_cam); goto sim_done; }
 				tp = timer_cycles();
 				if (mapp_active()) { mapp_tick(&gin); p2_add(P2_MAPP, tp); tp = timer_cycles(); serve_mission(); p2_add(P2_SERVE, tp); } else { game_tick(&s_game, &gin); p2_add(P2_MAPP, tp); }
+				if (s_menu_on) menu_step(down);
 				tp = timer_cycles();
 				check_bsp_switch();
 				s_tick++;

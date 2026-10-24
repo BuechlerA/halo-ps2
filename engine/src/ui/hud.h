@@ -7,7 +7,7 @@
 #include "sim/game.h"
 #include "ui/huddef.h"
 
-#define HUD_MAX_QUADS 224
+#define HUD_MAX_QUADS 448                 /* the menu's level select writes about 400 glyphs and sprites (three cards of name and description) */
 
 typedef struct {
 	float    x0, y0, x1, y1;          /* virtual pixels */

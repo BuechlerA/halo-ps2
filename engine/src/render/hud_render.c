@@ -58,6 +58,18 @@ void hud_render_pass(void *user, render_ctx_t *rc)
 			h->st_quads++;
 		}
 	}
+	if (h->overlay) {
+		for (i = 0; i < h->overlay->n; i++) {
+			const hud_quad_t *q = &h->overlay->q[i];
+			tex_image_t img;
+			u64 tex0 = 0;
+			if (h->tex && h->tex->texture && h->tex->texture(h->tex->user, q->tex, &img) == 0) tex0 = rb_extra_tex0(h->key_base, q->tex, &img, 0);
+			if (!tex0) { h->st_skipped++; continue; }
+			spr_state(&spr, tex0, q->blend == HUDDEF_BLEND_ADD ? SPR_BLEND_ADD : SPR_BLEND_ALPHA, 0);
+			spr_quad(&spr, q->x0 * sx, q->y0 * sy, q->x1 * sx, q->y1 * sy, (float)q->u0, (float)q->v0, (float)q->u1, (float)q->v1, 0xFFFFFFu, q->rgba);
+			h->st_quads++;
+		}
+	}
 	if (h->cine) {
 		const cine_state *cs = h->cine;
 		static hud_frame_t tf;

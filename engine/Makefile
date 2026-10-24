@@ -68,6 +68,8 @@ EE_OBJS = src/main.o \
           src/stream/file.o \
           src/stream/hp2.o \
           src/vu1/world.o \
+          src/ui/menudef.o \
+          src/ui/menu.o \
           src/ui/hud.o \
           src/ui/huddef.o \
           src/world/anim.o \

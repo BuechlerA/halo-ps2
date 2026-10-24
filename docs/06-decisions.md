@@ -1035,5 +1035,17 @@ crew, Keyes, the chairs and the command display of the bridge (ticks 1120 .. 130
 **Why**: the technician and assistant of the cryo console (flags `tech_base` / `asst_base`, z 1.490) were dropped onto the collision floor under them, 7 cm higher (z 1.56): they stood on their toes and the console's top edge cut them at the thighs, their forearms went through the panel (ticks 6500 .. 6700). The Xbox leaves a teleported unit where the script puts it; the video shows the console's edge at their belts, which the frames now give.
 **Measured**: ticks 6560 and 6660 against the video. **Consequences**: any scripted animation on a slope or in the air (a unit teleported above the floor) now keeps its height until the animation ends instead of falling.
 
+## ADR-090 The Xbox main menu: the ui scenario as the background, the screens laid out from the widget tags, the game started by a restart
+**Decision**: `docs/39-main-menu.md`. The menu runs the Xbox's own `levels\ui\ui` scenario as a mission (the Halo ring, ten camera points, the script `ring_loop`, the music loop `title1`) and draws its screens
+(title, main menu, difficulty select, level select, a notice box) as quads over it (`hud_render_t.overlay`); the screens are code (`ui/menu.c`) with the positions, bitmaps, fonts and strings read off the `DeLa` widget tags by
+`menuconv.py` (the widget runtime of the executable is not ported). Menu items move the camera to the scenario's named points through the script built-ins' own code (`mission_menu_*`); a start from the menu restarts the engine
+(`LoadExecPS2` with `play:<level>:<difficulty>`) because a level's packs and arena are loaded once per boot. **Also changed**: `objpack.py` and `soundconv.py` accept `ui.map` (no campaign globals; the UI clicks are roots),
+`cfg_set` (the config's first entry wins, so overrides replace it), `HUD_MAX_QUADS` 224 -> 448 (a level card writes about 130 glyphs), D-pad bits in `pad.h`.
+**Why**: the goal was the main menu of the Xbox original on the PS2; the data was all in `ui.map`, and the menu is mostly a handful of bitmaps and strings over a 3D scene the engine already renders.
+**Measured**: PCSX2, scripted keys (`menukey`): title, main menu with each item's camera, the notice box, the difficulty select (four emblems and descriptions), the level select with several levels enabled, the click sounds
+(resident `snd!`), the restart into the a10 intro with the chosen difficulty, audio up again in the second boot; `test_menu` (flow, geometry, corrupt data) passes under ASan / UBSan.
+**Not done / open**: see docs/39 ("Not done"); the real console's `LoadExecPS2` path and the `host:halo.cfg` read in the second boot are unchecked (ADR-022); the position of the difficulty description text and the item text colours
+are by eye (no Xbox screenshot of the menu exists in the repo).
+
 ## Open decisions
 None.
