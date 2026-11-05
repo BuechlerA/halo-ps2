@@ -9,6 +9,7 @@
  *    sphere sweeps that must never end (or pass through) solid space, depenetration, point-in-solid against the
  *    render tree of the BSPn section, random corruption of a real section;
  * 5. COLL_BENCH=1: queries per millisecond (build this file with -O2 and without the sanitizers for meaningful numbers). */
+#define _POSIX_C_SOURCE 200809L   /* clock_gettime under -std=c11 on glibc */
 #include "stream/hp2.h"
 #include "world/bsp.h"
 #include "world/coll.c"      /* the reader itself: the statics are unit-tested below */
